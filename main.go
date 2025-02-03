@@ -20,13 +20,13 @@ func main() {
 			if versionFlag {
 				cmd.Println(version)
 			}
-			println(core.ConfigPath)
+			println(core.ConfigPathFile)
 		},
 	}
 
 	cmd.Flags().BoolVarP(&versionFlag, "version", "v", false, "Print version")
 
-	cmd.PersistentFlags().StringVarP(&core.ConfigPath, "config", "c", core.ConfigPath, fmt.Sprintf("Path to the configuration file, default is %s", core.ConfigPath))
+	cmd.PersistentFlags().StringVarP(&core.ConfigPathFile, "config", "c", core.ConfigPathFile, fmt.Sprintf("Path to the configuration file, default is %s", core.ConfigPathFile))
 	cmd.AddCommand(core.Command())
 	cmd.Execute()
 }

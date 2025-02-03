@@ -41,7 +41,7 @@ func commandGet() *cobra.Command {
 		Short: "print the configuration",
 		Run: func(cmd *cobra.Command, args []string) {
 
-			if _, err := os.Stat(ConfigPath); os.IsNotExist(err) {
+			if _, err := os.Stat(ConfigPathFile); os.IsNotExist(err) {
 				log.Fatal("config file does not exist")
 			}
 
@@ -64,11 +64,11 @@ func commandDelete() *cobra.Command {
 		Use:   "delete",
 		Short: "delete the configuration",
 		Run: func(cmd *cobra.Command, args []string) {
-			if _, err := os.Stat(ConfigPath); os.IsNotExist(err) {
+			if _, err := os.Stat(ConfigPathFile); os.IsNotExist(err) {
 				log.Fatal("config file does not exist")
 			}
 
-			err := os.Remove(ConfigPath)
+			err := os.Remove(ConfigPathFile)
 			if err != nil {
 				log.Fatal(err)
 			}

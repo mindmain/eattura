@@ -9,6 +9,9 @@ import (
 	"path"
 )
 
+var ConfigPathFile = ""
+var ConfigPathFolder = ""
+
 func init() {
 	var home string
 	var err error
@@ -22,7 +25,8 @@ func init() {
 		home = os.Getenv("HOME")
 	}
 
-	ConfigPath = path.Join(home, folderAppName, configFileName)
+	ConfigPathFile = path.Join(home, folderAppName, configFileName)
+	ConfigPathFolder = cmp.Or(path.Dir(ConfigPathFile), "./")
 
 }
 
@@ -34,8 +38,6 @@ const (
 	// this port derive: 'E' and 'A' Hexadecimal format form ASCII table
 	DefaultPort = 4541
 )
-
-var ConfigPath = ""
 
 // if set, the config file will not be loaded from %HOME%/.eattura/config.json
 var (
@@ -108,12 +110,12 @@ func defaultConfig() *Config {
 		},
 		InvoiceDriver: DriverConfig{
 			Type: "local",
-			Root: path.Join(ConfigPath, configFileName, folderInvoices),
+			Root: path.Join(ConfigPathFolder, folderInvoices),
 		},
 
 		SecureDriver: DriverConfig{
 			Type: "local",
-			Root: path.Join(ConfigPath, configFileName, folderSecure),
+			Root: path.Join(ConfigPathFolder, folderSecure),
 		},
 	}
 
@@ -157,15 +159,15 @@ func LoadConfig() *Config {
 		return defaultConfig().alignWithEnv()
 	}
 
-	if path.Ext(ConfigPath) == "" {
-		ConfigPath = fmt.Sprintf("%s.json", ConfigPath)
+	if path.Ext(ConfigPathFile) == "" {
+		ConfigPathFile = fmt.Sprintf("%s.json", ConfigPathFile)
 	}
 
 	config := &Config{}
 
-	if _, err := os.Stat(ConfigPath); os.IsNotExist(err) {
+	if _, err := os.Stat(ConfigPathFile); os.IsNotExist(err) {
 
-		if err := os.MkdirAll(path.Dir(ConfigPath), 0755); err != nil {
+		if err := os.MkdirAll(ConfigPathFolder, 0755); err != nil {
 
 			log.Fatal(err)
 		}
@@ -176,13 +178,13 @@ func LoadConfig() *Config {
 			log.Fatal(err)
 		}
 
-		err = os.WriteFile(ConfigPath, bb, 0644)
+		err = os.WriteFile(ConfigPathFile, bb, 0644)
 		if err != nil {
 			panic(err)
 		}
 	}
 
-	bb, err := os.ReadFile(ConfigPath)
+	bb, err := os.ReadFile(ConfigPathFile)
 	if err != nil {
 		panic(err)
 	}
