@@ -21,7 +21,8 @@ func (s *staticSecure) Get(_ string) (*driver.Credentials, error) {
 	var creds = driver.Credentials{
 		ImapHost:   core.Get("pec.imap.host"),
 		ImapPort:   core.GetInt("pec.imap.port"),
-		ImapFolder: core.Get("pec.imap.folder"),
+		ImapInbox:  core.Get("pec.imap.inbox"),
+		ImapOutbox: core.Get("pec.imap.outbox"),
 		ImapTls:    core.GetBool("pec.imap.tls"),
 
 		SmtpHost: core.Get("pec.smtp.host"),

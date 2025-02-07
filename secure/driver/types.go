@@ -3,7 +3,8 @@ package driver
 type Credentials struct {
 	ImapHost   string `json:"imap_host"`
 	ImapPort   int    `json:"imap_port"`
-	ImapFolder string `json:"imap_folder"`
+	ImapInbox  string `json:"imap_inbox"`
+	ImapOutbox string `json:"imap_outbox"`
 	ImapTls    bool   `json:"imap_tls"`
 
 	SmtpHost string `json:"smtp_host"`
