@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 func Command() *cobra.Command {
@@ -16,22 +17,9 @@ func Command() *cobra.Command {
 		Short: "init an configuration file",
 	}
 
-	cmd.AddCommand(commandInit())
 	cmd.AddCommand(commandGet())
 	cmd.AddCommand(commandDelete())
-
-	return cmd
-}
-
-func commandInit() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "init",
-		Short: "init an configuration file",
-		Run: func(cmd *cobra.Command, args []string) {
-			LoadConfig()
-		},
-	}
-
+	cmd.AddCommand(commandInit())
 	return cmd
 }
 
@@ -41,13 +29,14 @@ func commandGet() *cobra.Command {
 		Short: "print the configuration",
 		Run: func(cmd *cobra.Command, args []string) {
 
-			if _, err := os.Stat(ConfigPathFile); os.IsNotExist(err) {
-				log.Fatal("config file does not exist")
+			if IsEnabledConfigFile() {
+				config := viper.GetViper().ConfigFileUsed()
+				fmt.Println("config file:", config)
+			} else {
+				fmt.Println("config file is disabled")
 			}
+			bb, err := json.MarshalIndent(viper.AllSettings(), "", "  ")
 
-			config := LoadConfig()
-
-			bb, err := json.MarshalIndent(config, "", "  ")
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -76,4 +65,23 @@ func commandDelete() *cobra.Command {
 	}
 
 	return cmd
+}
+
+func commandInit() *cobra.Command {
+
+	cmd := &cobra.Command{
+		Use:   "init",
+		Short: "init an configuration file",
+
+		Run: func(cmd *cobra.Command, args []string) {
+			if !IsEnabledConfigFile() {
+				log.Fatal("config file is disabled")
+			}
+
+			viper.SafeWriteConfig()
+		},
+	}
+
+	return cmd
+
 }
