@@ -36,6 +36,7 @@ func (c *clientPec) Connect(ctx context.Context, uuid string) (PEC, error) {
 	return &connection{
 		clientImap: imapConnection,
 		clientSmtp: smtpConnection,
+		cred:       credentials,
 	}, nil
 }
 
@@ -57,14 +58,6 @@ func newImapConnection(credentials *secure.Credentials) (*client.Client, error) 
 func newSmtpConnection(credentials *secure.Credentials) (*gomail.Dialer, error) {
 
 	d := gomail.NewDialer(credentials.SmtpHost, credentials.SmtpPort, credentials.Username, credentials.Password)
-
-	//closer, err := d.Dial()
-	//
-	//if err != nil {
-	//	return nil, err
-	//}
-	//
-	//defer closer.Close()
 
 	return d, nil
 

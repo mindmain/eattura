@@ -2,6 +2,7 @@ package pec
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -56,7 +57,7 @@ type MBox interface {
 type PEC interface {
 	Boxes(ctx context.Context) ([]MBox, error)
 	Box(ctx context.Context, name string) (MBox, error)
-	Send(ctx context.Context, msg *Message) error
+	Send(ctx context.Context, msg *RequestSend) error
 	Close() error
 }
 
@@ -69,4 +70,38 @@ func NewPEC(ss secure.Storage) Client {
 	return &clientPec{
 		cred: ss,
 	}
+}
+
+type RequestSend struct {
+	Subject     string
+	Attachments []*FileAttachment
+}
+
+func (r *RequestSend) AddAttachment(filename string, data []byte) {
+
+	contentType := "application/octet-stream"
+
+	if strings.HasSuffix(filename, ".xml") {
+		contentType = "application/xml"
+
+	}
+
+	if strings.HasSuffix(filename, ".p7m") {
+		contentType = "application/pkcs7-mime"
+	}
+
+	r.Attachments = append(r.Attachments, &FileAttachment{
+		Name:               filename,
+		Data:               data,
+		ContentType:        []string{contentType},
+		ContentDisposition: []string{fmt.Sprintf("attachment; filename=%s", filename)},
+	})
+
+}
+
+type FileAttachment struct {
+	Name               string
+	ContentType        []string
+	ContentDisposition []string
+	Data               []byte
 }

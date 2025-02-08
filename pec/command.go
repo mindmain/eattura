@@ -1,6 +1,9 @@
 package pec
 
 import (
+	"os"
+	"path/filepath"
+
 	"github.com/mindmain/eattura/secure"
 	"github.com/spf13/cobra"
 )
@@ -13,7 +16,7 @@ func Command() *cobra.Command {
 	}
 
 	cmd.AddCommand(commandMbox())
-
+	cmd.AddCommand(commandSend())
 	cmd.PersistentFlags().StringVar(&commandUUID, "uuid", "", "uuid")
 
 	return cmd
@@ -138,4 +141,60 @@ func commandRead() *cobra.Command {
 	cmd.Flags().IntVar(&tail, "tail", 5, "read last n messages")
 	return cmd
 
+}
+
+func commandSend() *cobra.Command {
+
+	var attachments []string
+	var subject string
+	cmd := &cobra.Command{
+		Use:   "send",
+		Short: "send message",
+		Run: func(cmd *cobra.Command, args []string) {
+
+			ss, err := secure.New()
+
+			if err != nil {
+				cmd.Println(err)
+				return
+			}
+
+			client := NewPEC(ss)
+
+			conn, err := client.Connect(cmd.Context(), commandUUID)
+
+			if err != nil {
+				cmd.Println(err)
+				return
+			}
+			defer conn.Close()
+
+			msg := &RequestSend{
+				Subject: subject,
+			}
+
+			for _, attach := range attachments {
+				data, err := os.ReadFile(attach)
+
+				if err != nil {
+					cmd.Println(err)
+					return
+				}
+
+				msg.AddAttachment(filepath.Base(attach), data)
+			}
+
+			if err := conn.Send(cmd.Context(), msg); err != nil {
+				cmd.Println(err)
+				return
+			} else {
+				cmd.Println("message sent")
+			}
+		},
+	}
+
+	cmd.Flags().StringVarP(&subject, "subject", "s", "", "subject")
+	cmd.Flags().StringSliceVarP(&attachments, "attachments", "a", nil, "attachments")
+
+	return cmd
 }

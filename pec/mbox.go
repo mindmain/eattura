@@ -7,6 +7,8 @@ import (
 	"github.com/emersion/go-imap"
 )
 
+const domainSdiEmail = "@pec.fatturapa.it"
+
 type pecMailBox struct {
 	conn *connection
 	name string
@@ -24,7 +26,7 @@ func (mbox *pecMailBox) Read(ctx context.Context, request *SearchMessage) (<-cha
 	}
 
 	criteria := imap.NewSearchCriteria()
-	criteria.Header.Add("From", "@pec.fatturapa.it")
+	criteria.Header.Add("From", domainSdiEmail)
 
 	if request != nil {
 		if !request.From.IsZero() {
@@ -79,8 +81,6 @@ func (mbox *pecMailBox) searchImap(msgs []uint32) (<-chan *Message, error) {
 				}, []imap.FetchItem{
 					imap.FetchRFC822,
 					imap.FetchEnvelope,
-					//	imap.FetchBody,
-					//	imap.FetchBodyStructure,
 				}, imapMessages)
 			}()
 
