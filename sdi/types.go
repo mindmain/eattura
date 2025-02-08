@@ -22,3 +22,16 @@ func IsInvoiceFileName(name string) bool {
 	return match
 
 }
+
+func IsInvoiceFileNameCrypt(name string) bool {
+
+	match, err := regexp.Match(`^[A-Z]{2}[A-Z-0-9]{11,28}_[0-9A-Za-z]{5}\.xml.p7m$`, []byte(name))
+
+	if err != nil {
+		log.Printf("[IsInvoiceFileNameCrypt error]: %s", err)
+		return false
+	}
+
+	return match
+
+}
