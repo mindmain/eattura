@@ -176,14 +176,14 @@ type DatiRiepilogo struct {
 type DettaglioLinee struct {
 	NumeroLinea                int                    `xml:"NumeroLinea,omitempty" json:"NumeroLinea" validate:"min=1,max=9999"`
 	TipoCessionePrestazione    string                 `xml:"TipoCessionePrestazione,omitempty" json:"TipoCessionePrestazione" validate:"isTypeCassaP"`
-	CodiceArticolo             []*CodiceArticolo      `xml:"CodiceArticolo,omitempty" json:"CodiceArticolo"`
+	CodiceArticolo             *CodiceArticolo        `xml:"CodiceArticolo,omitempty" json:"CodiceArticolo"`
 	Descrizione                string                 `xml:"Descrizione,omitempty" json:"Descrizione" validate:"required,max=1000"`
 	Quantita                   F64                    `xml:"Quantita,omitempty" json:"Quantita" validate:"max=21,min=4"`
 	UnitaMisura                string                 `xml:"UnitaMisura,omitempty" json:"UnitaMisura" validate:"max=10"`
 	DataInizioPeriodo          Date                   `xml:"DataInizioPeriodo,omitempty" json:"DataInizioPeriodo" validate:"isDate"`
 	DataFinePeriodo            Date                   `xml:"DataFinePeriodo,omitempty" json:"DataFinePeriodo" validate:"isDate"`
 	PrezzoUnitario             F64                    `xml:"PrezzoUnitario,omitempty" json:"PrezzoUnitario" validate:"min=4,max=21"`
-	ScontoMaggiorazione        []*ScontoMaggiorazione `xml:"ScontoMaggiorazione,omitempty" json:"ScontoMaggiorazione"`
+	ScontoMaggiorazione        *ScontoMaggiorazione   `xml:"ScontoMaggiorazione,omitempty" json:"ScontoMaggiorazione"`
 	PrezzoTotale               F64                    `xml:"PrezzoTotale,omitempty" json:"PrezzoTotale" validate:"min=4,max=21"`
 	AliquotaIVA                F64                    `xml:"AliquotaIVA" json:"AliquotaIVA" validate:"isIva"`
 	Ritenuta                   string                 `xml:"Ritenuta,omitempty" json:"Ritenuta" validate:"omitempty,eq=SI"`
