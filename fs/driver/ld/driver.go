@@ -1,3 +1,5 @@
+//go:build local
+
 package ld
 
 import (
@@ -9,14 +11,23 @@ import (
 	"github.com/mindmain/eattura/fs/driver"
 )
 
+func init() {
+	driver.Register("local", New)
+}
+
 type localFileDriver struct {
 	root string
 }
 
-func NewDriverLocal(rootDirectory string) driver.FileDriver {
-	return &localFileDriver{
-		root: rootDirectory,
+func New(config *driver.StorageConfig) (driver.FileDriver, error) {
+
+	if _, err := os.Stat(config.Path); os.IsNotExist(err) {
+		return nil, fmt.Errorf("path %s does not exist", config.Path)
 	}
+
+	return &localFileDriver{
+		root: config.Path,
+	}, nil
 }
 
 func (l *localFileDriver) CanWrite() bool {

@@ -6,7 +6,6 @@ import (
 
 	"github.com/mindmain/eattura/core"
 	"github.com/mindmain/eattura/fs/driver"
-	"github.com/mindmain/eattura/fs/driver/ld"
 	"github.com/mindmain/eattura/sdi/fe"
 )
 
@@ -79,7 +78,20 @@ func getDriverFromType(driverType Type) (driver.FileDriver, error) {
 	switch driverType {
 	case Local:
 		folder := core.Get("storage.folder")
-		dd := ld.NewDriverLocal(folder)
+
+		caller, err := driver.GetDriver("local")
+
+		if err != nil {
+			return nil, err
+		}
+
+		dd, err := caller(&driver.StorageConfig{
+			Path: folder,
+		})
+
+		if err != nil {
+			return nil, err
+		}
 
 		if !dd.CanRead() {
 			return nil, ErrorPermissionDenied
