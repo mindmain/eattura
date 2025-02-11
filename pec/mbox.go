@@ -2,6 +2,7 @@ package pec
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	"github.com/emersion/go-imap"
@@ -26,15 +27,26 @@ func (mbox *pecMailBox) Read(ctx context.Context, request *SearchMessage) (<-cha
 	}
 
 	criteria := imap.NewSearchCriteria()
-	criteria.Header.Add("From", domainSdiEmail)
+
+	if request.Direction == "" {
+		request.Direction = DirectionInbound
+	}
+
+	if request.Direction == DirectionInbound {
+		criteria.Header.Add("From", domainSdiEmail)
+	} else if request.Direction == DirectionOutbound {
+		criteria.Header.Add("To", domainSdiEmail)
+	} else {
+		return nil, fmt.Errorf("direction not valid")
+	}
 
 	if request != nil {
-		if !request.From.IsZero() {
-			criteria.Since = request.From
+		if !request.FromAt.IsZero() {
+			criteria.Since = request.FromAt
 		}
 
-		if !request.To.IsZero() {
-			criteria.Before = request.To
+		if !request.ToAt.IsZero() {
+			criteria.Before = request.ToAt
 		}
 
 	}

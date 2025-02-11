@@ -40,10 +40,18 @@ func determinateTypeMessage(subject string) MessageType {
 	return MessageTypeUnknown
 }
 
+type Direction string
+
+const (
+	DirectionInbound  Direction = "inbound"
+	DirectionOutbound Direction = "outbound"
+)
+
 type SearchMessage struct {
-	From time.Time
-	To   time.Time
-	Tail int
+	Direction Direction
+	FromAt    time.Time
+	ToAt      time.Time
+	Tail      int
 }
 
 type MBox interface {
