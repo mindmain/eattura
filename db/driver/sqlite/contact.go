@@ -59,7 +59,7 @@ func (i *contactRepository) Delete(ctx context.Context, uuid string) (*model.Con
 func (s *contactRepository) Find(ctx context.Context, skip, limit uint, req *model.RequestSearchContact) ([]*model.Contact, error) {
 
 	session := s.session(req)
-
+	defer session.Close()
 	if skip > 0 || limit > 0 {
 		session.Limit(int(limit), int(skip))
 	}
@@ -78,7 +78,7 @@ func (s *contactRepository) Find(ctx context.Context, skip, limit uint, req *mod
 func (s *contactRepository) Count(ctx context.Context, req *model.RequestSearchContact) (int, error) {
 
 	session := s.session(req)
-
+	defer session.Close()
 	count, err := session.Count(&model.Contact{})
 
 	if err != nil {

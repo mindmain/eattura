@@ -9,11 +9,11 @@ const (
 )
 
 type Credentials struct {
-	UUID       string    `json:"uuid" xorm:"pk"`
-	Type       string    `json:"type" xorm:"varChar(10)"`
-	LastUpdate time.Time `json:"last_update" xorm:"DATETIME"`
-	CreatedAt  time.Time `json:"created_at" xorm:"created"`
-	UpdateAt   time.Time `json:"updated_at" xorm:"updated"`
+	UUID       string    `json:"uuid" xorm:"pk 'uuid'"`
+	Type       string    `json:"type" xorm:"varChar(10) 'type'"`
+	LastUpdate time.Time `json:"last_update" xorm:"DATETIME 'last_update'"`
+	CreatedAt  time.Time `json:"created_at" xorm:"created 'created_at'"`
+	UpdateAt   time.Time `json:"updated_at" xorm:"updated 'updated_at'"`
 }
 
 func (c *Credentials) TableName() string {

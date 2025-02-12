@@ -18,31 +18,31 @@ const (
 )
 
 type Contact struct {
-	UUID string `json:"uuid" xorm:"pk"`
+	UUID string `json:"uuid" xorm:"pk 'uuid'"`
 
-	BillingType BillingType `json:"billing_type" xorm:"index,VarChar(20)"`
-	Role        BillingRole `json:"role" xorm:"index,VarChar(20)"`
+	BillingType BillingType `json:"type" xorm:"index VarChar(20) 'type'"`
+	Role        BillingRole `json:"role" xorm:"index VarChar(20) 'role'"`
 
-	Denomination string `json:"denomination" xorm:"TEXT"`
-	Name         string `json:"name" xorm:"TEXT"`
-	Surname      string `json:"surname" xorm:"TEXT"`
+	Denomination string `json:"denomination" xorm:"TEXT 'denomination'"`
+	Name         string `json:"name" xorm:"TEXT 'name'"`
+	Surname      string `json:"surname" xorm:"TEXT 'surname'"`
 
-	Nation     string `json:"nation" xorm:"VarChar(2)"`
-	VatNumber  string `json:"vat_number" xorm:"TEXT"`
-	FiscalCode string `json:"fiscal_code" xorm:"TEXT"`
-	Street     string `json:"street" xorm:"TEXT"`
-	City       string `json:"city"  xorm:"TEXT"`
-	ZipCode    string `json:"zipCode"  xorm:"TEXT"`
-	Region     string `json:"region" xorm:"TEXT" `
+	Nation     string `json:"nation" xorm:"VarChar(2) 'nation'"`
+	VatNumber  string `json:"vat_number" xorm:"TEXT 'vat_number'"`
+	FiscalCode string `json:"fiscal_code" xorm:"TEXT 'fiscal_code'"`
+	Street     string `json:"street" xorm:"TEXT 'street'"`
+	City       string `json:"city"  xorm:"TEXT 'city'"`
+	ZipCode    string `json:"zipCode"  xorm:"TEXT 'zip_code'"`
+	Region     string `json:"region" xorm:"TEXT 'region'"`
 
-	Pec             string `json:"pec" xorm:"TEXT"`
-	DestinationCode string `json:"destination_code" xorm:"VarChar(7)"`
+	Pec             string `json:"pec" xorm:"TEXT 'pec'"`
+	DestinationCode string `json:"code" xorm:"VarChar(7) 'code'"`
 
-	Email string `json:"email" xorm:"TEXT"`
-	Phone string `json:"phone" xorm:"TEXT"`
+	Email string `json:"email" xorm:"TEXT 'email'"`
+	Phone string `json:"phone" xorm:"TEXT 'phone'"`
 
-	CreatedAt string `json:"created_at" xorm:"created"`
-	UpdatedAt string `json:"updated_at" xorm:"updated"`
+	CreatedAt string `json:"created_at" xorm:"created 'created_at'"`
+	UpdatedAt string `json:"updated_at" xorm:"updated 'updated_at'"`
 }
 
 func (c *Contact) TableName() string {

@@ -33,6 +33,25 @@ func New(config *driver.DatabaseConfig) (driver.Database, error) {
 
 func (s *sqliteDb) Init() error {
 
+	if err := s.db.Sync(new(model.Contact)); err != nil {
+		return err
+	}
+	if err := s.db.Sync(new(model.Credentials)); err != nil {
+		return err
+	}
+	if err := s.db.Sync(new(model.Invoice)); err != nil {
+		return err
+	}
+	if err := s.db.Sync(new(model.InvoiceItem)); err != nil {
+		return err
+	}
+	if err := s.db.Sync(new(model.Issuer)); err != nil {
+		return err
+	}
+	if err := s.db.Sync(new(model.Notification)); err != nil {
+		return err
+	}
+
 	return nil
 }
 
