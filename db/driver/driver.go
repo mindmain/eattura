@@ -7,11 +7,27 @@ import (
 	"github.com/mindmain/eattura/db/model"
 )
 
-type CrudRepository[M any] interface {
+type CreateModel[M any] interface {
 	Create(ctx context.Context, m *M) error
+}
+
+type ReadModel[M any] interface {
 	Read(ctx context.Context, uuid string) (*M, error)
+}
+
+type UpdateModel[M any] interface {
 	Update(ctx context.Context, uuid string, m *M) error
+}
+
+type DeleteModel interface {
 	Delete(ctx context.Context, uuid string) error
+}
+
+type CrudRepository[M any] interface {
+	CreateModel[M]
+	ReadModel[M]
+	UpdateModel[M]
+	DeleteModel
 }
 
 type Repository[R any, M any] interface {
@@ -28,6 +44,11 @@ type InvoiceItemRepository interface {
 	Repository[model.RequestSearchInvoiceItem, model.InvoiceItem]
 }
 
+type NotificationRepository interface {
+	CreateModel[model.Notification]
+	ReadModel[model.Notification]
+}
+
 type Database interface {
 	Init() error
 	Ping() error
@@ -37,7 +58,7 @@ type Database interface {
 	InvoiceItem() InvoiceItemRepository
 
 	Issuer() CrudRepository[model.Issuer]
-	Notification() CrudRepository[model.Notification]
+	Notification() NotificationRepository
 
 	Close() error
 }
