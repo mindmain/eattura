@@ -3,21 +3,21 @@ package model
 import "time"
 
 type Issuer struct {
-	UUID           string       `json:"uuid" xorm:"pk 'uuid'"`
-	CredentialUUID string       `json:"credential_uuid" xorm:"index 'credential_uuid'"`
-	Credential     *Credentials `json:"credential" xorm:"-"`
-	VatId          string       `json:"vat_id" xorm:"TEXT index 'vat_id'"`
-	Name           string       `json:"name" xorm:"VarChar(255) 'name'"`
-	Surname        string       `json:"surname" xorm:"VarChar(255) 'surname'"`
-	Denomination   string       `json:"denomination" xorm:"VarChar(255) 'denomination'"`
-	FiscalCode     string       `json:"fiscal_code" xorm:"VarChar(255) 'fiscal_code'"`
-	Street         string       `json:"street" xorm:"TEXT 'street'"`
-	City           string       `json:"city" xorm:"VarChar(255) 'city'"`
-	ZipCode        string       `json:"zip_code" xorm:"VarChar(10) 'zip_code'"`
-	Region         string       `json:"region" xorm:"VarChar(255) 'region'"`
-	Country        string       `json:"country" xorm:"VarChar(255) 'country'"`
-	CreatedAt      time.Time    `json:"created_at" xorm:"created 'created_at'"`
-	UpdatedAt      time.Time    `json:"updated_at" xorm:"updated 'updated_at'"`
+	UUID           string       `json:"uuid" gorm:"primaryKey;column:uuid"`
+	CredentialUUID string       `json:"credential_uuid" gorm:"index;column:credential_uuid"`
+	Credential     *Credentials `json:"credential" gorm:"-"`
+	VatId          string       `json:"vat_id" gorm:"type:text;index;column:vat_id"`
+	Name           string       `json:"name" gorm:"size:255;column:name"`
+	Surname        string       `json:"surname" gorm:"size:255;column:surname"`
+	Denomination   string       `json:"denomination" gorm:"size:255;column:denomination"`
+	FiscalCode     string       `json:"fiscal_code" gorm:"size:255;column:fiscal_code"`
+	Street         string       `json:"street" gorm:"type:text;column:street"`
+	City           string       `json:"city" gorm:"size:255;column:city"`
+	ZipCode        string       `json:"zip_code" gorm:"size:10;column:zip_code"`
+	Region         string       `json:"region" gorm:"size:255;column:region"`
+	Country        string       `json:"country" gorm:"size:255;column:country"`
+	CreatedAt      time.Time    `json:"created_at" gorm:"autoCreateTime;column:created_at"`
+	UpdatedAt      time.Time    `json:"updated_at" gorm:"autoUpdateTime;column:updated_at"`
 }
 
 func (i *Issuer) TableName() string {

@@ -11,7 +11,7 @@ type CrudRepository[M any] interface {
 	Create(ctx context.Context, m *M) error
 	Read(ctx context.Context, uuid string) (*M, error)
 	Update(ctx context.Context, uuid string, m *M) error
-	Delete(ctx context.Context, uuid string) (*M, error)
+	Delete(ctx context.Context, uuid string) error
 }
 
 type Repository[R any, M any] interface {
@@ -20,13 +20,21 @@ type Repository[R any, M any] interface {
 	Count(ctx context.Context, req *R) (int, error)
 }
 
+type InvoiceRepository interface {
+	Repository[model.RequestSearchInvoice, model.Invoice]
+}
+
+type InvoiceItemRepository interface {
+	Repository[model.RequestSearchInvoiceItem, model.InvoiceItem]
+}
+
 type Database interface {
 	Init() error
 	Ping() error
-	Invoice() Repository[model.RequestSearchInvoice, model.Invoice]
+	Invoice() InvoiceRepository
 	Contact() Repository[model.RequestSearchContact, model.Contact]
 	Credential() CrudRepository[model.Credentials]
-	InvoiceItem() Repository[model.RequestSearchInvoiceItem, model.InvoiceItem]
+	InvoiceItem() InvoiceItemRepository
 
 	Issuer() CrudRepository[model.Issuer]
 	Notification() CrudRepository[model.Notification]

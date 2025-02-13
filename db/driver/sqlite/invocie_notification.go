@@ -6,25 +6,33 @@ import (
 	"context"
 
 	"github.com/mindmain/eattura/db/model"
-	"xorm.io/xorm"
+	"gorm.io/gorm"
 )
 
 type invoiceNotificationRepository struct {
-	db *xorm.Engine
+	db *gorm.DB
 }
 
 func (i *invoiceNotificationRepository) Create(ctx context.Context, m *model.Notification) error {
+
+	result := i.db.Create(m)
+
+	if result.Error != nil {
+		return result.Error
+	}
+
 	return nil
+
 }
 
 func (i *invoiceNotificationRepository) Read(ctx context.Context, uuid string) (*model.Notification, error) {
-	return &model.Notification{}, nil
-}
 
-func (i *invoiceNotificationRepository) Update(ctx context.Context, uuid string, m *model.Notification) error {
-	return nil
-}
+	invoiceNotification := &model.Notification{}
+	result := i.db.First(invoiceNotification, uuid)
 
-func (i *invoiceNotificationRepository) Delete(ctx context.Context, uuid string) (*model.Notification, error) {
-	return &model.Notification{}, nil
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	return invoiceNotification, nil
 }

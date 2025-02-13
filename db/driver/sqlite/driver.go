@@ -4,10 +4,13 @@
 package sqlite
 
 import (
+	"fmt"
+
 	_ "github.com/mattn/go-sqlite3" // Importazione anonima per registrare il driver
 	"github.com/mindmain/eattura/db/driver"
 	"github.com/mindmain/eattura/db/model"
-	"xorm.io/xorm"
+	gSqlite "gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 func init() {
@@ -15,41 +18,40 @@ func init() {
 }
 
 type sqliteDb struct {
-	db *xorm.Engine
+	db *gorm.DB
 }
 
 func New(config *driver.DatabaseConfig) (driver.Database, error) {
 
-	engine, err := xorm.NewEngine("sqlite3", config.Uri)
-
+	db, err := gorm.Open(gSqlite.Open(config.Uri), &gorm.Config{})
 	if err != nil {
 		return nil, err
 	}
 
 	return &sqliteDb{
-		db: engine,
+		db: db,
 	}, nil
 }
 
 func (s *sqliteDb) Init() error {
 
-	if err := s.db.Sync(new(model.Contact)); err != nil {
-		return err
+	if err := s.db.AutoMigrate(&model.Invoice{}); err != nil {
+		return fmt.Errorf("failed to migrate model Invoice: %w", err)
 	}
-	if err := s.db.Sync(new(model.Credentials)); err != nil {
-		return err
+	if err := s.db.AutoMigrate(&model.Contact{}); err != nil {
+		return fmt.Errorf("failed to migrate model Contact: %w", err)
 	}
-	if err := s.db.Sync(new(model.Invoice)); err != nil {
-		return err
+	if err := s.db.AutoMigrate(&model.Credentials{}); err != nil {
+		return fmt.Errorf("failed to migrate model Credentials: %w", err)
 	}
-	if err := s.db.Sync(new(model.InvoiceItem)); err != nil {
-		return err
+	if err := s.db.AutoMigrate(&model.InvoiceItem{}); err != nil {
+		return fmt.Errorf("failed to migrate model InvoiceItem: %w", err)
 	}
-	if err := s.db.Sync(new(model.Issuer)); err != nil {
-		return err
+	if err := s.db.AutoMigrate(&model.Issuer{}); err != nil {
+		return fmt.Errorf("failed to migrate model Issuer: %w", err)
 	}
-	if err := s.db.Sync(new(model.Notification)); err != nil {
-		return err
+	if err := s.db.AutoMigrate(&model.Notification{}); err != nil {
+		return fmt.Errorf("failed to migrate model Notification: %w", err)
 	}
 
 	return nil
@@ -65,7 +67,7 @@ func (s *sqliteDb) Close() error {
 
 }
 
-func (s *sqliteDb) Invoice() driver.Repository[model.RequestSearchInvoice, model.Invoice] {
+func (s *sqliteDb) Invoice() driver.InvoiceRepository {
 	return &invoiceRepository{
 		db: s.db,
 	}
@@ -83,7 +85,7 @@ func (s *sqliteDb) Credential() driver.CrudRepository[model.Credentials] {
 	}
 }
 
-func (s *sqliteDb) InvoiceItem() driver.Repository[model.RequestSearchInvoiceItem, model.InvoiceItem] {
+func (s *sqliteDb) InvoiceItem() driver.InvoiceItemRepository {
 	return &invoiceItemRepository{
 		db: s.db,
 	}
@@ -95,7 +97,7 @@ func (s *sqliteDb) Issuer() driver.CrudRepository[model.Issuer] {
 	}
 }
 
-func (s *sqliteDb) Notification() driver.CrudRepository[model.Notification] {
+func (s *sqliteDb) Notification() driver.NotificationRepository {
 	return &invoiceNotificationRepository{
 		db: s.db,
 	}
