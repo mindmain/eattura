@@ -13,6 +13,7 @@ type Type string
 
 const (
 	Local Type = "local"
+	None  Type = "none"
 )
 
 const (
@@ -101,6 +102,10 @@ func getDriverFromType(driverType Type) (driver.FileDriver, error) {
 			return nil, ErrorPermissionDenied
 		}
 
+		return dd, nil
+	case None:
+		caller, _ := driver.GetDriver("none")
+		dd, _ := caller(&driver.StorageConfig{})
 		return dd, nil
 	default:
 		return nil, ErrorInvalidDriverType
