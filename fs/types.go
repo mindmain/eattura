@@ -20,6 +20,7 @@ const (
 	folderInvoices   string = "invoices"
 	folderSDISuccess string = "sdi_success"
 	folderSDIFail    string = "sdi_fail"
+	folderDraft      string = "draft"
 )
 
 type FileReference interface {
@@ -47,6 +48,8 @@ type SDIResultDirectoryReference interface {
 }
 
 type InvoiceFileHandler interface {
+	SaveDraft(ctx context.Context, filename string, data []byte) error
+	RemoveDraft(ctx context.Context, filename string) error
 	SaveInvoice(ctx context.Context, filename string, invoice *fe.FatturaElettronica) error
 	List(ctx context.Context) ([]InvoiceDirectoryReference, error)
 

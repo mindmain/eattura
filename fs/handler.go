@@ -11,6 +11,16 @@ import (
 	"github.com/mindmain/eattura/sdi/fe"
 )
 
+func (h *handler) SaveDraft(ctx context.Context, filename string, data []byte) error {
+	dest := path.Join(folderDraft, filename)
+	return h.driver.WriteFile(dest, data)
+}
+func (h *handler) RemoveDraft(ctx context.Context, filename string) error {
+
+	dest := path.Join(folderDraft, filename)
+	return h.driver.RemoveAll(dest)
+}
+
 func (h *handler) SaveInvoice(ctx context.Context, filename string, invoice *fe.FatturaElettronica) error {
 
 	date := invoice.Date()
