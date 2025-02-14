@@ -50,24 +50,56 @@ func InitConfig() error {
 	viper.SetDefault("database.type", "sqlite3")
 	viper.SetDefault("database.uri", path.Join(configPathFolder, "eattura.db"))
 	viper.SetDefault("database.name", "eattura")
-	viper.SetDefault("database.user", "")
-	viper.SetDefault("database.password", "")
+	viper.SetDefault("database.user", nil)
+	viper.SetDefault("database.password", nil)
 
 	viper.SetDefault("storage.type", "local")
 	viper.SetDefault("storage.folder", path.Join(configPathFolder, "storage"))
 	viper.SetDefault("secure.type", "os")
 
-	viper.SetDefault("pec.username", "")
-	viper.SetDefault("pec.password", "")
-	viper.SetDefault("pec.sdi", "")
-	viper.SetDefault("pec.smtp.host", "")
+	viper.SetDefault("pec.username", nil)
+	viper.SetDefault("pec.password", nil)
+	viper.SetDefault("pec.sdi", nil)
+	viper.SetDefault("pec.smtp.host", nil)
 	viper.SetDefault("pec.smtp.port", 465)
 
-	viper.SetDefault("pec.imap.host", "")
+	viper.SetDefault("pec.imap.host", nil)
 	viper.SetDefault("pec.imap.port", 993)
 	viper.SetDefault("pec.imap.inbox", "INBOX")
 	viper.SetDefault("pec.imap.outbox", "INBOX/Sent")
 	viper.SetDefault("pec.imap.tls", true)
+
+	viper.SetDefault("issuer.type", "db")
+	viper.SetDefault("issuer.title", nil)
+	viper.SetDefault("issuer.name", nil)
+	viper.SetDefault("issuer.surname", nil)
+	viper.SetDefault("issuer.denomination", nil)
+	viper.SetDefault("issuer.email", nil)
+	viper.SetDefault("issuer.phone", nil)
+	viper.SetDefault("issuer.cod_eori", nil)
+	viper.SetDefault("issuer.vat_code", nil)
+	viper.SetDefault("issuer.vat_nation", nil)
+	viper.SetDefault("issuer.fiscal_code", nil)
+
+	viper.SetDefault("issuer.address.country", nil)
+	viper.SetDefault("issuer.address.province", nil)
+	viper.SetDefault("issuer.address.city", nil)
+	viper.SetDefault("issuer.address.street", nil)
+	viper.SetDefault("issuer.address.number", nil)
+	viper.SetDefault("issuer.address.zip_code", nil)
+
+	viper.SetDefault("issuer.location.country", nil)
+	viper.SetDefault("issuer.location.province", nil)
+	viper.SetDefault("issuer.location.city", nil)
+	viper.SetDefault("issuer.location.street", nil)
+	viper.SetDefault("issuer.location.number", nil)
+	viper.SetDefault("issuer.location.zip_code", nil)
+
+	viper.SetDefault("issuer.rea.office", nil)
+	viper.SetDefault("issuer.rea.number", nil)
+	viper.SetDefault("issuer.rea.capital", nil)
+	viper.SetDefault("issuer.rea.solo_shareholder", nil)
+	viper.SetDefault("issuer.rea.in_liquidation", nil)
 
 	viper.SetDefault("api.port", ApiPort)
 	viper.SetDefault("api.enabled", false)
@@ -100,6 +132,10 @@ func InitConfig() error {
 
 func Get(key string) string {
 	return viper.GetString(key)
+}
+
+func GetFloat(key string) float64 {
+	return viper.GetFloat64(key)
 }
 
 func GetInt(key string) int {
