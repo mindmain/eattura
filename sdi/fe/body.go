@@ -104,7 +104,7 @@ type ContattiTrasmittente struct {
 
 type IscrizioneREA struct {
 	Ufficio           string            `xml:"Ufficio,omitempty" json:"Ufficio" validate:"omitempty,max=2"`
-	NumeroREA         string            `xml:"NumeroREA,omitempty" json:"NumeroREA" validate:"omitempty,max=20"`
+	NumeroREA         F64               `xml:"NumeroREA,omitempty" json:"NumeroREA" validate:"omitempty,max=20"`
 	CapitaleSociale   string            `xml:"CapitaleSociale,omitempty" json:"CapitaleSociale" validate:"omitempty,max=15"`
 	SocioUnico        SocioUnico        `xml:"SocioUnico,omitempty" json:"SocioUnico" validate:"omitempty,max=2"`
 	StatoLiquidazione StatoLiquidazione `xml:"StatoLiquidazione,omitempty" json:"StatoLiquidazione" validate:"omitempty,max=2"`
