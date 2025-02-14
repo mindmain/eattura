@@ -10,14 +10,14 @@ type FormatoTrasmissione string
 const FPR12 = FormatoTrasmissione("FPR12")
 const FPA12 = FormatoTrasmissione("FPA12")
 
-type TipoSocieta string
+type SocioUnico string
 
 const (
 	SU = "SU"
 	SM = "SM"
 )
 
-var TipiSocieta = MapTypeString[TipoSocieta]{
+var SocioUnicoMap = MapTypeString[SocioUnico]{
 	SU: "La società è a socio unico",
 	SM: "La società non è a socio unico",
 }

@@ -63,12 +63,12 @@ type IdFiscaleIVA struct {
 }
 
 type IndirizzoType struct {
-	Indirizzo    string `xml:"Indirizzo,omitempty" json:"Indirizzo" validate:"max=60,required"`
-	NumeroCivico string `xml:"NumeroCivico,omitempty" json:"NumeroCivico" validate:"required,max=8"`
-	CAP          string `xml:"CAP,omitempty" json:"CAP" validate:"len=5,isInteger,required"`
-	Comune       string `xml:"Comune,omitempty" json:"Comune" validate:"required,max=60"`
-	Provincia    string `xml:"Provincia,omitempty" json:"Provincia" validate:"required,len=2"`
-	Nazione      string `xml:"Nazione,omitempty" json:"Nazione" validate:"required,len=2"`
+	Indirizzo    string   `xml:"Indirizzo,omitempty" json:"Indirizzo" validate:"max=60,required"`
+	NumeroCivico string   `xml:"NumeroCivico,omitempty" json:"NumeroCivico" validate:"required,max=8"`
+	CAP          string   `xml:"CAP,omitempty" json:"CAP" validate:"len=5,isInteger,required"`
+	Comune       string   `xml:"Comune,omitempty" json:"Comune" validate:"required,max=60"`
+	Provincia    Province `xml:"Provincia,omitempty" json:"Provincia" validate:"required,len=2"`
+	Nazione      string   `xml:"Nazione,omitempty" json:"Nazione" validate:"required,len=2"`
 }
 
 type DatiTrasmissione struct {
@@ -85,7 +85,7 @@ type DatiAnagrafici struct {
 	CodiceFiscale        string        `xml:"CodiceFiscale,omitempty" json:"CodiceFiscale" validate:"omitempty,min=11,max=16,isFiscalCode"`
 	Anagrafica           *Anagrafica   `xml:"Anagrafica,omitempty" json:"Anagrafica"`
 	AlboProfessionale    string        `xml:"AlboProfessionale,omitempty" json:"AlboProfessionale" validate:"omitempty,max=60"`
-	ProvinciaAlbo        string        `xml:"ProvinciaAlbo,omitempty" json:"ProvinciaAlbo" validate:"omitempty,len=2"`
+	ProvinciaAlbo        Province      `xml:"ProvinciaAlbo,omitempty" json:"ProvinciaAlbo" validate:"omitempty,len=2"`
 	NumeroIscrizioneAlbo string        `xml:"NumeroIscrizioneAlbo,omitempty" json:"NumeroIscrizioneAlbo" validate:"omitempty,max=60"`
 	DataIscrizioneAlbo   Date          `xml:"DataIscrizioneAlbo,omitempty" json:"DataIscrizioneAlbo"`
 	RegimeFiscale        RegimeFiscale `xml:"RegimeFiscale,omitempty" json:"RegimeFiscale" validate:"omitempty,len=4,startswith=RF,isTypeRegimeFiscale"`
@@ -102,10 +102,19 @@ type ContattiTrasmittente struct {
 	Email    string `xml:"Email,omitempty" json:"Email" validate:"omitempty,email,max=255"`
 }
 
+type IscrizioneREA struct {
+	Ufficio           string            `xml:"Ufficio,omitempty" json:"Ufficio" validate:"omitempty,max=2"`
+	NumeroREA         string            `xml:"NumeroREA,omitempty" json:"NumeroREA" validate:"omitempty,max=20"`
+	CapitaleSociale   string            `xml:"CapitaleSociale,omitempty" json:"CapitaleSociale" validate:"omitempty,max=15"`
+	SocioUnico        SocioUnico        `xml:"SocioUnico,omitempty" json:"SocioUnico" validate:"omitempty,max=2"`
+	StatoLiquidazione StatoLiquidazione `xml:"StatoLiquidazione,omitempty" json:"StatoLiquidazione" validate:"omitempty,max=2"`
+}
+
 type CedentePrestatore struct {
 	DatiAnagrafici *DatiAnagrafici `xml:"DatiAnagrafici,omitempty" json:"DatiAnagrafici"`
 	Sede           *IndirizzoType  `xml:"Sede,omitempty" json:"Sede"`
-	Contatti       *Contatti       `xml:"Contatti,omitempty" json:"Contatti"`
+	Contatti       *Contatti       `xml:"Contatti,omitempty" json:"Contatti,omitempty"`
+	IscrizioneREA  *IscrizioneREA  `xml:"IscrizioneREA,omitempty" json:"IscrizioneREA,omitempty"`
 }
 
 type CessionarioCommittente struct {

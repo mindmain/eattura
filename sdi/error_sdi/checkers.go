@@ -66,7 +66,7 @@ func hasCode00001(invoice *fe.FatturaElettronica) bool {
 }
 
 // checker of error Code_00002: Nome file duplicato
-func hasCode00002(invocie *fe.FatturaElettronica) bool {
+func hasCode00002(invoice *fe.FatturaElettronica) bool {
 	// TODO: Implement this
 	return false
 }
@@ -173,7 +173,7 @@ func hasCode00413(invoice *fe.FatturaElettronica) bool {
 	return false
 }
 
-// checker of error Code_00414: Nalla cassaPrevidenziale, viene indicata la natura ma l'aliquota non è zero
+// checker of error Code_00414: Nella cassaPrevidenziale, viene indicata la natura ma l'aliquota non è zero
 func hasCode00414(invoice *fe.FatturaElettronica) bool {
 	// TODO: Implement this
 	return false
