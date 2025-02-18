@@ -32,7 +32,7 @@ func TestReadFromFile(t *testing.T) {
 		</FatturaElettronicaHeader>
 	</FatturaElettronica>`)
 
-	fe, err := ReadFromFile(reader)
+	fe, err := Read(reader)
 
 	assert.Nil(t, err)
 	assert.NotNil(t, fe)

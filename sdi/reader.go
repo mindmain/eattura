@@ -7,7 +7,7 @@ import (
 	"github.com/mindmain/eattura/sdi/fe"
 )
 
-func ReadFromFile(f io.Reader) (*fe.FatturaElettronica, error) {
+func Read(f io.Reader) (*fe.FatturaElettronica, error) {
 
 	var fe fe.FatturaElettronica
 

@@ -373,10 +373,44 @@ type FatturaElettronicaBody struct {
 // FatturaElettronica The structure of a multi body electronic invoice, if you need only one body,
 // just insert a single element in the FatturaElettronicaBod slice...
 type FatturaElettronica struct {
+	uniqueFileName           [5]byte `json:"-" xml:"-"`
 	XMLName                  xml.Name
 	Versione                 FormatoTrasmissione       `xml:"versione,attr" json:"Versione"`
 	FatturaElettronicaHeader *FatturaElettronicaHeader `xml:"FatturaElettronicaHeader,omitempty" json:"FatturaElettronicaHeader"`
 	FatturaElettronicaBody   []*FatturaElettronicaBody `xml:"FatturaElettronicaBody,omitempty" json:"FatturaElettronicaBody"`
 	Signature                string                    `xml:"ds:Signature,omitempty" json:"Signature"`
 	Xmlns                    xml.Attr                  `xml:",attr" json:"Xmlns"`
+}
+
+func (f *FatturaElettronica) SetUniqueFileName(name [5]byte) {
+	f.uniqueFileName = name
+}
+
+func (f *FatturaElettronica) Filename() (string, error) {
+
+	if f.uniqueFileName == [5]byte{} {
+		return "", fmt.Errorf("uniqueFileName is empty use SetUniqueFileName")
+	}
+
+	if f.FatturaElettronicaHeader == nil {
+		return "", fmt.Errorf("FatturaElettronicaHeader is empty")
+	}
+
+	if f.FatturaElettronicaHeader.CedentePrestatore == nil {
+		return "", fmt.Errorf("CedentePrestatore is empty")
+	}
+
+	if f.FatturaElettronicaHeader.CedentePrestatore.DatiAnagrafici == nil {
+		return "", fmt.Errorf("DatiAnagrafici is empty")
+	}
+
+	if f.FatturaElettronicaHeader.CedentePrestatore.DatiAnagrafici.IdFiscaleIVA == nil {
+		return "", fmt.Errorf("IdFiscaleIVA is empty")
+	}
+
+	return fmt.Sprintf("%s%s_%s.xml",
+		f.FatturaElettronicaHeader.CedentePrestatore.DatiAnagrafici.IdFiscaleIVA.IdPaese,
+		f.FatturaElettronicaHeader.CedentePrestatore.DatiAnagrafici.IdFiscaleIVA.IdCodice,
+		f.uniqueFileName), nil
+
 }
