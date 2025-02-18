@@ -8,6 +8,7 @@ type Issuer struct {
 	Credential     *Credentials `json:"credential" gorm:"foreignKey:CredentialUUID;references:UUID"`
 
 	VatId      string `json:"vat_id" gorm:"type:text;index;column:vat_id"`
+	VatNation  string `json:"vat_nation" gorm:"size:2;column:vat_nation"`
 	FiscalCode string `json:"fiscal_code" gorm:"size:255;column:fiscal_code"`
 
 	Title        string `json:"title" gorm:"size:255;column:title"`
