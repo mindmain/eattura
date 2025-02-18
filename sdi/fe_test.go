@@ -1,6 +1,7 @@
 package sdi
 
 import (
+	"io"
 	"strings"
 	"testing"
 
@@ -16,9 +17,8 @@ func TestIsInvoiceFilename(t *testing.T) {
 
 }
 
-func TestReadFromFile(t *testing.T) {
-
-	reader := strings.NewReader(`<?xml version="1.0" encoding="UTF-8"?>
+func testInvoiceOnlyFilename() io.Reader {
+	return strings.NewReader(`<?xml version="1.0" encoding="UTF-8"?>
 	<FatturaElettronica xmlns="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2" versione="FPR12">
 		<FatturaElettronicaHeader>
 			<DatiTrasmissione>
@@ -29,14 +29,57 @@ func TestReadFromFile(t *testing.T) {
 				<ProgressivoInvio>00001</ProgressivoInvio>
 				<FormatoTrasmissione>FPR12</FormatoTrasmissione>
 			</DatiTrasmissione>
+			<CedentePrestatore>
+				<DatiAnagrafici>
+					<IdFiscaleIVA>
+						<IdPaese>IT</IdPaese>
+						<IdCodice>12345678901</IdCodice>
+					</IdFiscaleIVA>
+					<Anagrafica>
+						<Denominazione>Denominazione</Denominazione>
+					</Anagrafica>
+				</DatiAnagrafici>
+			</CedentePrestatore>
 		</FatturaElettronicaHeader>
 	</FatturaElettronica>`)
+}
 
-	fe, err := Read(reader)
+func TestReadFromFile(t *testing.T) {
 
-	assert.Nil(t, err)
+	reader := testInvoiceOnlyFilename()
+
+	fe, err := Read("IT12345678901_12345.xml", reader)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assert.NoError(t, err)
 	assert.NotNil(t, fe)
 	assert.Equal(t, "IT", fe.FatturaElettronicaHeader.DatiTrasmissione.IdTrasmittente.IdPaese)
 	assert.Equal(t, "01234567890", fe.FatturaElettronicaHeader.DatiTrasmissione.IdTrasmittente.IdCodice)
+
+	filename, err := fe.Filename()
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assert.Equal(t, "IT12345678901_12345.xml", filename)
+}
+
+func TestFilename(t *testing.T) {
+
+	t.Run("test wrong filename", func(t *testing.T) {
+		_, err := Read("IT12345678901_123456.xml", nil)
+		assert.Error(t, err)
+		assert.Equal(t, ErrInvalidFileName, err)
+	})
+
+	t.Run("test wrong filename", func(t *testing.T) {
+		_, err := Read("IT12345678901.xml", nil)
+		assert.Error(t, err)
+		assert.Equal(t, ErrInvalidFileName, err)
+	})
 
 }
