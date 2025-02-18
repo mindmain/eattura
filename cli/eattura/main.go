@@ -5,10 +5,6 @@ import (
 	"os"
 
 	"github.com/mindmain/eattura/core"
-	"github.com/mindmain/eattura/db"
-	"github.com/mindmain/eattura/fs"
-	"github.com/mindmain/eattura/pec"
-	"github.com/mindmain/eattura/secure"
 	"github.com/spf13/cobra"
 )
 
@@ -32,11 +28,11 @@ func main() {
 	cmd.Flags().BoolVarP(&versionFlag, "version", "v", false, "Print version")
 
 	cmd.PersistentFlags().StringVarP(&core.ConfigPathFile, "config", "c", core.ConfigPathFile, fmt.Sprintf("Path to the configuration file, default is %s", core.ConfigPathFile))
-	cmd.AddCommand(core.Command())
-	cmd.AddCommand(fs.Command())
-	cmd.AddCommand(secure.Command())
-	cmd.AddCommand(pec.Command())
-	cmd.AddCommand(db.Command())
+	cmd.AddCommand(ConfigCommand())
+	cmd.AddCommand(FsCommand())
+	cmd.AddCommand(SecureCommand())
+	cmd.AddCommand(PecCommand())
+	cmd.AddCommand(DatabaseCommand())
 	cobra.OnInitialize(func() {
 		if err := core.InitConfig(); err != nil {
 			cmd.Println(err)

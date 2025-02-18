@@ -1,12 +1,13 @@
-package fs
+package main
 
 import (
 	"path"
 
+	"github.com/mindmain/eattura/fs"
 	"github.com/spf13/cobra"
 )
 
-func Command() *cobra.Command {
+func FsCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "fs",
@@ -41,7 +42,7 @@ func commandInvoiceLs() *cobra.Command {
 		Short: "list all invoices.",
 		Run: func(cmd *cobra.Command, args []string) {
 
-			storage, err := New()
+			storage, err := fs.New()
 
 			if err != nil {
 				cmd.PrintErr(err)

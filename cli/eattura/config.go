@@ -1,4 +1,4 @@
-package core
+package main
 
 import (
 	"encoding/json"
@@ -6,30 +6,31 @@ import (
 	"log"
 	"os"
 
+	"github.com/mindmain/eattura/core"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
-func Command() *cobra.Command {
+func ConfigCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "init an configuration file",
 	}
 
-	cmd.AddCommand(commandGet())
-	cmd.AddCommand(commandDelete())
-	cmd.AddCommand(commandInit())
+	cmd.AddCommand(configCommandGet())
+	cmd.AddCommand(configCommandDelete())
+	cmd.AddCommand(configCommandInit())
 	return cmd
 }
 
-func commandGet() *cobra.Command {
+func configCommandGet() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get",
 		Short: "print the configuration",
 		Run: func(cmd *cobra.Command, args []string) {
 
-			if IsEnabledConfigFile() {
+			if core.IsEnabledConfigFile() {
 				config := viper.GetViper().ConfigFileUsed()
 				fmt.Println("config file:", config)
 			} else {
@@ -48,16 +49,16 @@ func commandGet() *cobra.Command {
 	return cmd
 }
 
-func commandDelete() *cobra.Command {
+func configCommandDelete() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "delete",
 		Short: "delete the configuration",
 		Run: func(cmd *cobra.Command, args []string) {
-			if _, err := os.Stat(ConfigPathFile); os.IsNotExist(err) {
+			if _, err := os.Stat(core.ConfigPathFile); os.IsNotExist(err) {
 				log.Fatal("config file does not exist")
 			}
 
-			err := os.Remove(ConfigPathFile)
+			err := os.Remove(core.ConfigPathFile)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -67,14 +68,14 @@ func commandDelete() *cobra.Command {
 	return cmd
 }
 
-func commandInit() *cobra.Command {
+func configCommandInit() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "init an configuration file",
 
 		Run: func(cmd *cobra.Command, args []string) {
-			if !IsEnabledConfigFile() {
+			if !core.IsEnabledConfigFile() {
 				log.Fatal("config file is disabled")
 			}
 

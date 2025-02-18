@@ -5,7 +5,6 @@ import (
 
 	"github.com/mindmain/eattura/core"
 	"github.com/mindmain/eattura/db/driver"
-	"github.com/spf13/cobra"
 )
 
 type Type string
@@ -52,65 +51,4 @@ func getType(raw string) Type {
 	}
 
 	return ""
-}
-
-func Command() *cobra.Command {
-	cmd := &cobra.Command{
-		Use: "db",
-	}
-
-	cmd.AddCommand(commandInit())
-	cmd.AddCommand(commandCount())
-	return cmd
-}
-
-func commandInit() *cobra.Command {
-	cmd := &cobra.Command{
-		Use: "init",
-		Run: func(cmd *cobra.Command, args []string) {
-			database, err := New()
-
-			if err != nil {
-				cmd.Println(err)
-				return
-			}
-
-			err = database.Init()
-
-			if err != nil {
-				cmd.Println(err)
-				return
-			}
-
-		},
-	}
-
-	return cmd
-}
-
-func commandCount() *cobra.Command {
-	cmd := &cobra.Command{
-		Use: "count",
-		Run: func(cmd *cobra.Command, args []string) {
-
-			database, err := New()
-
-			if err != nil {
-				cmd.Println(err)
-				return
-			}
-
-			contactCount, err := database.Contact().Count(cmd.Context(), nil)
-
-			if err != nil {
-				cmd.Println(err)
-				return
-			}
-
-			cmd.Println("Contact count:", contactCount)
-
-		},
-	}
-
-	return cmd
 }

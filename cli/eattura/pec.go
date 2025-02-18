@@ -1,16 +1,17 @@
-package pec
+package main
 
 import (
 	"os"
 	"path/filepath"
 
+	"github.com/mindmain/eattura/pec"
 	"github.com/mindmain/eattura/secure"
 	"github.com/spf13/cobra"
 )
 
 var commandUUID string
 
-func Command() *cobra.Command {
+func PecCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "pec",
 	}
@@ -47,7 +48,7 @@ func commandListMbox() *cobra.Command {
 				return
 			}
 
-			client := NewPEC(ss)
+			client := pec.NewPEC(ss)
 
 			conn, err := client.Connect(cmd.Context(), commandUUID)
 
@@ -91,7 +92,7 @@ func commandRead() *cobra.Command {
 				return
 			}
 
-			client := NewPEC(ss)
+			client := pec.NewPEC(ss)
 
 			conn, err := client.Connect(cmd.Context(), commandUUID)
 
@@ -120,7 +121,7 @@ func commandRead() *cobra.Command {
 					cmd.Println(msg)
 				}
 			} else {
-				messages, err := mbox.Read(cmd.Context(), &SearchMessage{
+				messages, err := mbox.Read(cmd.Context(), &pec.SearchMessage{
 					Tail: tail,
 				})
 
@@ -159,7 +160,7 @@ func commandSend() *cobra.Command {
 				return
 			}
 
-			client := NewPEC(ss)
+			client := pec.NewPEC(ss)
 
 			conn, err := client.Connect(cmd.Context(), commandUUID)
 
@@ -169,7 +170,7 @@ func commandSend() *cobra.Command {
 			}
 			defer conn.Close()
 
-			msg := &RequestSend{
+			msg := &pec.RequestSend{
 				Subject: subject,
 			}
 
