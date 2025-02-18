@@ -122,6 +122,8 @@ type CessionarioCommittente struct {
 	Sede                  *IndirizzoType         `xml:"Sede,omitempty" json:"Sede" validate:"required"`
 	StabileOrganizzazione *IndirizzoType         `xml:"StabileOrganizzazione,omitempty" json:"StabileOrganizzazione"`
 	RappresentanteFiscale *RappresentanteFiscale `xml:"RappresentanteFiscale,omitempty" json:"RappresentanteFiscale"`
+	// Not support for now
+	RiferimentoAmministrazione string `xml:"RiferimentoAmministrazione,omitempty" json:"RiferimentoAmministrazione" validate:"omitempty,max=20"`
 }
 
 type RappresentanteFiscale struct {
@@ -136,12 +138,15 @@ type TerzoIntermediarioOSoggettoEmittente struct {
 }
 
 type FatturaElettronicaHeader struct {
-	DatiTrasmissione                     *DatiTrasmissione                     `xml:"DatiTrasmissione,omitempty" json:"DatiTrasmissione"`
-	CedentePrestatore                    *CedentePrestatore                    `xml:"CedentePrestatore,omitempty" json:"CedentePrestatore"`
-	RappresentanteFiscale                *RappresentanteFiscale                `xml:"RappresentanteFiscale,omitempty" json:"RappresentanteFiscale" validate:"omitempty"`
-	CessionarioCommittente               *CessionarioCommittente               `xml:"CessionarioCommittente,omitempty" json:"CessionarioCommittente"`
+	DatiTrasmissione  *DatiTrasmissione  `xml:"DatiTrasmissione,omitempty" json:"DatiTrasmissione"`
+	CedentePrestatore *CedentePrestatore `xml:"CedentePrestatore,omitempty" json:"CedentePrestatore"`
+	// Not support for now
+	RappresentanteFiscale  *RappresentanteFiscale  `xml:"RappresentanteFiscale,omitempty" json:"RappresentanteFiscale" validate:"omitempty"`
+	CessionarioCommittente *CessionarioCommittente `xml:"CessionarioCommittente,omitempty" json:"CessionarioCommittente"`
+	// Not support for now
 	TerzoIntermediarioOSoggettoEmittente *TerzoIntermediarioOSoggettoEmittente `xml:"TerzoIntermediarioOSoggettoEmittente,omitempty" json:"TerzoIntermediarioOSoggettoEmittente" validate:"omitempty"`
-	SoggettoEmittente                    SoggettoEmittente                     `xml:"SoggettoEmittente,omitempty" json:"SoggettoEmittente" validate:"omitempty,len=2,oneof=CC CZ"`
+	// Not support for now
+	SoggettoEmittente SoggettoEmittente `xml:"SoggettoEmittente,omitempty" json:"SoggettoEmittente" validate:"omitempty,len=2,oneof=CC CZ"`
 }
 
 type Allegati struct {
@@ -183,22 +188,25 @@ type DatiRiepilogo struct {
 }
 
 type DettaglioLinee struct {
-	NumeroLinea                int                    `xml:"NumeroLinea,omitempty" json:"NumeroLinea" validate:"min=1,max=9999"`
-	TipoCessionePrestazione    string                 `xml:"TipoCessionePrestazione,omitempty" json:"TipoCessionePrestazione" validate:"isTypeCassaP"`
-	CodiceArticolo             *CodiceArticolo        `xml:"CodiceArticolo,omitempty" json:"CodiceArticolo"`
-	Descrizione                string                 `xml:"Descrizione,omitempty" json:"Descrizione" validate:"required,max=1000"`
-	Quantita                   F64                    `xml:"Quantita,omitempty" json:"Quantita" validate:"max=21,min=4"`
-	UnitaMisura                string                 `xml:"UnitaMisura,omitempty" json:"UnitaMisura" validate:"max=10"`
-	DataInizioPeriodo          Date                   `xml:"DataInizioPeriodo,omitempty" json:"DataInizioPeriodo" validate:"isDate"`
-	DataFinePeriodo            Date                   `xml:"DataFinePeriodo,omitempty" json:"DataFinePeriodo" validate:"isDate"`
-	PrezzoUnitario             F64                    `xml:"PrezzoUnitario,omitempty" json:"PrezzoUnitario" validate:"min=4,max=21"`
-	ScontoMaggiorazione        *ScontoMaggiorazione   `xml:"ScontoMaggiorazione,omitempty" json:"ScontoMaggiorazione"`
-	PrezzoTotale               F64                    `xml:"PrezzoTotale,omitempty" json:"PrezzoTotale" validate:"min=4,max=21"`
-	AliquotaIVA                F64                    `xml:"AliquotaIVA" json:"AliquotaIVA" validate:"isIva"`
-	Ritenuta                   string                 `xml:"Ritenuta,omitempty" json:"Ritenuta" validate:"omitempty,eq=SI"`
-	Natura                     Natura                 `xml:"Natura,omitempty" json:"Natura" validate:"isNatura"`
-	RiferimentoAmministrazione string                 `xml:"RiferimentoAmministrazione,omitempty" json:"RiferimentoAmministrazione" validate:"max=20"`
-	AltriDatiGestionali        []*AltriDatiGestionali `xml:"AltriDatiGestionali,omitempty" json:"AltriDatiGestionali"`
+	NumeroLinea             int             `xml:"NumeroLinea,omitempty" json:"NumeroLinea" validate:"min=1,max=9999"`
+	TipoCessionePrestazione string          `xml:"TipoCessionePrestazione,omitempty" json:"TipoCessionePrestazione" validate:"isTypeCassaP"`
+	CodiceArticolo          *CodiceArticolo `xml:"CodiceArticolo,omitempty" json:"CodiceArticolo"`
+	Descrizione             string          `xml:"Descrizione,omitempty" json:"Descrizione" validate:"required,max=1000"`
+	Quantita                F64             `xml:"Quantita,omitempty" json:"Quantita" validate:"max=21,min=4"`
+	UnitaMisura             string          `xml:"UnitaMisura,omitempty" json:"UnitaMisura" validate:"max=10"`
+	DataInizioPeriodo       Date            `xml:"DataInizioPeriodo,omitempty" json:"DataInizioPeriodo" validate:"isDate"`
+	DataFinePeriodo         Date            `xml:"DataFinePeriodo,omitempty" json:"DataFinePeriodo" validate:"isDate"`
+	PrezzoUnitario          F64             `xml:"PrezzoUnitario,omitempty" json:"PrezzoUnitario" validate:"min=4,max=21"`
+	// Not support for now
+	ScontoMaggiorazione *ScontoMaggiorazione `xml:"ScontoMaggiorazione,omitempty" json:"ScontoMaggiorazione"`
+	PrezzoTotale        F64                  `xml:"PrezzoTotale,omitempty" json:"PrezzoTotale" validate:"min=4,max=21"`
+	AliquotaIVA         F64                  `xml:"AliquotaIVA" json:"AliquotaIVA" validate:"isIva"`
+	Ritenuta            string               `xml:"Ritenuta,omitempty" json:"Ritenuta" validate:"omitempty,eq=SI"`
+	Natura              Natura               `xml:"Natura,omitempty" json:"Natura" validate:"isNatura"`
+	// Not support for now
+	RiferimentoAmministrazione string `xml:"RiferimentoAmministrazione,omitempty" json:"RiferimentoAmministrazione" validate:"max=20"`
+	// Not support for now
+	AltriDatiGestionali []*AltriDatiGestionali `xml:"AltriDatiGestionali,omitempty" json:"AltriDatiGestionali"`
 }
 
 type DatiBeniServizi struct {
@@ -354,9 +362,12 @@ type ScontoMaggiorazione struct {
 type FatturaElettronicaBody struct {
 	DatiGenerali    *DatiGenerali    `xml:"DatiGenerali,omitempty" json:"DatiGenerali"`
 	DatiBeniServizi *DatiBeniServizi `xml:"DatiBeniServizi,omitempty" json:"DatiBeniServizi"`
-	DatiVeicolo     *DatiVeicolo     `xml:"DatiVeicolo,omitempty" json:"DatiVeicolo"`
-	DatiPagamento   *DatiPagamento   `xml:"DatiPagamento,omitempty" json:"DatiPagamento"`
-	Allegati        []*Allegati      `xml:"Allegati,omitempty" json:"Allegati" validate:"dive"`
+	//Not support for now
+	DatiVeicolo *DatiVeicolo `xml:"DatiVeicolo,omitempty" json:"DatiVeicolo"`
+	//Not support for now
+	DatiPagamento *DatiPagamento `xml:"DatiPagamento,omitempty" json:"DatiPagamento"`
+	// Not support for now
+	Allegati []*Allegati `xml:"Allegati,omitempty" json:"Allegati" validate:"dive"`
 }
 
 // FatturaElettronica The structure of a multi body electronic invoice, if you need only one body,
