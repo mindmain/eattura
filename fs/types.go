@@ -9,11 +9,11 @@ import (
 	"github.com/mindmain/eattura/sdi/fe"
 )
 
-type Type string
+type Type = core.StorageType
 
 const (
-	Local Type = "local"
-	None  Type = "none"
+	Local Type = core.StorageLocalDirectory
+	None  Type = core.StorageNone
 )
 
 const (
@@ -63,7 +63,7 @@ type handler struct {
 
 func New() (InvoiceFileHandler, error) {
 
-	driverType := Type(core.Get("storage.type"))
+	driverType := core.GetStorageType()
 
 	dd, err := getDriverFromType(driverType)
 
