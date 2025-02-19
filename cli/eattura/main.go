@@ -33,6 +33,7 @@ func main() {
 	cmd.AddCommand(SecureCommand())
 	cmd.AddCommand(PecCommand())
 	cmd.AddCommand(DatabaseCommand())
+	cmd.AddCommand(CommandService())
 	cobra.OnInitialize(func() {
 		if err := core.InitConfig(); err != nil {
 			cmd.Println(err)
