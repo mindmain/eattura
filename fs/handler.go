@@ -52,12 +52,14 @@ func (h *handler) List(ctx context.Context) ([]InvoiceDirectoryReference, error)
 
 	var dirs []InvoiceDirectoryReference
 
-	for _, year := range yearsDir {
+	for _, folderYear := range yearsDir {
+
+		year := path.Base(folderYear)
 
 		testYear, err := strconv.Atoi(year)
 
 		if err != nil {
-			log.Printf("invalid year folder: %s", year)
+			log.Printf("invalid year folder: %s", folderYear)
 			continue
 		}
 
@@ -67,12 +69,14 @@ func (h *handler) List(ctx context.Context) ([]InvoiceDirectoryReference, error)
 			return nil, err
 		}
 
-		for _, month := range monthsDir {
+		for _, monthFolder := range monthsDir {
+
+			month := path.Base(monthFolder)
 
 			testMonth, err := strconv.Atoi(month)
 
 			if err != nil || testMonth < 1 || testMonth > 12 {
-				log.Printf("invalid month folder: %s", month)
+				log.Printf("invalid month folder: %s", monthFolder)
 				continue
 			}
 
