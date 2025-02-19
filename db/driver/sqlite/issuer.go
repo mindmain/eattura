@@ -55,3 +55,15 @@ func (i *issuerRepository) Delete(ctx context.Context, uuid string) error {
 
 	return nil
 }
+
+func (i *issuerRepository) FindAll(ctx context.Context) ([]*model.Issuer, error) {
+
+	var issuers []*model.Issuer
+	result := i.db.Find(&issuers)
+
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	return issuers, nil
+}

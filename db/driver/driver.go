@@ -49,15 +49,28 @@ type NotificationRepository interface {
 	ReadModel[model.Notification]
 }
 
+type IssuerRepository interface {
+	CrudRepository[model.Issuer]
+	FindAll(ctx context.Context) ([]*model.Issuer, error)
+}
+
+type ContactRepository interface {
+	Repository[model.RequestSearchContact, model.Contact]
+}
+
+type CredentialRepository interface {
+	CrudRepository[model.Credentials]
+}
+
 type Database interface {
 	Init() error
 	Ping() error
 	Invoice() InvoiceRepository
-	Contact() Repository[model.RequestSearchContact, model.Contact]
-	Credential() CrudRepository[model.Credentials]
+	Contact() ContactRepository
+	Credential() CredentialRepository
 	InvoiceItem() InvoiceItemRepository
 
-	Issuer() CrudRepository[model.Issuer]
+	Issuer() IssuerRepository
 	Notification() NotificationRepository
 
 	Close() error

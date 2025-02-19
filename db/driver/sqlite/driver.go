@@ -73,13 +73,13 @@ func (s *sqliteDb) Invoice() driver.InvoiceRepository {
 	}
 }
 
-func (s *sqliteDb) Contact() driver.Repository[model.RequestSearchContact, model.Contact] {
+func (s *sqliteDb) Contact() driver.ContactRepository {
 	return &contactRepository{
 		db: s.db,
 	}
 }
 
-func (s *sqliteDb) Credential() driver.CrudRepository[model.Credentials] {
+func (s *sqliteDb) Credential() driver.CredentialRepository {
 	return &credentialRepository{
 		db: s.db,
 	}
@@ -91,7 +91,7 @@ func (s *sqliteDb) InvoiceItem() driver.InvoiceItemRepository {
 	}
 }
 
-func (s *sqliteDb) Issuer() driver.CrudRepository[model.Issuer] {
+func (s *sqliteDb) Issuer() driver.IssuerRepository {
 	return &issuerRepository{
 		db: s.db,
 	}

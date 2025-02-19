@@ -2,22 +2,25 @@ package db
 
 import (
 	"fmt"
+	"log"
+	"os"
 
 	"github.com/mindmain/eattura/core"
 	"github.com/mindmain/eattura/db/driver"
 )
 
-type Type string
+type Type = core.DBType
 
 const (
-	TypeSqlite Type = "sqlite3"
+	TypeSqlite Type = core.DBTypeSqlite
+	TypeNone   Type = core.DBTypeNone
 )
 
 type Database = driver.Database
 
 func New() (driver.Database, error) {
 
-	tt := getType(core.Get("database.type"))
+	tt := core.GetDatabaseType()
 
 	switch tt {
 	case TypeSqlite:
@@ -38,17 +41,53 @@ func New() (driver.Database, error) {
 		}
 
 		return database, nil
+	case TypeNone:
+		return &noneImpl{}, nil
 	}
 
 	return nil, fmt.Errorf("database type not supported")
 }
 
-func getType(raw string) Type {
+type noneImpl struct{}
 
-	switch raw {
-	case "sqlite3":
-		return TypeSqlite
-	}
+func (n *noneImpl) Init() error {
+	return nil
+}
 
-	return ""
+func (n *noneImpl) Ping() error {
+	return nil
+}
+
+func (n *noneImpl) Close() error {
+	return nil
+}
+
+func (n *noneImpl) errMsg() {
+	log.Fatal("database is none type on config")
+	os.Exit(1)
+}
+
+func (n *noneImpl) Invoice() driver.InvoiceRepository {
+	n.errMsg()
+	return nil
+}
+func (n *noneImpl) Contact() driver.ContactRepository {
+	n.errMsg()
+	return nil
+}
+func (n *noneImpl) Credential() driver.CredentialRepository {
+	n.errMsg()
+	return nil
+}
+func (n *noneImpl) InvoiceItem() driver.InvoiceItemRepository {
+	n.errMsg()
+	return nil
+}
+func (n *noneImpl) Issuer() driver.IssuerRepository {
+	n.errMsg()
+	return nil
+}
+func (n *noneImpl) Notification() driver.NotificationRepository {
+	n.errMsg()
+	return nil
 }
