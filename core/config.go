@@ -10,6 +10,39 @@ import (
 	"github.com/spf13/viper"
 )
 
+type DBType string
+
+const (
+	DBTypeSqlite DBType = "sqlite3"
+	DBTypeNone   DBType = "none"
+)
+
+type StorageType string
+
+const (
+	StorageLocalDirectory StorageType = "local"
+	StorageNone           StorageType = "none"
+)
+
+type SecureType string
+
+const (
+	// Os is a storage type that stores the credentials in the secure credentials store of the operating system.
+	// use github.com/zalando/go-keyring for supporting multiple operating systems.
+	Os SecureType = "os"
+	// Static is a storage type that does not store any data on disk, it is used for kubernetes secrets context
+	// docker containers, etc.
+	// you must define the credentials in the environment variables or in the configuration file.
+	Static SecureType = "static"
+)
+
+type IssuerType string
+
+const (
+	IssuerFromDB  IssuerType = "db"
+	IssuerFromEnv IssuerType = "static"
+)
+
 var ConfigPathFile = ""
 
 // this port derive: 'E' and 'A' Hexadecimal format form ASCII table
@@ -55,8 +88,8 @@ func InitConfig() error {
 
 	viper.SetDefault("storage.type", "local")
 	viper.SetDefault("storage.folder", path.Join(configPathFolder, "storage"))
-	viper.SetDefault("secure.type", "os")
 
+	viper.SetDefault("secure.type", "os")
 	viper.SetDefault("pec.username", nil)
 	viper.SetDefault("pec.password", nil)
 	viper.SetDefault("pec.sdi", nil)
