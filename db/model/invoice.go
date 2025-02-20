@@ -33,13 +33,13 @@ func (s Status) String() string {
 }
 
 type InvoiceItem struct {
-	UUID        string  `json:"uuid" gorm:"primaryKey;column:uuid"`
-	InvoiceUUID string  `json:"invoice_uuid" gorm:"column:invoice_uuid;index"`
-	Description string  `json:"description" gorm:"type:TEXT;column:description;index"`
-	Nature      string  `json:"nature" gorm:"size:10;column:nature"`
-	Amount      float64 `json:"amount" gorm:"type:DECIMAL(10,2);column:amount"`
-	Vat         float64 `json:"vat" gorm:"type:DECIMAL(10,2);column:vat"`
-	Total       float64 `json:"total" gorm:"type:DECIMAL(10,2);column:total"`
+	UUID        string  `gorm:"primaryKey;column:uuid"`
+	InvoiceUUID string  `gorm:"column:invoice_uuid;index"`
+	Description string  `gorm:"type:TEXT;column:description;index"`
+	Nature      string  `gorm:"size:10;column:nature"`
+	Amount      float64 `gorm:"type:DECIMAL(10,2);column:amount"`
+	Vat         float64 `gorm:"type:DECIMAL(10,2);column:vat"`
+	Total       float64 `gorm:"type:DECIMAL(10,2);column:total"`
 }
 
 func (i *InvoiceItem) TableName() string {
@@ -47,35 +47,40 @@ func (i *InvoiceItem) TableName() string {
 }
 
 type Invoice struct {
-	UUID   string `json:"uuid" gorm:"primaryKey;column:uuid"`
-	Status Status `json:"status" gorm:"size:20;column:status"`
+	UUID   string `gorm:"primaryKey;column:uuid"`
+	Status Status `gorm:"size:20;column:status"`
 
-	InvoiceNumber string `json:"number" gorm:"size:20;column:invoice_number"`
-	TypeDocument  string `json:"type_document" gorm:"type:varChar(10);column:type_document"`
-	File          string `json:"file" gorm:"type:TEXT;column:file"`
+	InvoiceNumber string `gorm:"size:20;column:invoice_number"`
+	TypeDocument  string `gorm:"type:varChar(10);column:type_document"`
+	File          string `gorm:"type:TEXT;column:file"`
 
-	IssuerReference string  `json:"issuer_uuid" gorm:"index;column:issuer_uuid"`
-	Issuer          *Issuer `json:"issuer" gorm:"foreignKey:UUID;references:IssuerReference"`
+	IssuerReference string  `gorm:"index;column:issuer_uuid"`
+	Issuer          *Issuer `gorm:"foreignKey:UUID;references:IssuerReference"`
 
-	ContactReference string    `json:"contact_uuid" gorm:"index;column:contact_uuid"`
-	Contact          *Contact  `json:"contact" gorm:"foreignKey:UUID;references:ContactReference"`
-	Hash             string    `json:"hash" gorm:"type:TEXT;column:hash"`
-	Date             time.Time `json:"date" gorm:"column:date;index"`
+	CustomerReference string   `gorm:"index;column:customer_uuid;default:null"`
+	Customer          *Contact `gorm:"foreignKey:UUID;references:CustomerReference"`
 
-	Items         []*InvoiceItem  `json:"items" gorm:"foreignKey:InvoiceUUID;references:UUID"`
-	Notifications []*Notification `json:"notifications" gorm:"foreignKey:InvoiceUUID;references:UUID"`
+	SupplierReference string   `gorm:"index;column:supplier_uuid;default:null"`
+	Supplier          *Contact `gorm:"foreignKey:UUID;references:SupplierReference"`
 
-	AmountPaid float64 `json:"amount_paid" gorm:"type:DECIMAL(10,2);column:amount_paid"`
+	Hash string    `gorm:"type:TEXT;column:hash"`
+	Date time.Time `gorm:"column:date;index"`
 
-	UniqueProgressive string    `json:"unique_progressive" gorm:"size:5;uniqueIndex;column:unique_progressive"`
-	ProgressiveNumber string    `json:"progressive_number" gorm:"size:10;uniqueIndex;column:progressive_number"`
-	SentAt            time.Time `json:"sent_at" gorm:"column:sent_at"`
-	CreatedAt         time.Time `json:"created_at" gorm:"autoCreateTime;column:created_at"`
-	UpdatedAt         time.Time `json:"updated_at" gorm:"autoUpdateTime;column:updated_at"`
+	Items         []*InvoiceItem  `gorm:"foreignKey:InvoiceUUID;references:UUID"`
+	Notifications []*Notification `gorm:"foreignKey:InvoiceUUID;references:UUID"`
+
+	AmountPaid float64 `gorm:"type:DECIMAL(10,2);column:amount_paid"`
+
+	UniqueProgressive string `gorm:"size:5;uniqueIndex;column:unique_progressive"`
+	ProgressiveNumber string `gorm:"size:10;uniqueIndex;column:progressive_number"`
+
+	SentAt    time.Time `gorm:"column:sent_at;default:null"`
+	CreatedAt time.Time `gorm:"autoCreateTime;column:created_at"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime;column:updated_at"`
 }
 
 func (i *Invoice) String() string {
-	return fmt.Sprintf("[invoice: %s to %s %d ]\n", i.UUID, i.ContactReference, len(i.Items))
+	return fmt.Sprintf("[invoice: %s from %s to %s %d ]\n", i.UUID, i.SupplierReference, i.CustomerReference, len(i.Items))
 }
 
 func (i *Invoice) TableName() string {
@@ -94,46 +99,47 @@ const (
 // in case of success, the file will be saved 1 notification.
 // in case of fail, the file will be saved 2 or more notifications.
 type Notification struct {
-	InvoiceUUID string           `json:"invoice_uuid" gorm:"primaryKey;column:invoice_uuid"`
-	At          time.Time        `json:"at" gorm:"type:DATETIME;column:at"`
-	Type        NotificationType `json:"type" gorm:"size:10;column:type"`
-	File        string           `json:"filename" gorm:"type:TEXT;column:file"`
-	CreatedAt   time.Time        `json:"created_at" gorm:"autoCreateTime;column:created_at"`
+	InvoiceUUID string           `gorm:"primaryKey;column:invoice_uuid"`
+	At          time.Time        `gorm:"type:DATETIME;column:at"`
+	Type        NotificationType `gorm:"size:10;column:type"`
+	File        string           `gorm:"type:TEXT;column:file"`
+	CreatedAt   time.Time        `gorm:"autoCreateTime;column:created_at"`
 }
 
 type RequestSearchInvoice struct {
-	ContactUUID []string `json:"contact_uuid"`
-	IssuerUUID  []string `json:"issuer_uuid"`
-	Status      []Status `json:"status"`
+	ContactUUID  []string
+	IssuerUUID   []string
+	SupplierUUID []string
+	Status       []Status
 
-	StartDate *time.Time `json:"start_date"`
-	EndDate   *time.Time `json:"end_date"`
-	Text      string     `json:"text"`
+	StartDate *time.Time
+	EndDate   *time.Time
+	Text      string
 
-	Offset int `json:"offset"`
-	Limit  int `json:"limit"`
+	Offset int
+	Limit  int
 }
 
 type ResponseSearchInvoice struct {
-	Invoices []*Invoice `json:"invoices"`
-	Total    int        `json:"total"`
+	Invoices []*Invoice
+	Total    int
 
-	Offset int `json:"offset"`
-	Limit  int `json:"limit"`
+	Offset int
+	Limit  int
 }
 
 type RequestSearchInvoiceItem struct {
-	InvoiceUUID []string `json:"invoice_uuid"`
-	Text        string   `json:"text"`
+	InvoiceUUID []string
+	Text        string
 
-	Offset int `json:"offset"`
-	Limit  int `json:"limit"`
+	Offset int
+	Limit  int
 }
 
 type ResponseSearchInvoiceItem struct {
-	Items []*InvoiceItem `json:"items"`
-	Total int            `json:"total"`
+	Items []*InvoiceItem
+	Total int
 
-	Offset int `json:"offset"`
-	Limit  int `json:"limit"`
+	Offset int
+	Limit  int
 }

@@ -16,35 +16,49 @@ type BillingRole string
 const (
 	BillingRoleCustomer BillingRole = "customer"
 	BillingRoleSupplier BillingRole = "supplier"
-	BillingRoleBoth     BillingRole = "both"
 )
 
+type DataInfo struct {
+	Title        string ` gorm:"type:text;column:title"`
+	Denomination string ` gorm:"type:text;column:denomination"`
+	Name         string ` gorm:"type:text;column:name"`
+	Surname      string ` gorm:"type:text;column:surname"`
+
+	FiscalCode string ` gorm:"type:text;column:fiscal_code"`
+	VatNumber  string ` gorm:"type:text;column:vat_number"`
+	VatNation  string ` gorm:"size:2;column:vat_nation"`
+
+	Country      string ` gorm:"size:2;column:country"`
+	City         string ` gorm:"type:text;column:city"`
+	ZipCode      string ` gorm:"type:text;column:zip_code"`
+	Province     string ` gorm:"type:text;column:province"`
+	Street       string ` gorm:"type:text;column:street"`
+	StreetNumber string ` gorm:"type:text;column:street_number"`
+
+	Email string ` gorm:"type:text;column:email"`
+	Phone string ` gorm:"type:text;column:phone"`
+
+	ReaOffice      string  `gorm:"size:255;column:rea_office"`
+	ReaNumber      string  `gorm:"size:255;column:rea_number"`
+	ReaCapital     float64 `gorm:"column:rea_social_capital"`
+	ReaShareholder string  `gorm:"size:2;column:rea_shareholder"`
+	ReaLiquidation string  `gorm:"size:2;column:rea_liquidation"`
+
+	CodEORI string `gorm:"size:20;column:cod_eori"`
+}
+
 type Contact struct {
-	UUID string `json:"uuid" gorm:"primaryKey;column:uuid"`
+	DataInfo ` gorm:"embedded"`
+	UUID     string ` gorm:"primaryKey;column:uuid"`
 
-	BillingType BillingType `json:"type" gorm:"index;type:VarChar(20);column:type"`
-	Role        BillingRole `json:"role" gorm:"index;type:VarChar(20);column:role"`
+	BillingType BillingType ` gorm:"index;type:VarChar(20);column:type"`
+	Role        BillingRole ` gorm:"index;type:VarChar(20);column:role"`
 
-	Denomination string `json:"denomination" gorm:"type:text;column:denomination"`
-	Name         string `json:"name" gorm:"type:text;column:name"`
-	Surname      string `json:"surname" gorm:"type:text;column:surname"`
+	Pec             string ` gorm:"type:text;column:pec"`
+	DestinationCode string ` gorm:"size:7;column:code"`
 
-	Nation     string `json:"nation" gorm:"size:2;column:nation"`
-	VatNumber  string `json:"vat_number" gorm:"type:text;column:vat_number"`
-	FiscalCode string `json:"fiscal_code" gorm:"type:text;column:fiscal_code"`
-	Street     string `json:"street" gorm:"type:text;column:street"`
-	City       string `json:"city" gorm:"type:text;column:city"`
-	ZipCode    string `json:"zipCode" gorm:"type:text;column:zip_code"`
-	Region     string `json:"region" gorm:"type:text;column:region"`
-
-	Pec             string `json:"pec" gorm:"type:text;column:pec"`
-	DestinationCode string `json:"code" gorm:"size:7;column:code"`
-
-	Email string `json:"email" gorm:"type:text;column:email"`
-	Phone string `json:"phone" gorm:"type:text;column:phone"`
-
-	CreatedAt time.Time `json:"created_at" gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt time.Time `json:"updated_at" gorm:"column:updated_at;autoUpdateTime"`
+	CreatedAt time.Time ` gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt time.Time ` gorm:"column:updated_at;autoUpdateTime"`
 }
 
 func (c *Contact) TableName() string {
@@ -52,18 +66,17 @@ func (c *Contact) TableName() string {
 }
 
 type RequestSearchContact struct {
-	Role        []BillingRole `json:"role"`
-	BillingType []BillingType `json:"billing_type"`
-	Text        string        `json:"text"`
+	Role        []BillingRole
+	BillingType []BillingType
+	Text        string
 
-	Offset int `json:"offset"`
-	Limit  int `json:"limit"`
+	Offset int
+	Limit  int
 }
 
 type ResponseSearchContact struct {
 	Contacts []*Contact
-	Total    int `json:"total"`
-
-	Offset int `json:"offset"`
-	Limit  int `json:"limit"`
+	Total    int
+	Offset   int
+	Limit    int
 }

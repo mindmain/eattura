@@ -28,7 +28,8 @@ func (i *invoiceRepository) Create(ctx context.Context, m *model.Invoice) error 
 func (i *invoiceRepository) Read(ctx context.Context, uuid string) (*model.Invoice, error) {
 
 	invoice := &model.Invoice{}
-	result := i.db.Preload("Contact").Preload("Items").Preload("Notifications").Preload("Issuer").First(invoice, uuid)
+
+	result := i.db.Preload("Customer").Preload("Supplier").Preload("Items").Preload("Notifications").Preload("Issuer").Where("uuid = ?", uuid).First(invoice)
 
 	if result.Error != nil {
 		return nil, result.Error
@@ -61,7 +62,7 @@ func (i *invoiceRepository) Delete(ctx context.Context, uuid string) error {
 func (s *invoiceRepository) Find(ctx context.Context, skip, limit uint, req *model.RequestSearchInvoice) ([]*model.Invoice, error) {
 
 	invoices := make([]*model.Invoice, 0)
-	session := s.session(req).Preload("Contact").Preload("Items").Preload("Notifications").Preload("Issuer")
+	session := s.session(req).Preload("Customer").Preload("Supplier").Preload("Items").Preload("Notifications").Preload("Issuer")
 
 	if skip > 0 || limit > 0 {
 		session = session.Limit(int(limit)).Offset(int(skip))
@@ -100,7 +101,11 @@ func (s *invoiceRepository) session(req *model.RequestSearchInvoice) *gorm.DB {
 	}
 
 	if len(req.ContactUUID) > 0 {
-		session = session.Where("contact_uuid IN (?)", req.ContactUUID)
+		session = session.Where("customer_uuid IN (?)", req.ContactUUID)
+	}
+
+	if len(req.SupplierUUID) > 0 {
+		session = session.Where("supplier_uuid IN (?)", req.SupplierUUID)
 	}
 
 	if len(req.IssuerUUID) > 0 {
