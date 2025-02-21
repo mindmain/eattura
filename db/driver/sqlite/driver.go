@@ -28,6 +28,10 @@ func New(config *driver.DatabaseConfig) (driver.Database, error) {
 		return nil, err
 	}
 
+	if config.Debug {
+		db = db.Debug()
+	}
+
 	return &sqliteDb{
 		db: db,
 	}, nil

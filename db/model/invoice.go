@@ -37,8 +37,10 @@ type InvoiceItem struct {
 	InvoiceUUID string  `gorm:"column:invoice_uuid;index"`
 	Description string  `gorm:"type:TEXT;column:description;index"`
 	Nature      string  `gorm:"size:10;column:nature"`
-	Amount      float64 `gorm:"type:DECIMAL(10,2);column:amount"`
+	UnitAmount  float64 `gorm:"type:DECIMAL(10,2);column:unit_amount"`
+	Qty         float64 `gorm:"type:DECIMAL(10,2);column:qty"`
 	Vat         float64 `gorm:"type:DECIMAL(10,2);column:vat"`
+	Unit        string  `gorm:"size:10;column:unit"`
 	Total       float64 `gorm:"type:DECIMAL(10,2);column:total"`
 }
 

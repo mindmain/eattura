@@ -79,7 +79,8 @@ type Database interface {
 var drivers = make(map[string]func(*DatabaseConfig) (Database, error))
 
 type DatabaseConfig struct {
-	Uri string
+	Uri   string
+	Debug bool
 }
 
 func Register(name string, driver func(*DatabaseConfig) (Database, error)) {

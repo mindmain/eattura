@@ -152,11 +152,9 @@ func TestFindInvoiceWithPreload(t *testing.T) {
 	t.Run("test find with items and contacts and issuer", func(t *testing.T) {
 
 		contact := &model.Contact{
-			UUID: "1",
-			DataInfo: model.DataInfo{
-				Name:    "Mario",
-				Surname: "Rossi",
-			},
+			UUID:    "1",
+			Name:    "Mario",
+			Surname: "Rossi",
 		}
 
 		err := db.Contact().Create(context.TODO(), contact)
@@ -168,8 +166,12 @@ func TestFindInvoiceWithPreload(t *testing.T) {
 		defer db.Contact().Delete(context.TODO(), "1")
 
 		issuer := &model.Issuer{
-			UUID:     "1",
-			DataInfo: model.DataInfo{Denomination: "My Company"},
+			UUID:             "issuer1",
+			ContactReference: "issuer1",
+			Contact: &model.Contact{
+				UUID:         "issuer1",
+				Denomination: "My Company",
+			},
 		}
 
 		err = db.Issuer().Create(context.TODO(), issuer)
@@ -184,7 +186,7 @@ func TestFindInvoiceWithPreload(t *testing.T) {
 			UUID:              "t1",
 			CustomerReference: "1",
 			SupplierReference: "1",
-			IssuerReference:   "1",
+			IssuerReference:   "issuer1",
 			ProgressiveNumber: "1",
 			UniqueProgressive: "1",
 		}
@@ -200,7 +202,7 @@ func TestFindInvoiceWithPreload(t *testing.T) {
 				UUID:        fmt.Sprintf("%d", i),
 				InvoiceUUID: "t1",
 				Description: fmt.Sprintf("item %d", i),
-				Amount:      10.0,
+				UnitAmount:  10.0,
 			}
 
 			err := db.InvoiceItem().Create(context.TODO(), item)
@@ -226,8 +228,8 @@ func TestFindInvoiceWithPreload(t *testing.T) {
 		}
 
 		if assert.NotNil(t, invoice.Issuer, "issuer is nil value: %s", invoice.IssuerReference) {
-			assert.Equal(t, "1", invoice.Issuer.UUID)
-			assert.Equal(t, "My Company", invoice.Issuer.Denomination)
+			assert.Equal(t, "issuer1", invoice.Issuer.UUID)
+			assert.Equal(t, "My Company", invoice.Issuer.Contact.Denomination)
 		}
 
 		assert.Len(t, invoice.Items, 10)

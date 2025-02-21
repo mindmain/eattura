@@ -3,8 +3,11 @@ package model
 import "time"
 
 type Issuer struct {
-	DataInfo       `gorm:"embedded"`
-	UUID           string       `gorm:"primaryKey;column:uuid"`
+	UUID string `gorm:"primaryKey;column:uuid"`
+
+	ContactReference string   `gorm:"index;column:contact_uuid"`
+	Contact          *Contact `gorm:"foreignKey:ContactReference;references:UUID"`
+
 	CredentialUUID string       `gorm:"index;column:credential_uuid"`
 	Credential     *Credentials `gorm:"foreignKey:CredentialUUID;references:UUID"`
 

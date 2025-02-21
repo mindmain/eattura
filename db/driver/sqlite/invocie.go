@@ -29,7 +29,7 @@ func (i *invoiceRepository) Read(ctx context.Context, uuid string) (*model.Invoi
 
 	invoice := &model.Invoice{}
 
-	result := i.db.Preload("Customer").Preload("Supplier").Preload("Items").Preload("Notifications").Preload("Issuer").Where("uuid = ?", uuid).First(invoice)
+	result := i.db.Preload("Customer").Preload("Supplier").Preload("Items").Preload("Notifications").Preload("Issuer").Preload("Issuer.Contact").Where("uuid = ?", uuid).First(invoice)
 
 	if result.Error != nil {
 		return nil, result.Error
@@ -62,7 +62,7 @@ func (i *invoiceRepository) Delete(ctx context.Context, uuid string) error {
 func (s *invoiceRepository) Find(ctx context.Context, skip, limit uint, req *model.RequestSearchInvoice) ([]*model.Invoice, error) {
 
 	invoices := make([]*model.Invoice, 0)
-	session := s.session(req).Preload("Customer").Preload("Supplier").Preload("Items").Preload("Notifications").Preload("Issuer")
+	session := s.session(req).Preload("Customer").Preload("Supplier").Preload("Items").Preload("Notifications").Preload("Issuer").Preload("Issuer.Contact")
 
 	if skip > 0 || limit > 0 {
 		session = session.Limit(int(limit)).Offset(int(skip))

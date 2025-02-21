@@ -13,7 +13,8 @@ var db driver.Database
 func TestMain(t *testing.M) {
 	var err error
 	db, err = New(&driver.DatabaseConfig{
-		Uri: "file::memory:?cache=shared",
+		Uri:   "file::memory:?cache=shared",
+		Debug: false,
 	})
 
 	if err != nil {

@@ -19,6 +19,11 @@ const (
 )
 
 type DataInfo struct {
+}
+
+type Contact struct {
+	UUID string ` gorm:"primaryKey;column:uuid"`
+
 	Title        string ` gorm:"type:text;column:title"`
 	Denomination string ` gorm:"type:text;column:denomination"`
 	Name         string ` gorm:"type:text;column:name"`
@@ -45,14 +50,6 @@ type DataInfo struct {
 	ReaLiquidation string  `gorm:"size:2;column:rea_liquidation"`
 
 	CodEORI string `gorm:"size:20;column:cod_eori"`
-}
-
-type Contact struct {
-	DataInfo ` gorm:"embedded"`
-	UUID     string ` gorm:"primaryKey;column:uuid"`
-
-	BillingType BillingType ` gorm:"index;type:VarChar(20);column:type"`
-	Role        BillingRole ` gorm:"index;type:VarChar(20);column:role"`
 
 	Pec             string ` gorm:"type:text;column:pec"`
 	DestinationCode string ` gorm:"size:7;column:code"`
@@ -66,9 +63,7 @@ func (c *Contact) TableName() string {
 }
 
 type RequestSearchContact struct {
-	Role        []BillingRole
-	BillingType []BillingType
-	Text        string
+	Text string
 
 	Offset int
 	Limit  int

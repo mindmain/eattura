@@ -90,13 +90,6 @@ func (s *contactRepository) session(req *model.RequestSearchContact) *gorm.DB {
 	if req == nil {
 		req = &model.RequestSearchContact{}
 	}
-	if len(req.Role) > 0 {
-		session = session.Where("role IN (?)", req.Role)
-	}
-
-	if len(req.BillingType) > 0 {
-		session = session.Where("type IN (?)", req.BillingType)
-	}
 
 	if req.Text != "" {
 		session = session.Where("name LIKE ? OR email LIKE ? OR phone LIKE ? OR street LIKE ?", "%"+req.Text+"%", "%"+req.Text+"%", "%"+req.Text+"%", "%"+req.Text+"%")
