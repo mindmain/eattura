@@ -59,10 +59,10 @@ type Invoice struct {
 	IssuerReference string  `gorm:"index;column:issuer_uuid"`
 	Issuer          *Issuer `gorm:"foreignKey:UUID;references:IssuerReference"`
 
-	CustomerReference string   `gorm:"index;column:customer_uuid;default:null"`
+	CustomerReference string   `gorm:"index;column:customer_uuid"`
 	Customer          *Contact `gorm:"foreignKey:UUID;references:CustomerReference"`
 
-	SupplierReference string   `gorm:"index;column:supplier_uuid;default:null"`
+	SupplierReference string   `gorm:"index;column:supplier_uuid"`
 	Supplier          *Contact `gorm:"foreignKey:UUID;references:SupplierReference"`
 
 	Hash string    `gorm:"type:TEXT;column:hash"`
