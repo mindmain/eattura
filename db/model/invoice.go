@@ -145,3 +145,26 @@ type ResponseSearchInvoiceItem struct {
 	Offset int
 	Limit  int
 }
+
+func (model *Invoice) Copy() *Invoice {
+
+	copy := *model
+	copy.Items = make([]*InvoiceItem, len(model.Items))
+	for index, item := range model.Items {
+		newItem := *item
+		copy.Items[index] = &newItem
+	}
+
+	copy.Notifications = make([]*Notification, len(model.Notifications))
+
+	for index, notification := range model.Notifications {
+		newNotification := *notification
+		copy.Notifications[index] = &newNotification
+	}
+
+	copy.Customer = model.Customer.Copy()
+	copy.Issuer = model.Issuer.Copy()
+	copy.Supplier = model.Supplier.Copy()
+
+	return &copy
+}

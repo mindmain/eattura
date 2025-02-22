@@ -60,6 +60,8 @@ type ContactRepository interface {
 
 type CredentialRepository interface {
 	CrudRepository[model.Credentials]
+
+	FindAll(ctx context.Context) ([]*model.Credentials, error)
 }
 
 type Database interface {

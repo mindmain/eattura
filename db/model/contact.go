@@ -2,25 +2,6 @@ package model
 
 import "time"
 
-type BillingType string
-
-const (
-	// A company can be a freelancer or a company with a `p.iva`.
-	BillingTypeCompany BillingType = "company"
-	// Is a subject hasn't been `p.iva` registered, it's considered a customer.
-	BillingTypePerson BillingType = "person"
-)
-
-type BillingRole string
-
-const (
-	BillingRoleCustomer BillingRole = "customer"
-	BillingRoleSupplier BillingRole = "supplier"
-)
-
-type DataInfo struct {
-}
-
 type Contact struct {
 	UUID string ` gorm:"primaryKey;column:uuid"`
 
@@ -74,4 +55,9 @@ type ResponseSearchContact struct {
 	Total    int
 	Offset   int
 	Limit    int
+}
+
+func (c *Contact) Copy() *Contact {
+	newContact := *c
+	return &newContact
 }

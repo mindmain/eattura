@@ -19,3 +19,13 @@ type Credentials struct {
 func (c *Credentials) TableName() string {
 	return "credentials"
 }
+
+func (c *Credentials) Copy() *Credentials {
+	return &Credentials{
+		UUID:       c.UUID,
+		Type:       c.Type,
+		LastUpdate: c.LastUpdate,
+		CreatedAt:  c.CreatedAt,
+		UpdateAt:   c.UpdateAt,
+	}
+}

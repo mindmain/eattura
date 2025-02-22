@@ -18,3 +18,18 @@ type Issuer struct {
 func (i *Issuer) TableName() string {
 	return "issuers"
 }
+
+func (i *Issuer) Copy() *Issuer {
+	return &Issuer{
+		UUID: i.UUID,
+
+		ContactReference: i.ContactReference,
+		Contact:          i.Contact.Copy(),
+
+		CredentialUUID: i.CredentialUUID,
+		Credential:     i.Credential.Copy(),
+
+		CreatedAt: i.CreatedAt,
+		UpdatedAt: i.UpdatedAt,
+	}
+}
