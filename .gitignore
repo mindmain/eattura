@@ -1,2 +1,6 @@
 tmp/
 bin/
+cli/app
+
+.vscode
+api/
