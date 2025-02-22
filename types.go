@@ -3,19 +3,39 @@ package eattura
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/mindmain/eattura/db"
 	"github.com/mindmain/eattura/db/model"
 	"github.com/mindmain/eattura/sdi/fe"
+	"github.com/mindmain/eattura/secure"
 
 	"github.com/mindmain/eattura/fs"
 	"github.com/mindmain/eattura/pec"
 )
 
+type CredentialSetting = secure.Credentials
 type Status = model.Status
-type Role = model.BillingRole
-type Type = model.BillingType
+
+type Credential struct {
+	ID      string             `json:"uuid"`
+	Setting *CredentialSetting `json:"-"`
+}
+
+const (
+	StatusDraft Status = model.StatusDraft
+	StatusSent  Status = model.StatusSent
+
+	StatusPending Status = model.StatusPending
+	StatusFailed  Status = model.StatusFailed
+	StatusSuccess Status = model.StatusSuccess
+
+	StatusPartialPaid Status = model.StatusPartialPaid
+	StatusPaid        Status = model.StatusPaid
+
+	StatusReceived Status = model.StatusReceived
+)
 
 type Address struct {
 
@@ -35,6 +55,10 @@ type VatCode struct {
 	Nation string `json:"nation"`
 }
 
+func (v *VatCode) String() string {
+	return fmt.Sprintf("%s%s", v.Nation, v.Code)
+}
+
 // Rea is the Repertorio Economico Amministrativo, is a register of the Italian Chamber of Commerce.
 // The REA number is a unique code assigned to each company registered in the Italian Chamber of Commerce.
 // The REA number is used to identify the company in the Chamber of Commerce database.
@@ -46,31 +70,7 @@ type Rea struct {
 	InLiquidation     bool    `json:"liquidation"`
 }
 
-type Issuer struct {
-	// Title is optional field, used for the title of the issuer. ex. Dott. Ing. Prof.
-	Title        string `json:"title"`
-	Name         string `json:"name"`
-	Surname      string `json:"surname"`
-	Denomination string `json:"denomination"`
-
-	VatCode    *VatCode `json:"vat_code"`
-	FiscalCode string   `json:"fiscal_code"`
-	Address    *Address `json:"address"`
-
-	Phone string `json:"phone"`
-	Email string `json:"email"`
-
-	// (Economic Operator Registration and Identification) is a unique code assigned to
-	// economic operators and other persons registered in the European Union (EU),
-	// ignore this field if not present, not required for normal invoice.
-	CodEORI string `json:"cod_eori"`
-
-	Rea *Rea `json:"rea"`
-
-	uuidCredential string
-}
-
-type Contact struct {
+type ContactData struct {
 	Name         string `json:"name"`
 	Surname      string `json:"surname"`
 	Denomination string `json:"denomination"`
@@ -82,19 +82,37 @@ type Contact struct {
 	// Address is the address of the customer, isn't required, but is more useful for sdi system if present.
 	Address *Address `json:"address"`
 	// Title is optional field, used for the title of the customer. ex. Dott. Ing. Prof.
-	Title   string `json:"title"`
+	Title string `json:"title"`
+	//(Economic Operator Registration and Identification) is a unique code assigned to economic operators and other persons registered in the European Union (EU) for customs purposes.
 	CodEORI string `json:"cod_eori"`
+}
+type Issuer struct {
+	ID          string `json:"uuid"`
+	ContactData `json:",inline"`
+	Rea         *Rea `json:"rea"`
+
+	CredentialID string `json:"credential_id"`
+}
+
+type Contact struct {
+	ID              string `json:"uuid"`
+	Rea             *Rea   `json:"rea"`
+	Pec             string `json:"pec"`
+	DestinationCode string `json:"destination_code"`
+	ContactData     `json:",inline"`
 }
 
 type Customer struct {
-	Contact `json:",inline"`
-	Pec     string `json:"pec"`
-	//(Economic Operator Registration and Identification) is a unique code assigned to economic operators and other persons registered in the European Union (EU) for customs purposes.
+	ID              string `json:"uuid"`
+	Pec             string `json:"pec"`
+	DestinationCode string `json:"destination_code"`
+	ContactData     `json:",inline"`
 }
 
 type Supplier struct {
-	Contact `json:",inline"`
-	Rea     *Rea `json:"rea,omitempty"`
+	ID          string `json:"uuid"`
+	ContactData `json:",inline"`
+	Rea         *Rea `json:"rea,omitempty"`
 }
 
 type Natura = fe.Natura
@@ -106,7 +124,13 @@ const (
 	NatureExport              Natura = fe.N_3_1
 )
 
+type ResponseUpdate[M any] struct {
+	Old *M `json:"old"`
+	New *M `json:"new"`
+}
+
 type InvoiceItem struct {
+	ID          string `json:"uuid"`
 	Description string `json:"description"`
 	// Nature determinate IVA rate, if the nature is empty, the system determinate the IVA rate 22% (or other default rate).
 	Nature     Natura  `json:"nature"`
@@ -133,12 +157,13 @@ const (
 )
 
 type Invoice struct {
-	Type TypeDocument `json:"type"`
+	ID     string       `json:"uuid"`
+	Type   TypeDocument `json:"type"`
+	Status Status       `json:"status"`
 	// If use issuer static mode on config you can omit the issuer field.
-	Issuer          *Issuer   `json:"issuer"`
-	Supplier        *Supplier `json:"supplier"`
-	Customer        *Customer `json:"customer"`
-	DestinationCode string    `json:"destination_code"`
+	Issuer   *Issuer   `json:"issuer"`
+	Supplier *Supplier `json:"supplier"`
+	Customer *Customer `json:"customer"`
 
 	Date   time.Time `json:"date"`
 	Number string    `json:"number"`
@@ -149,31 +174,13 @@ type Invoice struct {
 	Items []*InvoiceItem `json:"items"`
 }
 
-func (i *Invoice) Total() float64 {
-	var total float64
-	for _, item := range i.Items {
-		total += item.Total()
-	}
-	return total
-}
-
 type RequestCreateInvoice struct {
-
-	// Save save the invoice on the db. if the db not available, return error.
-	// this flag not create Issuer and Contact if not present.
-	Save bool `json:"save"`
-
-	// SaveXML save the XML file on the fs. if the fs not available, return error.
-	SaveXML bool `json:"save_xml"`
-
-	// Send send the invoice to the PEC service, if not possible return error.
-	Sent    bool     `json:"sent"`
-	Invoice *Invoice `json:"invoice"`
-}
-
-type ResponseCreateInvoice struct {
-	SentAt  time.Time      `json:"sent_at,omitempty"`
-	Invoice *model.Invoice `json:"invoice"`
+	IssuerId      string         `json:"issuer_id"`
+	CustomerId    string         `json:"customer_id"`
+	Type          TypeDocument   `json:"type"`
+	InvoiceNumber string         `json:"invoice_number"`
+	InvoiceDate   time.Time      `json:"invoice_date"`
+	Items         []*InvoiceItem `json:"items"`
 }
 
 type FinderInvoice interface {
@@ -184,48 +191,16 @@ type FinderInvoice interface {
 }
 
 type Invoicer interface {
-	CreateInvoice(ctx context.Context, request *RequestCreateInvoice) (*ResponseCreateInvoice, error)
+	CreateInvoice(ctx context.Context, request *RequestCreateInvoice) (*Invoice, error)
 
-	ReadInvoice(ctx context.Context, uuid string) (*model.Invoice, error)
-	UpdateInvoice(ctx context.Context, invoice *model.Invoice) error
+	// ReadInvoice read the invoice from the database and return the invoice and the fattura elettronica.
+	// The fattura elettronica is the XML file that represents the invoice. and retrive from the storage.
+	ReadInvoice(ctx context.Context, uuid string) (*Invoice, *fe.FatturaElettronica, error)
+	UpdateInvoice(ctx context.Context, uuid string, invoice *Invoice) (*Invoice, error)
 	DeleteInvoice(ctx context.Context, uuid string) error
 
 	InvoiceFinder() FinderInvoice
-
-	Issuers(ctx context.Context) ([]*model.Issuer, error)
-	GetIssuer(ctx context.Context, uuid string) (*model.Issuer, error)
-	// SendInvoice send the invoice to the PEC service, first check if the invoice is valid
-	// - check if the invoice is already with final status: [sent, paid, received]
-	// - check if the invoice is ok for internal SDI system.
-	// - send the invoice to the PEC service
-	SendInvoice(ctx context.Context, uuid string) error
-}
-
-type FinderContact interface {
-	WithRole(role model.BillingRole) FinderContact
-	WithType(t Type) FinderContact
-	Count(ctx context.Context) (int, error)
-	List(ctx context.Context, offset, limit int) ([]*Customer, error)
-}
-
-type Rubric interface {
-	CreateContact(ctx context.Context, contact *model.Contact) error
-	ReadContact(ctx context.Context, uuid string) (*model.Contact, error)
-	UpdateContact(ctx context.Context, contact *model.Contact) error
-	DeleteContact(ctx context.Context, uuid string) error
-
-	FinderContact() FinderContact
-
-	SetRole(ctx context.Context, uuid string, role model.BillingRole) error
-	SetBillingType(ctx context.Context, uuid string, billingType model.BillingType) error
-}
-
-// The Credential info is consider immutable.
-// This handler provide correct way to manage password and other secret information.
-type HandlerCredential interface {
-	CreateCredential(ctx context.Context, credential *model.Credentials) error
-	DeleteCredential(ctx context.Context, uuid string) (*model.Credentials, error)
-	List(ctx context.Context) ([]*model.Credentials, error)
+	SendInvoice(ctx context.Context, inv *Invoice) error
 }
 
 var ErrInconsistentData = errors.New("inconsistent data")
@@ -233,19 +208,21 @@ var ErrInconsistentData = errors.New("inconsistent data")
 type Eattura interface {
 	Invoicer
 	Rubric
-	HandlerCredential
+	handlerCredential
 	GeneratorProgressive
 	Loader
 }
 
-func New(
+func newService(
 	database db.Database,
+	secure secure.Storage,
 	pecClient pec.Client,
 	invoiceFolder fs.InvoiceFileHandler,
 ) Eattura {
 
-	var issuerHandler = &issuerHandler{db: database}
-
+	var gen = &defaultGeneratorProgressive{}
+	var handlerCred = &handlerCredImpl{db: database, secure: secure}
+	var issuerHandler = &issuerHandler{db: database, cred: handlerCred}
 	return &service{
 		Loader: &defaultLoader{
 			db:            database,
@@ -253,17 +230,49 @@ func New(
 			store:         invoiceFolder,
 			issuerHandler: issuerHandler,
 		},
-		Invoicer:             nil,
-		Rubric:               nil,
-		HandlerCredential:    nil,
-		GeneratorProgressive: &defaultGeneratorProgressive{},
+		Invoicer: &invoicerHandler{
+			database:  database,
+			pec:       pecClient,
+			store:     invoiceFolder,
+			generator: gen,
+			issuer:    issuerHandler,
+		},
+		Rubric:               &contactsHandler{database: database},
+		handlerCredential:    handlerCred,
+		GeneratorProgressive: gen,
 	}
 }
 
 type service struct {
-	HandlerCredential
+	handlerCredential
 	Invoicer
 	Rubric
 	Loader
 	GeneratorProgressive
+}
+
+func New() (Eattura, error) {
+
+	database, err := db.New()
+
+	if err != nil {
+		return nil, err
+	}
+
+	secureStorage, err := secure.New()
+
+	if err != nil {
+		return nil, err
+	}
+
+	storage, err := fs.New()
+
+	if err != nil {
+		return nil, err
+	}
+
+	pecService := pec.NewPEC(secureStorage)
+
+	return newService(database, secureStorage, pecService, storage), nil
+
 }
