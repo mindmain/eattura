@@ -8,17 +8,26 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/mindmain/eattura/sdi"
 	"github.com/mindmain/eattura/sdi/fe"
 )
 
-func (h *handler) SaveDraft(ctx context.Context, filename string, data []byte) error {
-	dest := path.Join(folderDraft, filename)
-	return h.driver.WriteFile(dest, data)
-}
-func (h *handler) RemoveDraft(ctx context.Context, filename string) error {
+func (h *handler) ReadInvoice(ctx context.Context, year, month int, filename string) (*fe.FatturaElettronica, error) {
 
-	dest := path.Join(folderDraft, filename)
-	return h.driver.RemoveAll(dest)
+	bb, err := h.driver.OpenFileRead(path.Join(folderInvoices, fmt.Sprintf("%d", year), fmt.Sprintf("%d", month), filename))
+
+	if err != nil {
+		return nil, err
+	}
+
+	fat, err := sdi.Read(filename, bb)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return fat, nil
+
 }
 
 func (h *handler) SaveInvoice(ctx context.Context, filename string, invoice *fe.FatturaElettronica) error {

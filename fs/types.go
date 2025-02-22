@@ -48,8 +48,7 @@ type SDIResultDirectoryReference interface {
 }
 
 type InvoiceFileHandler interface {
-	SaveDraft(ctx context.Context, filename string, data []byte) error
-	RemoveDraft(ctx context.Context, filename string) error
+	ReadInvoice(ctx context.Context, year, month int, filename string) (*fe.FatturaElettronica, error)
 	SaveInvoice(ctx context.Context, filename string, invoice *fe.FatturaElettronica) error
 	List(ctx context.Context) ([]InvoiceDirectoryReference, error)
 
