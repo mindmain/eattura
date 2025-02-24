@@ -186,8 +186,11 @@ type RequestCreateInvoice struct {
 type FinderInvoice interface {
 	WithStatus(status Status) FinderInvoice
 
+	FromAt(date time.Time) FinderInvoice
+	ToAt(date time.Time) FinderInvoice
+
 	Count(ctx context.Context) (int, error)
-	List(ctx context.Context, offset, limit int) ([]*Invoice, error)
+	Find(ctx context.Context, offset, limit uint) ([]*Invoice, error)
 }
 
 type Invoicer interface {

@@ -2,6 +2,7 @@ package eattura
 
 import (
 	"context"
+	"time"
 
 	"github.com/mindmain/eattura/db"
 	"github.com/mindmain/eattura/db/model"
@@ -135,8 +136,74 @@ func (invHandler *invoicerHandler) DeleteInvoice(ctx context.Context, uuid strin
 	return nil
 
 }
+
+type invoiceFinder struct {
+	database db.Database
+	status   []Status
+	start    time.Time
+	end      time.Time
+}
+
+func (invFinder *invoiceFinder) getRequest() *model.RequestSearchInvoice {
+	request := &model.RequestSearchInvoice{
+		Status: invFinder.status,
+	}
+
+	if !invFinder.start.IsZero() {
+		request.StartDate = &invFinder.start
+	}
+
+	if !invFinder.end.IsZero() {
+		request.EndDate = &invFinder.end
+	}
+
+	return request
+}
+
+func (invFinder *invoiceFinder) WithStatus(status Status) FinderInvoice {
+	invFinder.status = append(invFinder.status, status)
+	return invFinder
+}
+
+func (invFinder *invoiceFinder) FromAt(start time.Time) FinderInvoice {
+	invFinder.start = start
+	return invFinder
+}
+
+func (invFinder *invoiceFinder) ToAt(end time.Time) FinderInvoice {
+
+	invFinder.end = end
+
+	return invFinder
+}
+
+func (invFinder *invoiceFinder) Find(ctx context.Context, skip, limit uint) ([]*Invoice, error) {
+
+	invoices, err := invFinder.database.Invoice().Find(ctx, skip, limit, invFinder.getRequest())
+
+	if err != nil {
+		return nil, err
+	}
+
+	var result = make([]*Invoice, 0)
+
+	for _, inv := range invoices {
+		var invoice Invoice
+		invoice.fromModel(inv)
+		result = append(result, &invoice)
+	}
+
+	return result, nil
+}
+
+func (invFinder *invoiceFinder) Count(ctx context.Context) (int, error) {
+	return invFinder.database.Invoice().Count(ctx, &model.RequestSearchInvoice{
+		Status: invFinder.status,
+	})
+}
+
 func (invHandler *invoicerHandler) InvoiceFinder() FinderInvoice {
-	return nil
+	return &invoiceFinder{database: invHandler.database}
 }
 
 func (invHandler *invoicerHandler) SendInvoice(ctx context.Context, invoice *Invoice) error {
