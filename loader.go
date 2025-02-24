@@ -35,7 +35,7 @@ type Loader interface {
 	// if the invoice is already present and the status is final, ignore the invoice.
 	// Download the file from the PEC service and save it on the fs.
 	// Read Inbound and Outbound invoice.
-	LoadFromPec(ctx context.Context) (*ResultLoader, error)
+	LoadFromPec(ctx context.Context, issuer *Issuer) (*ResultLoader, error)
 
 	// Realign check every invoice on the storage and check if the invoice is present on the db.
 	// if the invoice is present on the storage and not present on the db, create the invoice with status [paid or received].
@@ -158,7 +158,7 @@ func (l *defaultLoader) LoadInvoiceFromAnotherDirectory(ctx context.Context, fol
 	return result, nil
 
 }
-func (l *defaultLoader) LoadFromPec(ctx context.Context) (*ResultLoader, error) {
+func (l *defaultLoader) LoadFromPec(ctx context.Context, issuer *Issuer) (*ResultLoader, error) {
 	return &ResultLoader{}, nil
 }
 func (l *defaultLoader) Realign(ctx context.Context, issuer *Issuer) error {

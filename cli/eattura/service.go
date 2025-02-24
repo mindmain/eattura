@@ -2,13 +2,9 @@ package main
 
 import (
 	"fmt"
+	"log"
 
-	"github.com/labstack/gommon/log"
 	"github.com/mindmain/eattura"
-	"github.com/mindmain/eattura/db"
-	"github.com/mindmain/eattura/fs"
-	"github.com/mindmain/eattura/pec"
-	"github.com/mindmain/eattura/secure"
 	"github.com/spf13/cobra"
 )
 
@@ -24,28 +20,13 @@ func CommandService() *cobra.Command {
 		},
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 
-			database, err := db.New()
+			srv, err := eattura.New()
 
 			if err != nil {
-				log.Fatalf("Error on database connection: %v", err)
+				log.Fatalf("Error on create eattura/service: %v", err)
 			}
 
-			secureStorage, err := secure.New()
-
-			if err != nil {
-				log.Fatalf("Error on secure storage connection: %v", err)
-			}
-
-			pecService := pec.NewPEC(secureStorage)
-
-			invoiceFolder, err := fs.New()
-
-			if err != nil {
-				log.Fatalf("Error on invoice folder connection: %v", err)
-			}
-
-			service = eattura.New(database, pecService, invoiceFolder)
-
+			service = srv
 		},
 	}
 

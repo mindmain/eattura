@@ -34,7 +34,7 @@ func (vc *VatCode) toSdi() *fe.IdFiscaleIVA {
 	}
 }
 
-func (c *Contact) contactToSdi() *fe.DatiAnagrafici {
+func (c *ContactData) contactToSdi() *fe.DatiAnagrafici {
 
 	return &fe.DatiAnagrafici{
 		IdFiscaleIVA: c.VatCode.toSdi(),
@@ -156,12 +156,9 @@ func (inv *Invoice) GetSDI() (*fe.FatturaElettronica, error) {
 
 		FatturaElettronicaHeader: &fe.FatturaElettronicaHeader{
 			DatiTrasmissione: &fe.DatiTrasmissione{
-				IdTrasmittente: &fe.IdFiscaleIVA{
-					IdPaese:  inv.Issuer.VatCode.Nation,
-					IdCodice: inv.Issuer.VatCode.Code,
-				},
+				IdTrasmittente:      inv.Issuer.VatCode.toSdi(),
 				FormatoTrasmissione: fe.FPR12,
-				CodiceDestinatario:  cmp.Or(inv.DestinationCode, "0000000"),
+				CodiceDestinatario:  cmp.Or(inv.Customer.DestinationCode, "0000000"),
 				PECDestinatario:     inv.Customer.Pec,
 			},
 
