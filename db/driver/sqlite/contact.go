@@ -95,5 +95,9 @@ func (s *contactRepository) session(req *model.RequestSearchContact) *gorm.DB {
 		session = session.Where("name LIKE ? OR email LIKE ? OR phone LIKE ? OR street LIKE ?", "%"+req.Text+"%", "%"+req.Text+"%", "%"+req.Text+"%", "%"+req.Text+"%")
 	}
 
+	if len(req.Ids) > 0 {
+		session = session.Where("uuid IN ?", req.Ids)
+	}
+
 	return session
 }

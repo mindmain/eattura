@@ -44,8 +44,8 @@ func (c *Contact) TableName() string {
 }
 
 type RequestSearchContact struct {
-	Text string
-
+	Text   string
+	Ids    []string
 	Offset int
 	Limit  int
 }
