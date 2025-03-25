@@ -1,7 +1,6 @@
 package fe
 
 import (
-	"encoding/xml"
 	"time"
 )
 
@@ -21,10 +20,6 @@ func (f *FatturaElettronica) Date() time.Time {
 
 	return f.FatturaElettronicaBody[0].DatiGenerali.DatiGeneraliDocumento.Data.Time
 
-}
-
-func (f *FatturaElettronica) XmlByte() ([]byte, error) {
-	return xml.Marshal(f)
 }
 
 func (riepilogo *DatiRiepilogo) Is(n Natura) bool {

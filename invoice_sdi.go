@@ -2,6 +2,7 @@ package eattura
 
 import (
 	"cmp"
+	"encoding/xml"
 	"fmt"
 
 	"github.com/mindmain/eattura/sdi/fe"
@@ -138,7 +139,7 @@ func (inv *Invoice) getBodyInvoice() *fe.FatturaElettronicaBody {
 	return body
 }
 
-func (inv *Invoice) GetSDI() (*fe.FatturaElettronica, error) {
+func (inv *Invoice) GetFattura() (*fe.FatturaElettronica, error) {
 
 	if inv.Customer == nil {
 		return nil, fmt.Errorf("customer is required ")
@@ -154,6 +155,14 @@ func (inv *Invoice) GetSDI() (*fe.FatturaElettronica, error) {
 
 	var fat = &fe.FatturaElettronica{
 
+		Versione: fe.FPR12,
+		XMLName: xml.Name{
+			Local: "ns2:FatturaElettronica",
+		},
+		Xmlns: xml.Attr{
+			Name:  xml.Name{Local: "xmlns:ns2", Space: ""},
+			Value: fe.SpaceValue,
+		},
 		FatturaElettronicaHeader: &fe.FatturaElettronicaHeader{
 			DatiTrasmissione: &fe.DatiTrasmissione{
 				IdTrasmittente:      inv.Issuer.VatCode.toSdi(),
@@ -188,4 +197,24 @@ func (inv *Invoice) GetSDI() (*fe.FatturaElettronica, error) {
 	}
 
 	return fat, nil
+}
+
+func (inv *Invoice) Marshal() ([]byte, error) {
+	fat, err := inv.GetFattura()
+
+	if err != nil {
+		return nil, err
+	}
+
+	return fat.Marshal()
+}
+
+func (inv *Invoice) MarshalIndent(prefix, indent string) ([]byte, error) {
+	fat, err := inv.GetFattura()
+
+	if err != nil {
+		return nil, err
+	}
+
+	return fat.MarshalIndent(prefix, indent)
 }

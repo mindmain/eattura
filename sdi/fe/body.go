@@ -382,6 +382,26 @@ type FatturaElettronica struct {
 	Xmlns                    xml.Attr                  `xml:",attr" json:"Xmlns"`
 }
 
+func (f *FatturaElettronica) Marshal() ([]byte, error) {
+	bb, err := xml.Marshal(f)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return []byte(xml.Header + string(bb)), nil
+}
+
+func (f *FatturaElettronica) MarshalIndent(prefix, indent string) ([]byte, error) {
+	bb, err := xml.MarshalIndent(f, prefix, indent)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return []byte(xml.Header + string(bb)), nil
+}
+
 func (f *FatturaElettronica) SetUniqueFileName(name [5]byte) {
 	f.uniqueFileName = name
 }

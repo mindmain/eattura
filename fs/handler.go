@@ -2,6 +2,7 @@ package fs
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
 	"log"
 	"path"
@@ -43,7 +44,7 @@ func (h *handler) SaveInvoice(ctx context.Context, filename string, invoice *fe.
 		return err
 	}
 
-	bb, err := invoice.XmlByte()
+	bb, err := xml.Marshal(invoice)
 
 	if err != nil {
 		return err
