@@ -5,10 +5,10 @@ import (
 	"context"
 	"errors"
 
-	"github.com/mindmain/eattura/core"
-	"github.com/mindmain/eattura/db"
-	"github.com/mindmain/eattura/db/model"
-	"github.com/mindmain/eattura/sdi/fe"
+	"github.com/mindmain/eattura/internal/core"
+	"github.com/mindmain/eattura/internal/db"
+	"github.com/mindmain/eattura/internal/db/model"
+	"github.com/mindmain/eattura/internal/sdi/fe"
 )
 
 type IssuerHandler interface {

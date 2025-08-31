@@ -4,11 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/mindmain/eattura/db"
-	"github.com/mindmain/eattura/db/model"
-	"github.com/mindmain/eattura/fs"
-	"github.com/mindmain/eattura/pec"
-	"github.com/mindmain/eattura/sdi/fe"
+	"github.com/mindmain/eattura/internal/db"
+	"github.com/mindmain/eattura/internal/db/model"
+	"github.com/mindmain/eattura/internal/fs"
+	"github.com/mindmain/eattura/internal/pec"
+	"github.com/mindmain/eattura/internal/sdi/fe"
 )
 
 type invoicerHandler struct {

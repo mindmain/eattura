@@ -1,8 +1,8 @@
 package eattura
 
 import (
-	"github.com/mindmain/eattura/db/model"
-	"github.com/mindmain/eattura/sdi/fe"
+	"github.com/mindmain/eattura/internal/db/model"
+	"github.com/mindmain/eattura/internal/sdi/fe"
 )
 
 func (c *Contact) Supplier() *Supplier {

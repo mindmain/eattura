@@ -5,7 +5,7 @@ import (
 	"path"
 	"time"
 
-	"github.com/mindmain/eattura/fs/driver"
+	"github.com/mindmain/eattura/internal/fs/driver"
 )
 
 type directoryInvoice struct {

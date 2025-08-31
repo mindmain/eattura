@@ -3,8 +3,8 @@ package eattura
 import (
 	"context"
 
-	"github.com/mindmain/eattura/db"
-	"github.com/mindmain/eattura/db/model"
+	"github.com/mindmain/eattura/internal/db"
+	"github.com/mindmain/eattura/internal/db/model"
 )
 
 type FinderContact interface {

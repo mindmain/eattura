@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/mindmain/eattura/core"
-	"github.com/mindmain/eattura/fs/driver"
-	"github.com/mindmain/eattura/sdi/fe"
+	"github.com/mindmain/eattura/internal/core"
+	"github.com/mindmain/eattura/internal/fs/driver"
+	"github.com/mindmain/eattura/internal/sdi/fe"
 )
 
 type Type = core.StorageType

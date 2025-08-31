@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/mindmain/eattura/core"
+	"github.com/mindmain/eattura/internal/core"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

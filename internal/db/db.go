@@ -5,8 +5,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/mindmain/eattura/core"
-	"github.com/mindmain/eattura/db/driver"
+	"github.com/mindmain/eattura/internal/core"
+	"github.com/mindmain/eattura/internal/db/driver"
 )
 
 type Type = core.DBType

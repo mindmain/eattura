@@ -3,7 +3,7 @@ package main
 import (
 	"path"
 
-	"github.com/mindmain/eattura/fs"
+	"github.com/mindmain/eattura/internal/fs"
 	"github.com/spf13/cobra"
 )
 

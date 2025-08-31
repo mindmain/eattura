@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/emersion/go-imap/client"
-	"github.com/mindmain/eattura/secure"
+	"github.com/mindmain/eattura/internal/secure"
 	"gopkg.in/gomail.v2"
 )
 

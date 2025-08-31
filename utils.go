@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/mindmain/eattura/db/model"
+	"github.com/mindmain/eattura/internal/db/model"
 )
 
 const NamespaceEattura = "09f350c4-3657-5fdb-99b5-c836345d4488"

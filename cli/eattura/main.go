@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mindmain/eattura/core"
+	"github.com/mindmain/eattura/internal/core"
 	"github.com/spf13/cobra"
 )
 

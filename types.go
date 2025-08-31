@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mindmain/eattura/db"
-	"github.com/mindmain/eattura/db/model"
-	"github.com/mindmain/eattura/sdi/fe"
-	"github.com/mindmain/eattura/secure"
+	"github.com/mindmain/eattura/internal/db"
+	"github.com/mindmain/eattura/internal/db/model"
+	"github.com/mindmain/eattura/internal/sdi/fe"
+	"github.com/mindmain/eattura/internal/secure"
 
-	"github.com/mindmain/eattura/fs"
-	"github.com/mindmain/eattura/pec"
+	"github.com/mindmain/eattura/internal/fs"
+	"github.com/mindmain/eattura/internal/pec"
 )
 
 type CredentialSetting = secure.Credentials

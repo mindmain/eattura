@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mindmain/eattura/secure"
+	"github.com/mindmain/eattura/internal/secure"
 )
 
 type MessageType string

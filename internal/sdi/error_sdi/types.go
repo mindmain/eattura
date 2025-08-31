@@ -3,7 +3,7 @@ package error_sdi
 import (
 	"fmt"
 
-	"github.com/mindmain/eattura/sdi/fe"
+	"github.com/mindmain/eattura/internal/sdi/fe"
 	"github.com/pkg/errors"
 )
 

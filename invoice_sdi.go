@@ -5,7 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 
-	"github.com/mindmain/eattura/sdi/fe"
+	"github.com/mindmain/eattura/internal/sdi/fe"
 )
 
 func (adr *Address) toSdi() *fe.IndirizzoType {

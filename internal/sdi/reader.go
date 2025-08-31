@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/mindmain/eattura/sdi/fe"
+	"github.com/mindmain/eattura/internal/sdi/fe"
 )
 
 var ErrInvalidUniqueLength = errors.New("invalid unique length must be 5 characters after underscore")

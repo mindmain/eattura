@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/emersion/go-imap"
-	"github.com/mindmain/eattura/sdi"
+	"github.com/mindmain/eattura/internal/sdi"
 	"github.com/pkg/errors"
 )
 

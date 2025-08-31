@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/mindmain/eattura/core"
-	"github.com/mindmain/eattura/secure/driver"
+	"github.com/mindmain/eattura/internal/core"
+	"github.com/mindmain/eattura/internal/secure/driver"
 	"github.com/zalando/go-keyring"
 )
 

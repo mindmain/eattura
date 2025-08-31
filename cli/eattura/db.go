@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/mindmain/eattura/db"
+	"github.com/mindmain/eattura/internal/db"
 	"github.com/spf13/cobra"
 )
 

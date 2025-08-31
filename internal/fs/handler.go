@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/mindmain/eattura/sdi"
-	"github.com/mindmain/eattura/sdi/fe"
+	"github.com/mindmain/eattura/internal/sdi"
+	"github.com/mindmain/eattura/internal/sdi/fe"
 )
 
 func (h *handler) ReadInvoice(ctx context.Context, year, month int, filename string) (*fe.FatturaElettronica, error) {

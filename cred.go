@@ -4,9 +4,9 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/mindmain/eattura/db"
-	"github.com/mindmain/eattura/db/model"
-	"github.com/mindmain/eattura/secure"
+	"github.com/mindmain/eattura/internal/db"
+	"github.com/mindmain/eattura/internal/db/model"
+	"github.com/mindmain/eattura/internal/secure"
 )
 
 func determinateCredentialUUID(cred *CredentialSetting) string {

@@ -3,8 +3,8 @@ package static
 import (
 	"fmt"
 
-	"github.com/mindmain/eattura/core"
-	"github.com/mindmain/eattura/secure/driver"
+	"github.com/mindmain/eattura/internal/core"
+	"github.com/mindmain/eattura/internal/secure/driver"
 )
 
 func New() driver.Storage {

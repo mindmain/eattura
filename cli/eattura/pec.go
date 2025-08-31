@@ -4,8 +4,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mindmain/eattura/pec"
-	"github.com/mindmain/eattura/secure"
+	"github.com/mindmain/eattura/internal/pec"
+	"github.com/mindmain/eattura/internal/secure"
 	"github.com/spf13/cobra"
 )
 

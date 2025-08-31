@@ -3,7 +3,7 @@ package error_sdi
 import (
 	"strings"
 
-	"github.com/mindmain/eattura/sdi/fe"
+	"github.com/mindmain/eattura/internal/sdi/fe"
 )
 
 const domainSdiPec = "@pec.fatturapa.it"

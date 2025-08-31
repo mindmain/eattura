@@ -3,8 +3,8 @@ package main
 import (
 	"encoding/json"
 
-	"github.com/mindmain/eattura/core"
-	"github.com/mindmain/eattura/secure"
+	"github.com/mindmain/eattura/internal/core"
+	"github.com/mindmain/eattura/internal/secure"
 	"github.com/spf13/cobra"
 )
 

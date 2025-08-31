@@ -3,10 +3,10 @@ package secure
 import (
 	"fmt"
 
-	"github.com/mindmain/eattura/core"
-	"github.com/mindmain/eattura/secure/driver"
-	"github.com/mindmain/eattura/secure/driver/os"
-	"github.com/mindmain/eattura/secure/driver/static"
+	"github.com/mindmain/eattura/internal/core"
+	"github.com/mindmain/eattura/internal/secure/driver"
+	"github.com/mindmain/eattura/internal/secure/driver/os"
+	"github.com/mindmain/eattura/internal/secure/driver/static"
 )
 
 type Type string

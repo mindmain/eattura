@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mindmain/eattura/db/model"
+	"github.com/mindmain/eattura/internal/db/model"
 )
 
 type CreateModel[M any] interface {
