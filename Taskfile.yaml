@@ -1,0 +1,6 @@
+version: "3"
+tasks:
+  pull:
+    cmds:
+      - git submodule update --remote --merge
+    desc: Pull the latest changes from the main branch
