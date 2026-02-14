@@ -1,0 +1,26 @@
+[workspace]
+members = [
+    "common",
+    "server-eattura",
+    "eattura/src-tauri"
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"       
+authors = ["Spina Nico <spinanico93@gmail.com>"] 
+license = "Apache-2.0"
+publish = false        
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+sqlx = "0.8" 
+common = { path = "./common" }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

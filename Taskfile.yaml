@@ -1,6 +1,67 @@
 version: "3"
+vars:
+  APP_DIR: eattura
+  PROTO_DIR: proto
+  COMMON_DIR: common
+  BUN: bun
+
 tasks:
   pull:
     cmds:
       - git submodule update --remote --merge
     desc: Pull the latest changes from the main branch
+  default:
+    desc: "Run the development environment (Hot Reload)"
+    cmds:
+      - task: dev
+  install:
+    desc: "Install all dependencies for the project (Bun + Cargo)"
+    cmds:
+      - echo "📦 Installing Bun dependencies..."
+      - cd {{.APP_DIR}} && {{.BUN}} install
+      - echo "🦀 Fetching Rust dependencies..."
+      - cargo fetch
+  proto:
+    desc: "Download and prepare protobuf dependencies"
+    cmds:
+      - echo "📜 Exporting proto dependencies..."
+      - buf export buf.build/bufbuild/protovalidate --output proto/vendor
+    status:
+      - test -d proto/vendor
+
+  # --- DEVELOPMENT ---
+  dev:
+    desc: "Run the Desktop app in development mode (Hot Reload)"
+    deps: [proto] # Ensure proto files are ready before starting
+    dir: "{{.APP_DIR}}"
+    cmds:
+      - "{{.BUN}} run tauri dev"
+
+  server:
+    desc: "Run the Backend Server (separately from the UI)"
+    deps: [proto]
+    cmds:
+      - cargo run --bin server-eattura
+
+  # --- BUILD & PRODUCTION ---
+  build:
+    desc: "Build the application for production (creates distributables)"
+    deps: [proto]
+    dir: "{{.APP_DIR}}"
+    cmds:
+      - echo "🔨 Building App..."
+      - "{{.BUN}} run tauri build"
+
+  # --- UTILITIES ---
+  icons:
+    desc: "Generate icons from a source PNG file"
+    dir: "{{.APP_DIR}}"
+    cmds:
+      - "{{.BUN}} run tauri icon ./src-tauri/icons/icon.png"
+
+  clean:
+    desc: "Clean build directories"
+    cmds:
+      - cargo clean
+      - rm -rf {{.APP_DIR}}/dist
+      - rm -rf {{.APP_DIR}}/src-tauri/target

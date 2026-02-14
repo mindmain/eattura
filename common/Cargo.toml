@@ -1,0 +1,14 @@
+[package]
+name = "common"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+prost = "0.14.3"      
+
+[build-dependencies]
+prost-build = "0.14.3" 
+protoc-bin-vendored = "3.0" 
