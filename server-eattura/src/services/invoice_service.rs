@@ -40,6 +40,9 @@ impl InvoiceService {
 
         let id = Uuid::new_v4();
 
+        // Persist header + lines + payments atomically.
+        let mut tx = self.db.begin().await?;
+
         sqlx::query(
             "INSERT INTO invoices
                 (id, numero, data, tipo_documento, divisa, importo_totale, cedente_id, cessionario_id)
@@ -53,7 +56,7 @@ impl InvoiceService {
         .bind(req.importo_totale)
         .bind(req.cedente_id.to_string())
         .bind(req.cessionario_id.to_string())
-        .execute(&self.db)
+        .execute(&mut *tx)
         .await?;
 
         // Insert line items.
@@ -78,7 +81,7 @@ impl InvoiceService {
             .bind(prezzo_totale)
             .bind(line.aliquota_iva)
             .bind(&line.natura)
-            .execute(&self.db)
+            .execute(&mut *tx)
             .await?;
 
             linee.push(InvoiceLineDetail {
@@ -111,7 +114,7 @@ impl InvoiceService {
             .bind(&payment.data_scadenza_pagamento)
             .bind(&payment.iban)
             .bind(&payment.istituto_finanziario)
-            .execute(&self.db)
+            .execute(&mut *tx)
             .await?;
 
             pagamenti.push(InvoicePaymentDetail {
@@ -122,6 +125,8 @@ impl InvoiceService {
                 istituto_finanziario: payment.istituto_finanziario.clone(),
             });
         }
+
+        tx.commit().await?;
 
         Ok(InvoiceDetail {
             id,
@@ -328,7 +333,8 @@ impl InvoiceService {
         let dati_riepilogo: Vec<DatiRiepilogo> = riepilogo_map
             .values()
             .map(|(imponibile, aliquota, natura)| {
-                let imposta = aliquota * imponibile / 100.0;
+                // Round to 2 decimals (SDI 00421): VAT must match the cent.
+                let imposta = ((aliquota * imponibile / 100.0) * 100.0).round() / 100.0;
                 DatiRiepilogo {
                     aliquota_iva: *aliquota,
                     imponibile_importo: *imponibile,
@@ -458,6 +464,9 @@ impl InvoiceService {
 
         let id = Uuid::new_v4();
 
+        // Persist header + lines + payments atomically.
+        let mut tx = self.db.begin().await?;
+
         sqlx::query(
             "INSERT INTO invoices
                 (id, numero, data, tipo_documento, divisa, importo_totale,
@@ -472,7 +481,7 @@ impl InvoiceService {
         .bind(dg.importo_totale_documento)
         .bind(cedente_id.to_string())
         .bind(cessionario_id.to_string())
-        .execute(&self.db)
+        .execute(&mut *tx)
         .await?;
 
         // Insert line items.
@@ -498,7 +507,7 @@ impl InvoiceService {
                 .bind(det.prezzo_totale)
                 .bind(det.aliquota_iva)
                 .bind(&natura_str)
-                .execute(&self.db)
+                .execute(&mut *tx)
                 .await?;
 
                 linee.push(InvoiceLineDetail {
@@ -540,7 +549,7 @@ impl InvoiceService {
                 .bind(&det.data_scadenza_pagamento)
                 .bind(&det.iban)
                 .bind(&det.istituto_finanziario)
-                .execute(&self.db)
+                .execute(&mut *tx)
                 .await?;
 
                 pagamenti.push(InvoicePaymentDetail {
@@ -552,6 +561,8 @@ impl InvoiceService {
                 });
             }
         }
+
+        tx.commit().await?;
 
         // Get display names for cedente/cessionario.
         let ced_name = get_client_display_name(&self.db, cedente_id).await?;

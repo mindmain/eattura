@@ -85,10 +85,13 @@ pub async fn update_invoice(
     use sqlx::Row;
     let stato: String = row.get("stato");
     if stato != "draft" {
-        return Err(AppError::Internal(format!(
+        return Err(AppError::Conflict(format!(
             "Cannot update invoice in '{stato}' status; only 'draft' invoices can be updated"
         )));
     }
+
+    // Update header + replace lines/payments atomically.
+    let mut tx = state.db.begin().await?;
 
     // Update the invoice header.
     sqlx::query(
@@ -106,13 +109,13 @@ pub async fn update_invoice(
     .bind(payload.importo_totale)
     .bind(payload.cedente_id.to_string())
     .bind(payload.cessionario_id.to_string())
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
 
     // Replace line items: delete old ones and insert new ones.
     sqlx::query("DELETE FROM invoice_lines WHERE invoice_id = $1")
         .bind(id.to_string())
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
 
     for line in &payload.linee {
@@ -134,14 +137,14 @@ pub async fn update_invoice(
         .bind(prezzo_totale)
         .bind(line.aliquota_iva)
         .bind(&line.natura)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
     }
 
     // Replace payment details.
     sqlx::query("DELETE FROM invoice_payments WHERE invoice_id = $1")
         .bind(id.to_string())
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
 
     for payment in &payload.pagamenti {
@@ -160,9 +163,11 @@ pub async fn update_invoice(
         .bind(&payment.data_scadenza_pagamento)
         .bind(&payment.iban)
         .bind(&payment.istituto_finanziario)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
     }
+
+    tx.commit().await?;
 
     let detail = fetch_invoice_detail(&state.db, id).await?;
     Ok(Json(detail))
@@ -183,7 +188,7 @@ pub async fn delete_invoice(
     use sqlx::Row;
     let stato: String = row.get("stato");
     if stato != "draft" {
-        return Err(AppError::Internal(format!(
+        return Err(AppError::Conflict(format!(
             "Cannot delete invoice in '{stato}' status; only 'draft' invoices can be deleted"
         )));
     }
@@ -224,9 +229,9 @@ pub async fn set_status(
     let current: InvoiceStatus = row
         .get::<String, _>("stato")
         .parse()
-        .map_err(AppError::Internal)?;
-    let next: InvoiceStatus = payload.status.parse().map_err(AppError::Internal)?;
-    current.transition_to(next).map_err(AppError::Internal)?;
+        .map_err(AppError::Internal)?; // stored value is our own, a parse failure is a server bug
+    let next: InvoiceStatus = payload.status.parse().map_err(AppError::BadRequest)?;
+    current.transition_to(next).map_err(AppError::Conflict)?;
 
     // Block promotion to `validated` if the invoice does not pass SDI validation.
     if next == InvoiceStatus::Validated {
@@ -234,7 +239,7 @@ pub async fn set_status(
         let xml_svc = XmlService { invoice_service: svc };
         let result = xml_svc.validate_invoice(id).await?;
         if !result.is_valid() {
-            return Err(AppError::Internal(format!(
+            return Err(AppError::Conflict(format!(
                 "Cannot validate invoice: {} SDI validation error(s) must be resolved first",
                 result.error_count()
             )));
