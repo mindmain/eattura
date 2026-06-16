@@ -584,43 +584,6 @@ impl InvoiceService {
         })
     }
 
-    /// Update invoice status (draft -> validated -> sent -> accepted/rejected).
-    ///
-    /// Validates that the status transition is legal before applying it.
-    pub async fn update_status(&self, id: Uuid, status: &str) -> Result<(), AppError> {
-        use sqlx::Row;
-
-        let row = sqlx::query("SELECT stato FROM invoices WHERE id = $1")
-            .bind(id.to_string())
-            .fetch_optional(&self.db)
-            .await?
-            .ok_or_else(|| AppError::NotFound(format!("Invoice {id} not found")))?;
-
-        let current: String = row.get("stato");
-
-        // Validate status transition.
-        let valid_transition = matches!(
-            (current.as_str(), status),
-            ("draft", "validated")
-                | ("validated", "sent")
-                | ("sent", "accepted")
-                | ("sent", "rejected")
-        );
-
-        if !valid_transition {
-            return Err(AppError::Internal(format!(
-                "Invalid status transition from '{current}' to '{status}'"
-            )));
-        }
-
-        sqlx::query("UPDATE invoices SET stato = $2, updated_at = NOW() WHERE id = $1")
-            .bind(id.to_string())
-            .bind(status)
-            .execute(&self.db)
-            .await?;
-
-        Ok(())
-    }
 }
 
 /// Helper to get a client's display name from the database.
@@ -676,12 +639,12 @@ async fn update_client_from_cedente(
     .bind(&cognome)
     .bind(&cf)
     .bind(&regime)
-    .bind(sede.map(|s| &s.indirizzo))
-    .bind(sede.and_then(|s| s.numero_civico.as_ref()))
-    .bind(sede.map(|s| &s.cap))
-    .bind(sede.map(|s| &s.comune))
-    .bind(sede.and_then(|s| s.provincia.as_ref()))
-    .bind(sede.map(|s| &s.nazione))
+    .bind(sede.map(|s| s.indirizzo.as_str()).filter(|s| !s.is_empty()))
+    .bind(sede.and_then(|s| s.numero_civico.as_deref()).filter(|s| !s.is_empty()))
+    .bind(sede.map(|s| s.cap.as_str()).filter(|s| !s.is_empty()))
+    .bind(sede.map(|s| s.comune.as_str()).filter(|s| !s.is_empty()))
+    .bind(sede.and_then(|s| s.provincia.as_deref()).filter(|s| !s.is_empty()))
+    .bind(sede.map(|s| s.nazione.as_str()).filter(|s| !s.is_empty()))
     .execute(pool)
     .await?;
 
@@ -720,12 +683,12 @@ async fn update_client_from_cessionario(
     .bind(&nome)
     .bind(&cognome)
     .bind(&cf)
-    .bind(sede.map(|s| &s.indirizzo))
-    .bind(sede.and_then(|s| s.numero_civico.as_ref()))
-    .bind(sede.map(|s| &s.cap))
-    .bind(sede.map(|s| &s.comune))
-    .bind(sede.and_then(|s| s.provincia.as_ref()))
-    .bind(sede.map(|s| &s.nazione))
+    .bind(sede.map(|s| s.indirizzo.as_str()).filter(|s| !s.is_empty()))
+    .bind(sede.and_then(|s| s.numero_civico.as_deref()).filter(|s| !s.is_empty()))
+    .bind(sede.map(|s| s.cap.as_str()).filter(|s| !s.is_empty()))
+    .bind(sede.map(|s| s.comune.as_str()).filter(|s| !s.is_empty()))
+    .bind(sede.and_then(|s| s.provincia.as_deref()).filter(|s| !s.is_empty()))
+    .bind(sede.map(|s| s.nazione.as_str()).filter(|s| !s.is_empty()))
     .execute(pool)
     .await?;
 

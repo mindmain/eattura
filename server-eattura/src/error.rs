@@ -22,6 +22,7 @@ pub enum AppError {
     Conflict(String),
 
     #[error("Validation failed")]
+    #[allow(dead_code)] // reserved for endpoints that surface SDI validation errors as 422
     Validation(common::validation::ValidationResult),
 
     #[error("Database error: {0}")]

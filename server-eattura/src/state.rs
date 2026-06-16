@@ -8,5 +8,6 @@ use crate::config::ServerConfig;
 #[derive(Clone)]
 pub struct AppState {
     pub db: sqlx::PgPool,
+    #[allow(dead_code)] // available to handlers; not all read it yet
     pub config: Arc<ServerConfig>,
 }

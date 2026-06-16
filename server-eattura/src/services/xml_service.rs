@@ -1,6 +1,4 @@
-use common::sdi::v1::FatturaElettronica;
 use common::validation::ValidationResult;
-use common::xml::enum_map::formato_trasmissione_to_sdi;
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -47,18 +45,6 @@ impl XmlService {
         Ok(detail)
     }
 
-    /// Validate an invoice XML without importing.
-    ///
-    /// Steps:
-    /// 1. Decode XML to FatturaElettronica
-    /// 2. Run common::validation::rules::validate
-    /// 3. Return validation result
-    pub fn validate_xml(xml: &str) -> Result<ValidationResult, AppError> {
-        let fattura = common::xml::decode::decode(xml)?;
-        let result = common::validation::rules::validate(&fattura);
-        Ok(result)
-    }
-
     /// Validate a stored invoice against SDI rules.
     ///
     /// Loads the invoice, converts to proto, and runs validation.
@@ -66,34 +52,5 @@ impl XmlService {
         let fattura = self.invoice_service.to_fattura(id).await?;
         let result = common::validation::rules::validate(&fattura);
         Ok(result)
-    }
-
-    /// Generate SDI-compliant filename for an invoice XML.
-    ///
-    /// Format: `{IdPaese}{IdCodice}_{Progressivo}.xml`
-    /// Example: `IT01234567890_00001.xml`
-    pub fn generate_filename(fattura: &FatturaElettronica) -> String {
-        let (id_paese, id_codice, progressivo) = fattura
-            .header
-            .as_ref()
-            .and_then(|h| h.dati_trasmissione.as_ref())
-            .map(|dt| {
-                let id = dt.id_trasmittente.as_ref();
-                let paese = id.map(|i| i.id_paese.as_str()).unwrap_or("IT");
-                let codice = id.map(|i| i.id_codice.as_str()).unwrap_or("00000000000");
-                let prog = &dt.progressivo_invio;
-                (paese, codice, prog.as_str())
-            })
-            .unwrap_or(("IT", "00000000000", "00001"));
-
-        let _formato = fattura
-            .header
-            .as_ref()
-            .and_then(|h| h.dati_trasmissione.as_ref())
-            .map(|dt| dt.formato_trasmissione)
-            .and_then(formato_trasmissione_to_sdi)
-            .unwrap_or("FPA12");
-
-        format!("{id_paese}{id_codice}_{progressivo}.xml")
     }
 }
