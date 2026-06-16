@@ -1047,7 +1047,7 @@ pub(crate) async fn build_fattura_from_db(
                 id_paese: cedente_row.get::<String, _>("id_paese"),
                 id_codice: cedente_row.get::<String, _>("id_codice"),
             }),
-            progressivo_invio: "00001".to_string(),
+            progressivo_invio: common::pec::progressivo_from_id(id),
             formato_trasmissione: 20, // FPR12 (private)
             codice_destinatario: codice_dest,
             ..Default::default()

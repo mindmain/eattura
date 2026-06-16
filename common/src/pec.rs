@@ -37,6 +37,21 @@ pub fn sdi_filename(fattura: &FatturaElettronica) -> String {
     format!("{id_paese}{id_codice}_{progressivo}.xml")
 }
 
+/// Derive a stable, unique `ProgressivoInvio` (max 10 alphanumeric chars) from
+/// an invoice id, so distinct invoices never collide on the SDI file name.
+pub fn progressivo_from_id(id: &str) -> String {
+    let alnum: String = id.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let tail: String = alnum
+        .chars()
+        .rev()
+        .take(5)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{:0>5}", tail.to_ascii_uppercase())
+}
+
 /// The category of an SDI notification, identified by the XML root element.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SdiMessageType {
@@ -292,6 +307,15 @@ mod tests {
         let n = parse_notification(xml).unwrap();
         assert_eq!(n.message_type, SdiMessageType::NotificaMancataConsegna);
         assert_eq!(n.resulting_status(), None);
+    }
+
+    #[test]
+    fn progressivo_is_unique_and_alphanumeric() {
+        let a = progressivo_from_id("550e8400-e29b-41d4-a716-446655440000");
+        let b = progressivo_from_id("550e8400-e29b-41d4-a716-446655440001");
+        assert_eq!(a.len(), 5);
+        assert_ne!(a, b);
+        assert!(a.chars().all(|c| c.is_ascii_alphanumeric()));
     }
 
     #[test]

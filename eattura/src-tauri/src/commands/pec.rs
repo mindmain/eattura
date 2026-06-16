@@ -205,7 +205,7 @@ async fn current_status(pool: &sqlx::SqlitePool, id: &str) -> Result<InvoiceStat
 async fn build_sent_filename_index(
     pool: &sqlx::SqlitePool,
 ) -> Result<std::collections::HashMap<String, String>, String> {
-    let rows = sqlx::query("SELECT id FROM invoices WHERE stato = 'sent'")
+    let rows = sqlx::query("SELECT id FROM invoices WHERE stato IN ('sent','accepted','rejected')")
         .fetch_all(pool)
         .await
         .map_err(|e| e.to_string())?;

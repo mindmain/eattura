@@ -139,7 +139,7 @@ pub async fn sync(
 async fn build_sent_filename_index(
     pool: &sqlx::PgPool,
 ) -> Result<std::collections::HashMap<String, String>, AppError> {
-    let rows = sqlx::query("SELECT id FROM invoices WHERE stato = 'sent'")
+    let rows = sqlx::query("SELECT id FROM invoices WHERE stato IN ('sent','accepted','rejected')")
         .fetch_all(pool)
         .await?;
 

@@ -248,7 +248,7 @@ impl InvoiceService {
                     id_paese: ced_paese.clone(),
                     id_codice: ced_codice.clone(),
                 }),
-                progressivo_invio: format!("{:05}", 1),
+                progressivo_invio: common::pec::progressivo_from_id(&id.to_string()),
                 formato_trasmissione: 10, // FPA12
                 codice_destinatario,
                 ..Default::default()
