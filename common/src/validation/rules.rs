@@ -184,9 +184,18 @@ fn is_iso_date(s: &str) -> bool {
     if !(digits(0..4) && digits(5..7) && digits(8..10)) {
         return false;
     }
+    let year: u32 = s[0..4].parse().unwrap_or(0);
     let month: u32 = s[5..7].parse().unwrap_or(0);
     let day: u32 = s[8..10].parse().unwrap_or(0);
-    (1..=12).contains(&month) && (1..=31).contains(&day)
+
+    let is_leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let max_day = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => if is_leap { 29 } else { 28 },
+        _ => 0,
+    };
+    (1..=12).contains(&month) && day >= 1 && day <= max_day
 }
 
 fn validate_body_indexed(body: &FatturaElettronicaBody, _body_idx: usize) -> ValidationResult {
@@ -341,8 +350,8 @@ fn validate_dati_riepilogo(body: &FatturaElettronicaBody) -> Vec<ValidationError
 fn validate_prezzo_totale(linea: &DettaglioLinee) -> Vec<ValidationError> {
     let mut errors = Vec::new();
 
-    // If quantita is not set, we cannot verify the calculation
-    let Some(quantita) = linea.quantita else { return errors };
+    // Quantita is optional for service lines; SDI treats a missing quantity as 1.
+    let quantita = linea.quantita.unwrap_or(1.0);
 
     let base = linea.prezzo_unitario * quantita;
     let adjusted = apply_sconto_maggiorazione(base, &linea.sconto_maggiorazione);
@@ -540,11 +549,15 @@ fn validate_id_fiscale(id_paese: &str, id_codice: &str) -> Vec<ValidationError> 
 
 /// Validate IBAN format: 2 letters + 2 digits + 11-30 alphanumeric characters.
 fn validate_iban(iban: &str) -> Option<ValidationError> {
-    let valid = iban.len() >= 15
-        && iban.len() <= 34
-        && iban[..2].chars().all(|c| c.is_ascii_alphabetic())
-        && iban[2..4].chars().all(|c| c.is_ascii_digit())
-        && iban[4..].chars().all(|c| c.is_ascii_alphanumeric());
+    // Operate on bytes, but only once we know the input is pure ASCII so byte
+    // indices align with char boundaries (avoids panics on multibyte input).
+    let bytes = iban.as_bytes();
+    let valid = iban.is_ascii()
+        && bytes.len() >= 15
+        && bytes.len() <= 34
+        && bytes[..2].iter().all(u8::is_ascii_alphabetic)
+        && bytes[2..4].iter().all(u8::is_ascii_digit)
+        && bytes[4..].iter().all(u8::is_ascii_alphanumeric);
 
     if !valid {
         Some(ValidationError {
