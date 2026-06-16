@@ -27,6 +27,7 @@ pub struct PecConfig {
 
 /// A message fetched from the PEC inbox.
 #[derive(Debug)]
+#[allow(dead_code)] // subject/from are part of the message model, used for logging/diagnostics
 pub struct PecMessage {
     pub subject: String,
     pub from: String,
@@ -120,11 +121,10 @@ fn fetch_unseen(config: &PecConfig) -> Result<Vec<PecMessage>, String> {
             .fetch(uid.to_string(), "RFC822")
             .map_err(|e| format!("IMAP fetch failed: {e}"))?;
         for fetch in fetches.iter() {
-            if let Some(body) = fetch.body() {
-                if let Some(msg) = parse_mime(body) {
+            if let Some(body) = fetch.body()
+                && let Some(msg) = parse_mime(body) {
                     messages.push(msg);
                 }
-            }
         }
     }
 

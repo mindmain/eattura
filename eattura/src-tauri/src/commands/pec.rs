@@ -135,9 +135,8 @@ pub(crate) async fn run_sync(
             let mut new_status = None;
             if let (Some(inv_id), Some(target)) =
                 (invoice_id.as_ref(), notification.resulting_status())
-            {
-                if let Ok(cur) = current_status(pool, inv_id).await {
-                    if cur.transition_to(target).is_ok() {
+                && let Ok(cur) = current_status(pool, inv_id).await
+                    && cur.transition_to(target).is_ok() {
                         sqlx::query(
                             "UPDATE invoices SET stato = ?, updated_at = datetime('now') WHERE id = ?",
                         )
@@ -148,8 +147,6 @@ pub(crate) async fn run_sync(
                         .map_err(|e| e.to_string())?;
                         new_status = Some(target.as_str().to_string());
                     }
-                }
-            }
 
             // Persist the notification.
             let errori_json = serde_json::to_string(

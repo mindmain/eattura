@@ -51,7 +51,7 @@ pub fn decode_from_reader<R: Read>(reader: R) -> Result<FatturaElettronica, XmlE
 /// Extract the local name from an element (strip namespace prefix).
 fn local_name(e: &quick_xml::events::BytesStart) -> String {
     let full = String::from_utf8_lossy(e.name().as_ref()).to_string();
-    full.split(':').last().unwrap_or(&full).to_string()
+    full.split(':').next_back().unwrap_or(&full).to_string()
 }
 
 /// Read the text content of the current element. Assumes the reader is positioned
@@ -62,7 +62,7 @@ fn read_text<R: BufRead>(r: &mut Reader<R>) -> Result<String, XmlError> {
     loop {
         match r.read_event_into(&mut buf)? {
             Event::Text(e) => {
-                text.push_str(&e.unescape()?.into_owned());
+                text.push_str(&e.unescape()?);
             }
             Event::CData(e) => {
                 text.push_str(&String::from_utf8_lossy(&e));

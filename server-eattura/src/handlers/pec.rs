@@ -86,8 +86,8 @@ pub async fn sync(
                     .fetch_one(&state.db)
                     .await?
                     .get("stato");
-                if let Ok(cur) = cur.parse::<InvoiceStatus>() {
-                    if cur.transition_to(target).is_ok() {
+                if let Ok(cur) = cur.parse::<InvoiceStatus>()
+                    && cur.transition_to(target).is_ok() {
                         sqlx::query("UPDATE invoices SET stato = $2, updated_at = NOW() WHERE id = $1")
                             .bind(inv_id)
                             .bind(target.as_str())
@@ -95,7 +95,6 @@ pub async fn sync(
                             .await?;
                         new_status = Some(target.as_str().to_string());
                     }
-                }
             }
 
             let errori_json = serde_json::to_string(
@@ -147,11 +146,10 @@ async fn build_sent_filename_index(
     let mut index = std::collections::HashMap::new();
     for row in &rows {
         let id_str: String = row.get("id");
-        if let Ok(uuid) = id_str.parse::<Uuid>() {
-            if let Ok(fattura) = svc.to_fattura(uuid).await {
+        if let Ok(uuid) = id_str.parse::<Uuid>()
+            && let Ok(fattura) = svc.to_fattura(uuid).await {
                 index.insert(sdi_filename(&fattura), id_str);
             }
-        }
     }
     Ok(index)
 }

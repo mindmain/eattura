@@ -234,7 +234,7 @@ fn read_text(reader: &mut Reader<&[u8]>) -> Result<String, XmlError> {
     let mut text = String::new();
     loop {
         match reader.read_event_into(&mut buf)? {
-            Event::Text(e) => text.push_str(&e.unescape()?.into_owned()),
+            Event::Text(e) => text.push_str(&e.unescape()?),
             Event::CData(e) => text.push_str(&String::from_utf8_lossy(&e)),
             Event::End(_) | Event::Eof => break,
             _ => {}

@@ -38,6 +38,6 @@ impl From<common::xml::XmlError> for CommandError {
 /// Convert CommandError to String for Tauri IPC compatibility.
 impl From<CommandError> for String {
     fn from(e: CommandError) -> String {
-        serde_json::to_string(&e).unwrap_or_else(|_| e.message)
+        serde_json::to_string(&e).unwrap_or(e.message)
     }
 }

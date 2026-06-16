@@ -171,11 +171,10 @@ impl PecService {
                 .fetch(uid.to_string(), "RFC822")
                 .map_err(|e| AppError::Internal(format!("IMAP fetch failed: {e}")))?;
             for fetch in fetches.iter() {
-                if let Some(body) = fetch.body() {
-                    if let Some(msg) = Self::parse_mime(body) {
+                if let Some(body) = fetch.body()
+                    && let Some(msg) = Self::parse_mime(body) {
                         messages.push(msg);
                     }
-                }
             }
         }
 

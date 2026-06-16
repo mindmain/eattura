@@ -49,37 +49,33 @@ pub fn validate_header(header: &FatturaElettronicaHeader) -> ValidationResult {
     let mut errors = Vec::new();
 
     // Validate DatiTrasmissione
-    if let Some(dt) = &header.dati_trasmissione {
-        if let Some(id) = &dt.id_trasmittente {
+    if let Some(dt) = &header.dati_trasmissione
+        && let Some(id) = &dt.id_trasmittente {
             errors.extend(validate_id_fiscale(&id.id_paese, &id.id_codice));
         }
-    }
 
     // Validate CedentePrestatore
-    if let Some(cp) = &header.cedente_prestatore {
-        if let Some(da) = &cp.dati_anagrafici {
+    if let Some(cp) = &header.cedente_prestatore
+        && let Some(da) = &cp.dati_anagrafici {
             if let Some(id) = &da.id_fiscale_iva {
                 errors.extend(validate_id_fiscale(&id.id_paese, &id.id_codice));
             }
-            if let Some(cf) = &da.codice_fiscale {
-                if let Some(e) = validate_codice_fiscale(cf) {
+            if let Some(cf) = &da.codice_fiscale
+                && let Some(e) = validate_codice_fiscale(cf) {
                     errors.push(e);
                 }
-            }
         }
-    }
 
     // Validate CessionarioCommittente
-    if let Some(cc) = &header.cessionario_committente {
-        if let Some(da) = &cc.dati_anagrafici {
+    if let Some(cc) = &header.cessionario_committente
+        && let Some(da) = &cc.dati_anagrafici {
             if let Some(id) = &da.id_fiscale_iva {
                 errors.extend(validate_id_fiscale(&id.id_paese, &id.id_codice));
             }
-            if let Some(cf) = &da.codice_fiscale {
-                if let Some(e) = validate_codice_fiscale(cf) {
+            if let Some(cf) = &da.codice_fiscale
+                && let Some(e) = validate_codice_fiscale(cf) {
                     errors.push(e);
                 }
-            }
             // 00417: the cessionario must be identified by IdFiscaleIVA or CodiceFiscale.
             if da.id_fiscale_iva.is_none() && da.codice_fiscale.is_none() {
                 errors.push(ValidationError {
@@ -89,7 +85,6 @@ pub fn validate_header(header: &FatturaElettronicaHeader) -> ValidationResult {
                 });
             }
         }
-    }
 
     // 00305: CodiceDestinatario must be 7 chars (private) or 6 chars (PA).
     if let Some(dt) = &header.dati_trasmissione {
@@ -161,15 +156,14 @@ fn validate_dati_generali(body: &FatturaElettronicaBody) -> Vec<ValidationError>
     }
 
     // Bollo: when present, ImportoBollo must be positive.
-    if let Some(bollo) = &dgd.dati_bollo {
-        if bollo.importo_bollo.unwrap_or(0.0) <= 0.0 {
+    if let Some(bollo) = &dgd.dati_bollo
+        && bollo.importo_bollo.unwrap_or(0.0) <= 0.0 {
             errors.push(ValidationError {
                 code: "EATTURA-BOLLO".into(),
                 message: "DatiBollo requires a positive ImportoBollo".into(),
                 element_path: Some("Body/DatiGenerali/DatiGeneraliDocumento/DatiBollo/ImportoBollo".into()),
             });
         }
-    }
 
     errors
 }
@@ -188,7 +182,7 @@ fn is_iso_date(s: &str) -> bool {
     let month: u32 = s[5..7].parse().unwrap_or(0);
     let day: u32 = s[8..10].parse().unwrap_or(0);
 
-    let is_leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let is_leap = (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400);
     let max_day = match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
@@ -216,11 +210,10 @@ fn validate_body_indexed(body: &FatturaElettronicaBody, _body_idx: usize) -> Val
     // Validate IBAN in payment details
     for dp in &body.dati_pagamento {
         for det in &dp.dettaglio_pagamento {
-            if let Some(iban) = &det.iban {
-                if let Some(e) = validate_iban(iban) {
+            if let Some(iban) = &det.iban
+                && let Some(e) = validate_iban(iban) {
                     errors.push(e);
                 }
-            }
         }
     }
 
@@ -316,8 +309,8 @@ fn validate_dati_riepilogo(body: &FatturaElettronicaBody) -> Vec<ValidationError
         }
 
         // SDI 00422: Check imponibile_importo matches sum of line totals
-        if let Some(&sum) = line_totals_by_aliquota.get(&key) {
-            if (riep.imponibile_importo - sum).abs() > TOLERANCE_2 {
+        if let Some(&sum) = line_totals_by_aliquota.get(&key)
+            && (riep.imponibile_importo - sum).abs() > TOLERANCE_2 {
                 errors.push(ValidationError {
                     code: "00422".into(),
                     message: format!(
@@ -327,7 +320,6 @@ fn validate_dati_riepilogo(body: &FatturaElettronicaBody) -> Vec<ValidationError
                     element_path: Some(format!("Body/DatiBeniServizi/DatiRiepilogo[{}]/ImponibileImporto", i + 1)),
                 });
             }
-        }
     }
 
     // SDI 00419: Check that every aliquota in lines has a riepilogo
@@ -423,15 +415,14 @@ fn validate_linee_riepilogo_match(body: &FatturaElettronicaBody) -> Vec<Validati
         }
 
         // SDI 00444: natura match (only if natura is set on the line)
-        if let Some(ref line_nat) = nat {
-            if !riepilogo_keys.iter().any(|(_, rn)| rn.as_deref() == Some(line_nat)) {
+        if let Some(ref line_nat) = nat
+            && !riepilogo_keys.iter().any(|(_, rn)| rn.as_deref() == Some(line_nat)) {
                 errors.push(ValidationError {
                     code: "00444".into(),
                     message: format!("No DatiRiepilogo with Natura {} for line {}", line_nat, linea.numero_linea),
                     element_path: Some(format!("Body/DatiBeniServizi/DettaglioLinee[{}]/Natura", linea.numero_linea)),
                 });
             }
-        }
     }
 
     errors

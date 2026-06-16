@@ -288,7 +288,6 @@ impl InvoiceService {
                         soggetto: cess_soggetto,
                         ..Default::default()
                     }),
-                    ..Default::default()
                 }),
                 sede: Some(Indirizzo {
                     indirizzo: inv_row.get("cess_indirizzo"),
@@ -405,6 +404,7 @@ impl InvoiceService {
     ///
     /// Maps proto fields to DB models, resolves or creates cedente/cessionario
     /// clients, and persists the full invoice structure.
+    #[allow(clippy::wrong_self_convention)] // persists into this service's DB, not a pure constructor
     pub async fn from_fattura(&self, fattura: FatturaElettronica) -> Result<InvoiceDetail, AppError> {
         let header = fattura
             .header

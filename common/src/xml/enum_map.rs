@@ -1,10 +1,10 @@
-/// Bidirectional mapping between proto enum integer values and SDI XML string representations.
-///
-/// Each SDI enum has a string code defined in the proto `(sdi).value` option.
-/// For example: `FormatoTrasmissione::FPA12` (proto value 10) maps to XML string `"FPA12"`.
-///
-/// These mappings are used by the XML encoder and decoder to convert between
-/// proto integer discriminants and the string codes required by the SDI XML format.
+//! Bidirectional mapping between proto enum integer values and SDI XML string representations.
+//!
+//! Each SDI enum has a string code defined in the proto `(sdi).value` option.
+//! For example: `FormatoTrasmissione::FPA12` (proto value 10) maps to XML string `"FPA12"`.
+//!
+//! These mappings are used by the XML encoder and decoder to convert between
+//! proto integer discriminants and the string codes required by the SDI XML format.
 
 /// Generates a pair of bidirectional mapping functions for an SDI enum.
 ///

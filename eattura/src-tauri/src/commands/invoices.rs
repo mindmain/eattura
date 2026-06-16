@@ -1023,7 +1023,6 @@ pub(crate) async fn build_fattura_from_db(
                 soggetto: cess_soggetto,
                 ..Default::default()
             }),
-            ..Default::default()
         }),
         sede: Some(Indirizzo {
             indirizzo: cessionario_row.get("indirizzo"),
@@ -1188,14 +1187,10 @@ fn build_anagrafica_soggetto(
             nome: nome.to_string(),
             cognome: cognome.to_string(),
         }))
-    } else if let Some(cognome) = cognome {
-        Some(Soggetto::PersonaFisica(PersonaFisica {
+    } else { cognome.map(|cognome| Soggetto::PersonaFisica(PersonaFisica {
             nome: String::new(),
             cognome: cognome.to_string(),
-        }))
-    } else {
-        None
-    }
+        })) }
 }
 
 /// Find or create a client record from the cedente data in an XML header.
@@ -1274,6 +1269,7 @@ async fn ensure_client_from_header_cessionario(
 }
 
 /// Find a client by (id_paese, id_codice) or create a new one.
+#[allow(clippy::too_many_arguments)]
 async fn ensure_client(
     pool: &sqlx::SqlitePool,
     id_paese: &str,
