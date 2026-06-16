@@ -113,10 +113,17 @@ fn write_opt_amount8<W: Write>(w: &mut Writer<W>, tag: &str, value: Option<f64>)
 
 /// Format a number with up to 8 decimal places, keeping at least 2.
 fn format_amount8(value: f64) -> String {
+    // Guard against non-finite values (NaN/inf have no decimal point and would panic).
+    if !value.is_finite() {
+        return "0.00".to_string();
+    }
     let s = format!("{:.8}", value);
     let s = s.trim_end_matches('0');
     // Ensure at least 2 decimal places
-    let dot_pos = s.find('.').unwrap();
+    let dot_pos = match s.find('.') {
+        Some(p) => p,
+        None => return format!("{:.2}", value),
+    };
     let decimals = s.len() - dot_pos - 1;
     if decimals < 2 {
         format!("{:.2}", value)

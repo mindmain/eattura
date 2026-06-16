@@ -93,10 +93,16 @@ fn skip_element<R: BufRead>(r: &mut Reader<R>) -> Result<(), XmlError> {
     }
 }
 
-/// Parse a text element as f64.
+/// Parse a text element as a finite f64 (rejects NaN/inf, which are invalid in SDI).
 fn parse_f64(text: &str) -> Result<f64, XmlError> {
-    text.trim().parse::<f64>()
-        .map_err(|e| XmlError::Deserialize(format!("Invalid number '{}': {}", text, e)))
+    let value = text
+        .trim()
+        .parse::<f64>()
+        .map_err(|e| XmlError::Deserialize(format!("Invalid number '{}': {}", text, e)))?;
+    if !value.is_finite() {
+        return Err(XmlError::Deserialize(format!("Non-finite number '{}'", text)));
+    }
+    Ok(value)
 }
 
 /// Parse a text element as i32.
@@ -255,7 +261,7 @@ fn read_cedente_prestatore<R: BufRead>(r: &mut Reader<R>) -> Result<CedentePrest
                 match local_name(&e).as_str() {
                     "DatiAnagrafici" => cp.dati_anagrafici = Some(read_dati_anagrafici_cedente(r)?),
                     "Sede" if is_first_sede => { cp.sede = Some(read_indirizzo(r)?); is_first_sede = false; }
-                    "StabileOrganizzazione" | "Sede" => cp.stabile_organizzazione = Some(read_indirizzo(r)?),
+                    "StabileOrganizzazione" => cp.stabile_organizzazione = Some(read_indirizzo(r)?),
                     "IscrizioneREA" => cp.iscrizione_rea = Some(read_iscrizione_rea(r)?),
                     "Contatti" => cp.contatti = Some(read_contatti(r)?),
                     "RiferimentoAmministrazione" => cp.riferimento_amministrazione = Some(read_text(r)?),
