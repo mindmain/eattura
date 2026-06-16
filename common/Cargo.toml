@@ -7,7 +7,11 @@ license.workspace = true
 
 [dependencies]
 serde.workspace = true
-prost = "0.14.3"      
+prost = "0.14.3"
+quick-xml = { version = "0.37", features = ["serialize"] }
+thiserror = "2"
+paste = "1"
+base64 = "0.22"
 
 [build-dependencies]
 prost-build = "0.14.3" 
