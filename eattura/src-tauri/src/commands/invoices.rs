@@ -32,6 +32,8 @@ pub struct InvoiceDetail {
     pub divisa: String,
     pub importo_totale: Option<f64>,
     pub stato: String,
+    pub cedente_id: String,
+    pub cessionario_id: String,
     pub cedente_denominazione: String,
     pub cessionario_denominazione: String,
     pub causale: Vec<String>,
@@ -474,7 +476,7 @@ pub async fn next_invoice_number(
     year: String,
 ) -> Result<String, String> {
     let row = sqlx::query(
-        "SELECT COUNT(*) AS cnt FROM invoices WHERE cedente_id = ? AND data LIKE ? || '%'",
+        "SELECT COUNT(*) AS cnt FROM invoices WHERE cedente_id = ? AND data LIKE ? || '%' AND stato != 'imported'",
     )
     .bind(&cedente_id)
     .bind(&year)
@@ -611,7 +613,9 @@ pub(crate) async fn import_xml_content(
     let cedente_id = ensure_client_from_header_cedente(pool, header).await?;
     let cessionario_id = ensure_client_from_header_cessionario(pool, header).await?;
 
-    // Process each body (typically just one).
+    // A FatturaElettronica can carry multiple bodies (lotto); import each as its
+    // own invoice and return the first one's detail.
+    let mut imported_ids: Vec<String> = Vec::new();
     for body in &fattura.body {
         let dg = body
             .dati_generali
@@ -707,11 +711,13 @@ pub(crate) async fn import_xml_content(
         }
 
         tx.commit().await.map_err(|e| e.to_string())?;
-
-        return fetch_invoice_detail(pool, &invoice_id).await;
+        imported_ids.push(invoice_id);
     }
 
-    Err("No invoice body found in XML".to_string())
+    match imported_ids.first() {
+        Some(id) => fetch_invoice_detail(pool, id).await,
+        None => Err("No invoice body found in XML".to_string()),
+    }
 }
 
 /// Result of a recursive folder import.
@@ -895,6 +901,8 @@ async fn fetch_invoice_detail(
         divisa: invoice_row.get("divisa"),
         importo_totale: invoice_row.get("importo_totale"),
         stato: invoice_row.get("stato"),
+        cedente_id: invoice_row.get("cedente_id"),
+        cessionario_id: invoice_row.get("cessionario_id"),
         cedente_denominazione: names_row.get("cedente_denominazione"),
         cessionario_denominazione: names_row.get("cessionario_denominazione"),
         // `causale` is not persisted locally; expose an empty list for now.
@@ -1091,7 +1099,8 @@ pub(crate) async fn build_fattura_from_db(
     let dati_riepilogo: Vec<DatiRiepilogo> = riepilogo_map
         .values()
         .map(|(imponibile, aliquota, natura)| {
-            let imposta = aliquota * imponibile / 100.0;
+            // Round to 2 decimals (SDI 00421): VAT must match the cent.
+            let imposta = ((aliquota * imponibile / 100.0) * 100.0).round() / 100.0;
             DatiRiepilogo {
                 aliquota_iva: *aliquota,
                 imponibile_importo: *imponibile,

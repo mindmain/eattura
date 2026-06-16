@@ -16,6 +16,8 @@ export interface InvoiceSummary {
 
 export interface InvoiceDetail extends InvoiceSummary {
   divisa: string;
+  cedenteId: string;
+  cessionarioId: string;
   causale: string[];
   linee: InvoiceLine[];
   pagamenti: PaymentDetail[];

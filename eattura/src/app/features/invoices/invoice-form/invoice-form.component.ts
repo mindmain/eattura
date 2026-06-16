@@ -1,4 +1,5 @@
-import { Component, computed, inject, OnInit, signal } from "@angular/core";
+import { Component, DestroyRef, computed, inject, OnInit, signal } from "@angular/core";
+import { takeUntilDestroyed } from "@angular/core/rxjs-interop";
 import { FormArray, FormBuilder, FormGroup, ReactiveFormsModule, Validators } from "@angular/forms";
 import { ActivatedRoute, Router } from "@angular/router";
 import { InvoiceService } from "../../../core/services/invoice.service";
@@ -27,6 +28,7 @@ export class InvoiceFormComponent implements OnInit {
   private router = inject(Router);
   private route = inject(ActivatedRoute);
   private notify = inject(NotificationService);
+  private destroyRef = inject(DestroyRef);
 
   currentStep = signal(1);
   isEditMode = signal(false);
@@ -103,6 +105,8 @@ export class InvoiceFormComponent implements OnInit {
           numero: inv.numero,
           data: inv.data,
           divisa: inv.divisa,
+          cedenteId: inv.cedenteId,
+          cessionarioId: inv.cessionarioId,
           causale: inv.causale?.join("\n") ?? "",
         });
         // Populate line items
@@ -136,9 +140,12 @@ export class InvoiceFormComponent implements OnInit {
       // Start with one empty line
       this.addLine();
       // Suggest a progressive invoice number once a cedente is selected.
-      this.form.get("cedenteId")!.valueChanges.subscribe((cedenteId) => {
-        void this.suggestNumber(cedenteId);
-      });
+      this.form
+        .get("cedenteId")!
+        .valueChanges.pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe((cedenteId) => {
+          void this.suggestNumber(cedenteId);
+        });
     }
   }
 
