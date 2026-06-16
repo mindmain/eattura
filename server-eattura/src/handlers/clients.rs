@@ -1,24 +1,40 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::Json;
+use sqlx::QueryBuilder;
 use uuid::Uuid;
 
 use crate::error::AppError;
+use crate::handlers::pagination::{Pagination, like_pattern};
 use crate::models::client::{ClientDetail, ClientSummary, CreateClientRequest};
 use crate::services::client_service::ClientService;
 use crate::state::AppState;
 
-/// List all clients with optional search.
+/// List clients with optional search and pagination.
 ///
 /// Query params: `?search=...&page=1&per_page=20`
 pub async fn list_clients(
     State(state): State<AppState>,
+    Query(params): Query<Pagination>,
 ) -> Result<Json<Vec<ClientSummary>>, AppError> {
-    let rows = sqlx::query(
-        "SELECT id, denominazione, nome, cognome, id_paese, id_codice, comune
-         FROM clients ORDER BY created_at DESC",
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let mut qb = QueryBuilder::new(
+        "SELECT id, denominazione, nome, cognome, id_paese, id_codice, comune FROM clients WHERE TRUE",
+    );
+    if let Some(search) = params.search.as_deref().filter(|s| !s.is_empty()) {
+        let pat = like_pattern(search);
+        qb.push(" AND (denominazione ILIKE ")
+            .push_bind(pat.clone())
+            .push(" OR cognome ILIKE ")
+            .push_bind(pat.clone())
+            .push(" OR id_codice ILIKE ")
+            .push_bind(pat)
+            .push(")");
+    }
+    qb.push(" ORDER BY created_at DESC LIMIT ")
+        .push_bind(params.limit())
+        .push(" OFFSET ")
+        .push_bind(params.offset());
+
+    let rows = qb.build().fetch_all(&state.db).await?;
 
     let clients: Vec<ClientSummary> = rows
         .iter()

@@ -1,8 +1,10 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::Json;
+use sqlx::QueryBuilder;
 use uuid::Uuid;
 
 use crate::error::AppError;
+use crate::handlers::pagination::{like_pattern, Pagination};
 use crate::models::invoice::{
     CreateInvoiceRequest, InvoiceDetail, InvoiceLineDetail, InvoicePaymentDetail, InvoiceSummary,
 };
@@ -10,23 +12,41 @@ use crate::services::invoice_service::InvoiceService;
 use crate::services::xml_service::XmlService;
 use crate::state::AppState;
 
-/// List all invoices with optional pagination and filtering.
+/// List invoices with optional status filter, search and pagination.
 ///
 /// Query params: `?page=1&per_page=20&status=draft&search=...`
 pub async fn list_invoices(
     State(state): State<AppState>,
+    Query(params): Query<Pagination>,
 ) -> Result<Json<Vec<InvoiceSummary>>, AppError> {
-    let rows = sqlx::query(
+    let mut qb = QueryBuilder::new(
         "SELECT i.id, i.numero, i.data, i.tipo_documento, i.importo_totale, i.stato,
                 COALESCE(c1.denominazione, c1.cognome || ' ' || c1.nome, '') AS cedente_denominazione,
                 COALESCE(c2.denominazione, c2.cognome || ' ' || c2.nome, '') AS cessionario_denominazione
          FROM invoices i
          LEFT JOIN clients c1 ON i.cedente_id = c1.id
          LEFT JOIN clients c2 ON i.cessionario_id = c2.id
-         ORDER BY i.created_at DESC",
-    )
-    .fetch_all(&state.db)
-    .await?;
+         WHERE TRUE",
+    );
+    if let Some(status) = params.status.as_deref().filter(|s| !s.is_empty()) {
+        qb.push(" AND i.stato = ").push_bind(status.to_string());
+    }
+    if let Some(search) = params.search.as_deref().filter(|s| !s.is_empty()) {
+        let pat = like_pattern(search);
+        qb.push(" AND (i.numero ILIKE ")
+            .push_bind(pat.clone())
+            .push(" OR c1.denominazione ILIKE ")
+            .push_bind(pat.clone())
+            .push(" OR c2.denominazione ILIKE ")
+            .push_bind(pat)
+            .push(")");
+    }
+    qb.push(" ORDER BY i.created_at DESC LIMIT ")
+        .push_bind(params.limit())
+        .push(" OFFSET ")
+        .push_bind(params.offset());
+
+    let rows = qb.build().fetch_all(&state.db).await?;
 
     let invoices: Vec<InvoiceSummary> = rows
         .iter()
