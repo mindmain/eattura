@@ -1,0 +1,154 @@
+@if (invoice(); as inv) {
+  <div class="invoice-detail">
+    <div class="page-header">
+      <div>
+        <h1>Fattura {{ inv.numero }}</h1>
+        <span [class]="badgeClass(inv.stato)">{{ statusLabel(inv.stato) }}</span>
+      </div>
+      <div class="actions">
+        <button class="btn-secondary" (click)="goBack()">Torna alla lista</button>
+        @if (inv.stato === "draft") {
+          <button class="btn-secondary" (click)="edit()">Modifica</button>
+          <button class="btn-primary" (click)="validate()">Valida</button>
+          <button class="btn-primary" (click)="promoteToValidated()">Promuovi a Validata</button>
+        }
+        @if (inv.stato === "validated") {
+          <button class="btn-secondary" (click)="revertToDraft()">Riporta in Bozza</button>
+          <button class="btn-primary" (click)="sendPec()" [disabled]="sending()">
+            {{ sending() ? "Invio in corso..." : "Invia via PEC" }}
+          </button>
+        }
+        <button class="btn-primary" (click)="exportXml()">Esporta XML</button>
+      </div>
+    </div>
+
+    <!-- General info -->
+    <section class="card mb-2">
+      <h3>Dati Generali</h3>
+      <div class="detail-grid mt-1">
+        <div class="detail-item">
+          <span class="detail-label">Tipo Documento</span>
+          <span>{{ tipoLabel(inv.tipoDocumento) }}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">Numero</span>
+          <span>{{ inv.numero }}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">Data</span>
+          <span>{{ inv.data }}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">Divisa</span>
+          <span>{{ inv.divisa }}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">Cedente</span>
+          <span>{{ inv.cedenteDenominazione }}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">Cessionario</span>
+          <span>{{ inv.cessionarioDenominazione }}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">Importo Totale</span>
+          <span>{{ formatCurrency(inv.importoTotale) }}</span>
+        </div>
+      </div>
+      @if (inv.causale.length > 0) {
+        <div class="mt-1">
+          <span class="detail-label">Causale</span>
+          @for (c of inv.causale; track c) {
+            <p>{{ c }}</p>
+          }
+        </div>
+      }
+    </section>
+
+    <!-- Line items -->
+    <section class="card mb-2">
+      <h3>Linee Dettaglio</h3>
+      <table class="table mt-1">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Descrizione</th>
+            <th class="text-right">Qta</th>
+            <th>U.M.</th>
+            <th class="text-right">Prezzo Unit.</th>
+            <th class="text-right">IVA %</th>
+            <th>Natura</th>
+            <th class="text-right">Totale</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (line of inv.linee; track line.numeroLinea) {
+            <tr>
+              <td>{{ line.numeroLinea }}</td>
+              <td>{{ line.descrizione }}</td>
+              <td class="text-right">{{ line.quantita ?? "-" }}</td>
+              <td>{{ line.unitaMisura ?? "-" }}</td>
+              <td class="text-right">{{ formatCurrency(line.prezzoUnitario) }}</td>
+              <td class="text-right">{{ line.aliquotaIva }}%</td>
+              <td>{{ line.natura ?? "-" }}</td>
+              <td class="text-right">{{ formatCurrency(line.prezzoTotale) }}</td>
+            </tr>
+          } @empty {
+            <tr>
+              <td colspan="8" class="text-center text-muted">Nessuna linea</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Payments -->
+    <section class="card mb-2">
+      <h3>Pagamenti</h3>
+      <table class="table mt-1">
+        <thead>
+          <tr>
+            <th>Modalita</th>
+            <th class="text-right">Importo</th>
+            <th>Scadenza</th>
+            <th>IBAN</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (p of inv.pagamenti; track $index) {
+            <tr>
+              <td>{{ modalitaLabel(p.modalitaPagamento) }}</td>
+              <td class="text-right">{{ formatCurrency(p.importoPagamento) }}</td>
+              <td>{{ p.dataScadenzaPagamento ?? "-" }}</td>
+              <td>{{ p.iban ?? "-" }}</td>
+            </tr>
+          } @empty {
+            <tr>
+              <td colspan="4" class="text-center text-muted">Nessun pagamento</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Validation results -->
+    @if (validationResult(); as result) {
+      <section class="card mb-2" [class.validation-success]="result.valid" [class.validation-error]="!result.valid">
+        <h3>Risultato Validazione</h3>
+        @if (result.valid) {
+          <p class="mt-1">La fattura e valida e conforme alle specifiche SDI.</p>
+        } @else {
+          <ul class="error-list mt-1">
+            @for (err of result.errors; track err.code) {
+              <li><strong>{{ err.code }}</strong>: {{ err.message }}</li>
+            }
+          </ul>
+        }
+      </section>
+    }
+  </div>
+} @else {
+  <div class="invoice-detail">
+    <p class="text-muted p-3">Caricamento fattura...</p>
+  </div>
+}

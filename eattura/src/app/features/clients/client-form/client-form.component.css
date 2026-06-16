@@ -1,0 +1,33 @@
+.client-form {
+  padding: 1.5rem;
+  max-width: 700px;
+}
+
+.toggle-group {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.toggle-option {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 1rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.toggle-option input[type="radio"] {
+  width: auto;
+  margin: 0;
+}
+
+.toggle-option.active {
+  background: #1a1a2e;
+  color: #fff;
+  border-color: #1a1a2e;
+}

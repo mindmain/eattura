@@ -1,0 +1,45 @@
+<div class="client-list">
+  <div class="page-header">
+    <h1>Clienti</h1>
+    <a routerLink="/clients/new" class="btn-primary">Nuovo Cliente</a>
+  </div>
+
+  <div class="search-bar mb-2">
+    <input
+      type="text"
+      placeholder="Cerca per nome, P.IVA o comune..."
+      [value]="searchTerm()"
+      (input)="onSearch($event)"
+    />
+  </div>
+
+  @if (filteredClients().length > 0) {
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Denominazione</th>
+          <th>P.IVA</th>
+          <th>Comune</th>
+          <th class="text-right">Azioni</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (client of filteredClients(); track client.id) {
+          <tr>
+            <td>{{ displayName(client) }}</td>
+            <td>{{ client.idPaese }}{{ client.idCodice }}</td>
+            <td>{{ client.comune }}</td>
+            <td class="text-right actions-cell">
+              <button class="btn-secondary btn-sm" (click)="navigateToEdit(client.id)">Modifica</button>
+              <button class="btn-danger btn-sm" (click)="deleteClient(client.id)">Elimina</button>
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  } @else {
+    <div class="empty-state">
+      <p>Nessun cliente trovato. Crea il primo cliente per iniziare.</p>
+    </div>
+  }
+</div>

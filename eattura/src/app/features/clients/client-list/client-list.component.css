@@ -1,0 +1,25 @@
+.client-list {
+  padding: 1.5rem;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.search-bar input {
+  max-width: 400px;
+}
+
+.actions-cell {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
+
+.btn-sm {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.82rem;
+}

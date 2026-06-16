@@ -1,1 +1,358 @@
-/* You can add global styles to this file, and also import other style files */
+/* CSS Reset */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #222;
+  background: #f6f6f6;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1 { font-size: 1.5rem; font-weight: 600; }
+h2 { font-size: 1.25rem; font-weight: 600; }
+h3 { font-size: 1.1rem; font-weight: 500; }
+h4 { font-size: 1rem; font-weight: 500; }
+
+a { color: #1a1a2e; }
+
+/* Form styles */
+label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #444;
+  margin-bottom: 0.25rem;
+}
+
+input[type="text"],
+input[type="number"],
+input[type="email"],
+input[type="password"],
+input[type="date"],
+input[type="tel"],
+select,
+textarea {
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+  color: #222;
+  transition: border-color 0.15s;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: #1a1a2e;
+  box-shadow: 0 0 0 2px rgba(26, 26, 46, 0.1);
+}
+
+input.ng-invalid.ng-touched,
+select.ng-invalid.ng-touched,
+textarea.ng-invalid.ng-touched {
+  border-color: #d32f2f;
+}
+
+textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+/* Button styles */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+  font-weight: 500;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s, opacity 0.15s;
+  line-height: 1.4;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: #1a1a2e;
+  color: #fff;
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s;
+}
+
+.btn-primary:hover {
+  background: #2a2a4a;
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: #e0e0e0;
+  color: #333;
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s;
+}
+
+.btn-secondary:hover {
+  background: #d0d0d0;
+}
+
+.btn-danger {
+  background: #d32f2f;
+  color: #fff;
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s;
+}
+
+.btn-danger:hover {
+  background: #b71c1c;
+}
+
+/* Table styles */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.table th,
+.table td {
+  padding: 0.65rem 0.75rem;
+  text-align: left;
+  font-size: 0.9rem;
+}
+
+.table th {
+  background: #f8f8f8;
+  font-weight: 600;
+  color: #444;
+  border-bottom: 2px solid #e0e0e0;
+}
+
+.table td {
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.table tbody tr:nth-child(even) {
+  background: #fafafa;
+}
+
+.table tbody tr:hover {
+  background: #f0f0ff;
+}
+
+/* Status badges */
+.badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border-radius: 12px;
+  text-transform: capitalize;
+}
+
+.badge-draft {
+  background: #e0e0e0;
+  color: #555;
+}
+
+.badge-validated {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.badge-sent {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.badge-accepted {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.badge-rejected {
+  background: #ffebee;
+  color: #c62828;
+}
+
+/* Utility classes */
+.text-right { text-align: right; }
+.text-center { text-align: center; }
+.text-muted { color: #888; }
+
+.mt-0 { margin-top: 0; }
+.mt-1 { margin-top: 0.5rem; }
+.mt-2 { margin-top: 1rem; }
+.mt-3 { margin-top: 1.5rem; }
+
+.mb-0 { margin-bottom: 0; }
+.mb-1 { margin-bottom: 0.5rem; }
+.mb-2 { margin-bottom: 1rem; }
+.mb-3 { margin-bottom: 1.5rem; }
+
+.mr-1 { margin-right: 0.5rem; }
+.ml-1 { margin-left: 0.5rem; }
+
+.p-1 { padding: 0.5rem; }
+.p-2 { padding: 1rem; }
+.p-3 { padding: 1.5rem; }
+
+.gap-1 { gap: 0.5rem; }
+.gap-2 { gap: 1rem; }
+
+.d-flex { display: flex; }
+.align-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.flex-wrap { flex-wrap: wrap; }
+
+/* Form layout helpers */
+.form-group {
+  margin-bottom: 1rem;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.form-row-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1rem;
+}
+
+.form-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.form-error {
+  color: #d32f2f;
+  font-size: 0.8rem;
+  margin-top: 0.2rem;
+}
+
+.form-section {
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.form-section h3 {
+  margin-bottom: 1rem;
+  color: #1a1a2e;
+}
+
+/* Notification toast */
+.notification-container {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.notification {
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  color: #fff;
+  min-width: 280px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.notification-success {
+  background: #2e7d32;
+}
+
+.notification-error {
+  background: #c62828;
+}
+
+.notification button {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 1.1rem;
+  cursor: pointer;
+  margin-left: 1rem;
+  opacity: 0.8;
+}
+
+.notification button:hover {
+  opacity: 1;
+}
+
+/* Card style */
+.card {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1.25rem;
+}
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: #888;
+}
+
+.empty-state p {
+  font-size: 1rem;
+}

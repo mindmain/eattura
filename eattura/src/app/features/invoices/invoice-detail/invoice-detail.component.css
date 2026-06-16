@@ -1,0 +1,58 @@
+.invoice-detail {
+  padding: 1.5rem;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.5rem;
+}
+
+.page-header h1 {
+  margin-bottom: 0.35rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1rem;
+}
+
+.detail-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-label {
+  font-size: 0.8rem;
+  color: #888;
+  font-weight: 500;
+  margin-bottom: 0.15rem;
+}
+
+.validation-success {
+  border-color: #2e7d32;
+  background: #e8f5e9;
+}
+
+.validation-error {
+  border-color: #c62828;
+  background: #ffebee;
+}
+
+.error-list {
+  list-style: none;
+  padding: 0;
+}
+
+.error-list li {
+  padding: 0.35rem 0;
+  font-size: 0.9rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}

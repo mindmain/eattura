@@ -1,0 +1,155 @@
+<div class="client-form">
+  <h1>{{ isEditMode() ? "Modifica Cliente" : "Nuovo Cliente" }}</h1>
+
+  <form [formGroup]="form" (ngSubmit)="onSubmit()">
+    <!-- Subject type toggle -->
+    <div class="form-section">
+      <h3>Tipo Soggetto</h3>
+      <div class="toggle-group">
+        <label class="toggle-option" [class.active]="subjectType() === 'azienda'">
+          <input
+            type="radio"
+            name="subjectType"
+            value="azienda"
+            [checked]="subjectType() === 'azienda'"
+            (change)="onSubjectTypeChange('azienda')"
+          />
+          Azienda
+        </label>
+        <label class="toggle-option" [class.active]="subjectType() === 'persona'">
+          <input
+            type="radio"
+            name="subjectType"
+            value="persona"
+            [checked]="subjectType() === 'persona'"
+            (change)="onSubjectTypeChange('persona')"
+          />
+          Persona Fisica
+        </label>
+      </div>
+
+      @if (subjectType() === "azienda") {
+        <div class="form-group mt-2">
+          <label for="denominazione">Denominazione *</label>
+          <input id="denominazione" type="text" formControlName="denominazione" />
+        </div>
+      }
+
+      @if (subjectType() === "persona") {
+        <div class="form-row mt-2">
+          <div class="form-group">
+            <label for="nome">Nome *</label>
+            <input id="nome" type="text" formControlName="nome" />
+          </div>
+          <div class="form-group">
+            <label for="cognome">Cognome *</label>
+            <input id="cognome" type="text" formControlName="cognome" />
+          </div>
+        </div>
+      }
+    </div>
+
+    <!-- Tax data -->
+    <div class="form-section">
+      <h3>Dati Fiscali</h3>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="idPaese">Paese *</label>
+          <input id="idPaese" type="text" formControlName="idPaese" maxlength="2" />
+        </div>
+        <div class="form-group">
+          <label for="idCodice">Partita IVA *</label>
+          <input id="idCodice" type="text" formControlName="idCodice" />
+          @if (form.get("idCodice")?.invalid && form.get("idCodice")?.touched) {
+            <span class="form-error">Inserire una partita IVA valida (11 cifre)</span>
+          }
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="codiceFiscale">Codice Fiscale</label>
+          <input id="codiceFiscale" type="text" formControlName="codiceFiscale" />
+        </div>
+        <div class="form-group">
+          <label for="regimeFiscale">Regime Fiscale</label>
+          <select id="regimeFiscale" formControlName="regimeFiscale">
+            @for (rf of regimiFiscali; track rf[0]) {
+              <option [value]="rf[0]">{{ rf[0] }} - {{ rf[1] }}</option>
+            }
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Address -->
+    <div class="form-section">
+      <h3>Indirizzo</h3>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="indirizzo">Via / Piazza *</label>
+          <input id="indirizzo" type="text" formControlName="indirizzo" />
+        </div>
+        <div class="form-group">
+          <label for="numeroCivico">N. Civico</label>
+          <input id="numeroCivico" type="text" formControlName="numeroCivico" />
+        </div>
+      </div>
+      <div class="form-row-3">
+        <div class="form-group">
+          <label for="cap">CAP *</label>
+          <input id="cap" type="text" formControlName="cap" maxlength="5" />
+          @if (form.get("cap")?.invalid && form.get("cap")?.touched) {
+            <span class="form-error">Il CAP deve essere di 5 cifre</span>
+          }
+        </div>
+        <div class="form-group">
+          <label for="comune">Comune *</label>
+          <input id="comune" type="text" formControlName="comune" />
+        </div>
+        <div class="form-group">
+          <label for="provincia">Provincia</label>
+          <input id="provincia" type="text" formControlName="provincia" maxlength="2" placeholder="es. MI" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="nazione">Nazione *</label>
+        <input id="nazione" type="text" formControlName="nazione" maxlength="2" />
+      </div>
+    </div>
+
+    <!-- Contacts -->
+    <div class="form-section">
+      <h3>Contatti</h3>
+      <div class="form-row-3">
+        <div class="form-group">
+          <label for="telefono">Telefono</label>
+          <input id="telefono" type="tel" formControlName="telefono" />
+        </div>
+        <div class="form-group">
+          <label for="email">Email</label>
+          <input id="email" type="email" formControlName="email" />
+        </div>
+        <div class="form-group">
+          <label for="pec">PEC</label>
+          <input id="pec" type="email" formControlName="pec" />
+        </div>
+      </div>
+    </div>
+
+    <!-- SDI -->
+    <div class="form-section">
+      <h3>SDI</h3>
+      <div class="form-group">
+        <label for="codiceDestinatario">Codice Destinatario</label>
+        <input id="codiceDestinatario" type="text" formControlName="codiceDestinatario" maxlength="7" />
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn-primary" [disabled]="form.invalid">
+        {{ isEditMode() ? "Aggiorna" : "Crea Cliente" }}
+      </button>
+      <button type="button" class="btn-secondary" (click)="cancel()">Annulla</button>
+    </div>
+  </form>
+</div>

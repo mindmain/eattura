@@ -1,0 +1,75 @@
+<div class="dashboard">
+  <h1>Dashboard</h1>
+
+  <div class="stats-grid">
+    <div class="stat-card">
+      <h3>Fatture Totali</h3>
+      <p class="stat-value">{{ totalInvoices() }}</p>
+    </div>
+    <div class="stat-card">
+      <h3>In Bozza</h3>
+      <p class="stat-value">{{ draftCount() }}</p>
+    </div>
+    <div class="stat-card">
+      <h3>Inviate</h3>
+      <p class="stat-value">{{ sentCount() }}</p>
+    </div>
+    <div class="stat-card">
+      <h3>Clienti</h3>
+      <p class="stat-value">{{ clientCount() }}</p>
+    </div>
+  </div>
+
+  <div class="chart-card mt-3">
+    <div class="chart-header">
+      <div class="chart-title-row">
+        <h2>Andamento per Mese</h2>
+        @if (years().length > 0) {
+          <select class="year-select" (change)="onYearChange($event)">
+            @for (year of years(); track year) {
+              <option [value]="year" [selected]="selectedYear() === year">{{ year }}</option>
+            }
+          </select>
+        }
+      </div>
+      @if (years().length > 0) {
+        <div class="year-totals">
+          <div class="total-item income">
+            <span class="total-label">Fatturato</span>
+            <span class="total-value">{{ formatCurrency(yearIncome()) }}</span>
+          </div>
+          <div class="total-item cost">
+            <span class="total-label">Speso</span>
+            <span class="total-value">{{ formatCurrency(yearCost()) }}</span>
+          </div>
+          <button class="btn-primary btn-sm" (click)="viewYearInvoices()">
+            Vedi fatture
+          </button>
+        </div>
+      }
+    </div>
+
+    @if (years().length > 0) {
+      <p class="chart-hint mt-1">Clicca una barra per vedere le fatture di quel mese.</p>
+    } @else {
+      <p class="text-muted mt-2">Nessuna fattura da mostrare.</p>
+    }
+    <div class="chart-container mt-2" [class.hidden]="years().length === 0">
+      <canvas #yearChart></canvas>
+    </div>
+  </div>
+
+  <div class="quick-actions mt-3">
+    <h2>Azioni Rapide</h2>
+    <div class="actions-grid mt-2">
+      <a routerLink="/invoices/new" class="action-card">
+        <span class="action-title">Nuova Fattura</span>
+        <span class="action-desc">Crea una nuova fattura elettronica</span>
+      </a>
+      <a routerLink="/clients/new" class="action-card">
+        <span class="action-title">Nuovo Cliente</span>
+        <span class="action-desc">Aggiungi un nuovo cliente all'anagrafica</span>
+      </a>
+    </div>
+  </div>
+</div>

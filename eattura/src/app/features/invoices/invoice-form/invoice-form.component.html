@@ -1,0 +1,280 @@
+<div class="invoice-form">
+  <h1>{{ isEditMode() ? "Modifica Fattura" : "Nuova Fattura" }}</h1>
+
+  <!-- Step indicator -->
+  <div class="step-indicator mb-3">
+    @for (label of stepLabels; track label; let i = $index) {
+      <div class="step" [class.active]="currentStep() === i + 1" [class.completed]="currentStep() > i + 1">
+        <span class="step-number">{{ i + 1 }}</span>
+        <span class="step-label">{{ label }}</span>
+      </div>
+    }
+  </div>
+
+  <form [formGroup]="form" (ngSubmit)="onSubmit()">
+    @switch (currentStep()) {
+      <!-- Step 1: General data -->
+      @case (1) {
+        <div class="form-section">
+          <h3>Dati Generali</h3>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="tipoDocumento">Tipo Documento *</label>
+              <select id="tipoDocumento" formControlName="tipoDocumento">
+                @for (td of tipiDocumento; track td[0]) {
+                  <option [value]="td[0]">{{ td[0] }} - {{ td[1] }}</option>
+                }
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="numero">Numero *</label>
+              <input id="numero" type="text" formControlName="numero" placeholder="es. 1" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="data">Data *</label>
+              <input id="data" type="date" formControlName="data" />
+            </div>
+            <div class="form-group">
+              <label for="divisa">Divisa</label>
+              <input id="divisa" type="text" formControlName="divisa" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="cedenteId">Cedente (Fornitore) *</label>
+              <select id="cedenteId" formControlName="cedenteId">
+                <option value="">-- Seleziona --</option>
+                @for (c of clients(); track c.id) {
+                  <option [value]="c.id">{{ clientDisplayName(c) }}</option>
+                }
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="cessionarioId">Cessionario (Cliente) *</label>
+              <select id="cessionarioId" formControlName="cessionarioId">
+                <option value="">-- Seleziona --</option>
+                @for (c of clients(); track c.id) {
+                  <option [value]="c.id">{{ clientDisplayName(c) }}</option>
+                }
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="causale">Causale</label>
+            <textarea id="causale" formControlName="causale" rows="3" placeholder="Opzionale"></textarea>
+          </div>
+        </div>
+      }
+
+      <!-- Step 2: Line items -->
+      @case (2) {
+        <div class="form-section">
+          <h3>Linee Dettaglio</h3>
+          <div class="lines-table">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Descrizione</th>
+                  <th>Qta</th>
+                  <th>U.M.</th>
+                  <th>Prezzo Unit.</th>
+                  <th>IVA %</th>
+                  <th>Natura</th>
+                  <th class="text-right">Totale</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody formArrayName="linee">
+                @for (line of linee.controls; track $index; let i = $index) {
+                  <tr [formGroupName]="i">
+                    <td><input type="text" formControlName="descrizione" placeholder="Descrizione" /></td>
+                    <td class="col-sm"><input type="number" formControlName="quantita" min="0" step="0.01" /></td>
+                    <td class="col-sm"><input type="text" formControlName="unitaMisura" /></td>
+                    <td class="col-md"><input type="number" formControlName="prezzoUnitario" min="0" step="0.01" /></td>
+                    <td class="col-sm"><input type="number" formControlName="aliquotaIva" min="0" max="100" step="0.01" /></td>
+                    <td class="col-md">
+                      <select formControlName="natura">
+                        <option value="">-</option>
+                        @for (n of naturaCodes; track n[0]) {
+                          <option [value]="n[0]">{{ n[0] }}</option>
+                        }
+                      </select>
+                    </td>
+                    <td class="text-right">{{ formatCurrency(lineTotal(i)) }}</td>
+                    <td>
+                      @if (linee.length > 1) {
+                        <button type="button" class="btn-danger btn-sm" (click)="removeLine(i)">X</button>
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+          <div class="d-flex justify-between align-center mt-2">
+            <button type="button" class="btn-secondary" (click)="addLine()">+ Aggiungi Riga</button>
+            <div class="total-display">
+              <strong>Totale: {{ formatCurrency(computeTotal()) }}</strong>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- Step 3: Payment -->
+      @case (3) {
+        <div class="form-section">
+          <h3>Dati Pagamento</h3>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="condizioniPagamento">Condizioni Pagamento</label>
+              <select id="condizioniPagamento" formControlName="condizioniPagamento">
+                @for (cp of condizioniPagamento; track cp[0]) {
+                  <option [value]="cp[0]">{{ cp[0] }} - {{ cp[1] }}</option>
+                }
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="modalitaPagamento">Modalita Pagamento *</label>
+              <select id="modalitaPagamento" formControlName="modalitaPagamento">
+                @for (mp of modalitaPagamento; track mp[0]) {
+                  <option [value]="mp[0]">{{ mp[0] }} - {{ mp[1] }}</option>
+                }
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="importoPagamento">Importo Pagamento *</label>
+              <input id="importoPagamento" type="number" formControlName="importoPagamento" step="0.01" />
+              <button type="button" class="btn-link mt-1" (click)="syncPaymentAmount()">Copia da totale linee</button>
+            </div>
+            <div class="form-group">
+              <label for="dataScadenzaPagamento">Data Scadenza</label>
+              <input id="dataScadenzaPagamento" type="date" formControlName="dataScadenzaPagamento" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="iban">IBAN</label>
+            <input id="iban" type="text" formControlName="iban" placeholder="IT..." />
+          </div>
+        </div>
+      }
+
+      <!-- Step 4: Summary -->
+      @case (4) {
+        <div class="form-section">
+          <h3>Riepilogo</h3>
+          <div class="summary-grid">
+            <div class="summary-item">
+              <span class="summary-label">Tipo Documento</span>
+              <span>{{ tipoLabel(form.value.tipoDocumento!) }}</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Numero</span>
+              <span>{{ form.value.numero }}</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Data</span>
+              <span>{{ form.value.data }}</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Divisa</span>
+              <span>{{ form.value.divisa }}</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Cedente</span>
+              <span>{{ clientNameById(form.value.cedenteId!) }}</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Cessionario</span>
+              <span>{{ clientNameById(form.value.cessionarioId!) }}</span>
+            </div>
+          </div>
+
+          <h4 class="mt-2">Linee ({{ linee.length }})</h4>
+          <table class="table mt-1">
+            <thead>
+              <tr>
+                <th>Descrizione</th>
+                <th class="text-right">Qta</th>
+                <th class="text-right">Prezzo Unit.</th>
+                <th class="text-right">IVA %</th>
+                <th class="text-right">Totale</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (line of linee.controls; track $index; let i = $index) {
+                <tr>
+                  <td>{{ line.value.descrizione }}</td>
+                  <td class="text-right">{{ line.value.quantita }}</td>
+                  <td class="text-right">{{ formatCurrency(line.value.prezzoUnitario) }}</td>
+                  <td class="text-right">{{ line.value.aliquotaIva }}%</td>
+                  <td class="text-right">{{ formatCurrency(lineTotal(i)) }}</td>
+                </tr>
+              }
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="4" class="text-right"><strong>Totale</strong></td>
+                <td class="text-right"><strong>{{ formatCurrency(computeTotal()) }}</strong></td>
+              </tr>
+            </tfoot>
+          </table>
+
+          <h4 class="mt-2">Pagamento</h4>
+          <div class="summary-grid mt-1">
+            <div class="summary-item">
+              <span class="summary-label">Modalita</span>
+              <span>{{ modalitaLabel(form.value.modalitaPagamento!) }}</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Importo</span>
+              <span>{{ formatCurrency(form.value.importoPagamento!) }}</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Scadenza</span>
+              <span>{{ form.value.dataScadenzaPagamento || "-" }}</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">IBAN</span>
+              <span>{{ form.value.iban || "-" }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Inline SDI validation -->
+        <div class="validation-box mt-2">
+          <button type="button" class="btn-secondary" (click)="validateDraft()" [disabled]="validating()">
+            {{ validating() ? "Validazione in corso..." : "Valida (SDI)" }}
+          </button>
+          @if (validated()) {
+            <p class="validation-ok mt-1">✓ Fattura valida e conforme alle specifiche SDI.</p>
+          }
+          @if (validationErrors().length > 0) {
+            <ul class="error-list mt-1">
+              @for (err of validationErrors(); track err.code) {
+                <li><strong>{{ err.code }}</strong>: {{ err.message }}</li>
+              }
+            </ul>
+          }
+        </div>
+      }
+    }
+
+    <!-- Navigation buttons -->
+    <div class="form-actions">
+      @if (currentStep() > 1) {
+        <button type="button" class="btn-secondary" (click)="prevStep()">Precedente</button>
+      }
+      @if (currentStep() < 4) {
+        <button type="button" class="btn-primary" (click)="nextStep()">Successivo</button>
+      }
+      @if (currentStep() === 4) {
+        <button type="submit" class="btn-primary">Salva Fattura</button>
+      }
+      <button type="button" class="btn-secondary" (click)="cancel()">Annulla</button>
+    </div>
+  </form>
+</div>

@@ -1,0 +1,135 @@
+<div class="settings">
+  <h1>Impostazioni</h1>
+
+  <!-- Section 1 - Company data -->
+  <section>
+    <h2>Dati Azienda</h2>
+    <p>Configura i dati della tua azienda. Verranno usati come cedente predefinito nelle fatture.</p>
+
+    <form [formGroup]="companyForm" (ngSubmit)="saveCompany()">
+      <div class="form-group">
+        <label for="c-denominazione">Denominazione *</label>
+        <input id="c-denominazione" type="text" formControlName="denominazione" />
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="c-idPaese">Paese *</label>
+          <input id="c-idPaese" type="text" formControlName="idPaese" maxlength="2" />
+        </div>
+        <div class="form-group">
+          <label for="c-idCodice">Partita IVA *</label>
+          <input id="c-idCodice" type="text" formControlName="idCodice" />
+          @if (companyForm.get("idCodice")?.invalid && companyForm.get("idCodice")?.touched) {
+            <span class="form-error">Inserire una partita IVA valida (11 cifre)</span>
+          }
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="c-codiceFiscale">Codice Fiscale</label>
+          <input id="c-codiceFiscale" type="text" formControlName="codiceFiscale" />
+        </div>
+        <div class="form-group">
+          <label for="c-regimeFiscale">Regime Fiscale</label>
+          <select id="c-regimeFiscale" formControlName="regimeFiscale">
+            @for (rf of regimiFiscali; track rf[0]) {
+              <option [value]="rf[0]">{{ rf[0] }} - {{ rf[1] }}</option>
+            }
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="c-indirizzo">Via / Piazza *</label>
+          <input id="c-indirizzo" type="text" formControlName="indirizzo" />
+        </div>
+        <div class="form-group">
+          <label for="c-numeroCivico">N. Civico</label>
+          <input id="c-numeroCivico" type="text" formControlName="numeroCivico" />
+        </div>
+      </div>
+      <div class="form-row-3">
+        <div class="form-group">
+          <label for="c-cap">CAP *</label>
+          <input id="c-cap" type="text" formControlName="cap" maxlength="5" />
+          @if (companyForm.get("cap")?.invalid && companyForm.get("cap")?.touched) {
+            <span class="form-error">Il CAP deve essere di 5 cifre</span>
+          }
+        </div>
+        <div class="form-group">
+          <label for="c-comune">Comune *</label>
+          <input id="c-comune" type="text" formControlName="comune" />
+        </div>
+        <div class="form-group">
+          <label for="c-provincia">Provincia</label>
+          <input id="c-provincia" type="text" formControlName="provincia" maxlength="2" placeholder="es. MI" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="c-nazione">Nazione *</label>
+        <input id="c-nazione" type="text" formControlName="nazione" maxlength="2" />
+      </div>
+      <div class="form-row-3">
+        <div class="form-group">
+          <label for="c-telefono">Telefono</label>
+          <input id="c-telefono" type="tel" formControlName="telefono" />
+        </div>
+        <div class="form-group">
+          <label for="c-email">Email</label>
+          <input id="c-email" type="email" formControlName="email" />
+        </div>
+        <div class="form-group">
+          <label for="c-pec">PEC</label>
+          <input id="c-pec" type="email" formControlName="pec" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="c-codiceDestinatario">Codice Destinatario</label>
+        <input id="c-codiceDestinatario" type="text" formControlName="codiceDestinatario" maxlength="7" />
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary" [disabled]="companyForm.invalid">Salva Dati Azienda</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Section 2 - PEC Configuration -->
+  <section>
+    <h2>Configurazione PEC</h2>
+    <p>Configura la PEC per l'invio e la ricezione delle fatture tramite SDI.</p>
+
+    <form [formGroup]="pecForm" (ngSubmit)="savePec()">
+      <div class="form-group">
+        <label for="p-pecEmail">Indirizzo PEC</label>
+        <input id="p-pecEmail" type="email" formControlName="pecEmail" placeholder="pec@esempio.it" />
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="p-imapHost">IMAP Host</label>
+          <input id="p-imapHost" type="text" formControlName="imapHost" placeholder="imaps.pec.provider.it" />
+        </div>
+        <div class="form-group">
+          <label for="p-imapPort">IMAP Port</label>
+          <input id="p-imapPort" type="number" formControlName="imapPort" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="p-smtpHost">SMTP Host</label>
+          <input id="p-smtpHost" type="text" formControlName="smtpHost" placeholder="smtps.pec.provider.it" />
+        </div>
+        <div class="form-group">
+          <label for="p-smtpPort">SMTP Port</label>
+          <input id="p-smtpPort" type="number" formControlName="smtpPort" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="p-pecPassword">Password</label>
+        <input id="p-pecPassword" type="password" formControlName="pecPassword" />
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary" [disabled]="pecForm.invalid">Salva Configurazione PEC</button>
+      </div>
+    </form>
+  </section>
+</div>

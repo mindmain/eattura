@@ -1,0 +1,85 @@
+<div class="invoice-list">
+  <div class="page-header">
+    <h1>Fatture</h1>
+    <div class="actions">
+      <a routerLink="/invoices/new" class="btn-primary">Nuova Fattura</a>
+      <button class="btn-secondary" (click)="importXml()">Importa XML</button>
+      <button class="btn-secondary" (click)="importFolder()" [disabled]="importing()">
+        {{ importing() ? "Importazione..." : "Importa Cartella" }}
+      </button>
+      <button class="btn-secondary" (click)="syncPec()" [disabled]="syncing()">
+        {{ syncing() ? "Sincronizzazione..." : "Sincronizza PEC" }}
+      </button>
+    </div>
+  </div>
+
+  @if (periodLabel()) {
+    <div class="period-banner mb-2">
+      <span>Periodo: <strong>{{ periodLabel() }}</strong></span>
+      <button class="btn-link" (click)="clearPeriod()">Rimuovi filtro</button>
+    </div>
+  }
+
+  <!-- Status filter tabs -->
+  <div class="filter-tabs mb-2">
+    @for (tab of statusTabs; track tab.value) {
+      <button
+        class="filter-tab"
+        [class.active]="statusFilter() === tab.value"
+        (click)="setStatusFilter(tab.value)"
+      >
+        {{ tab.label }}
+      </button>
+    }
+  </div>
+
+  <div class="search-bar mb-2">
+    <input
+      type="text"
+      placeholder="Cerca per numero, cedente o cessionario..."
+      [value]="searchTerm()"
+      (input)="onSearch($event)"
+    />
+  </div>
+
+  @if (filteredInvoices().length > 0) {
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Numero</th>
+          <th>Data</th>
+          <th>Tipo</th>
+          <th>Cedente</th>
+          <th>Cessionario</th>
+          <th class="text-right">Importo</th>
+          <th>Stato</th>
+          <th class="text-right">Azioni</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (inv of filteredInvoices(); track inv.id) {
+          <tr>
+            <td><a (click)="navigateToDetail(inv.id)" class="link">{{ inv.numero }}</a></td>
+            <td>{{ inv.data }}</td>
+            <td>{{ tipoLabel(inv.tipoDocumento) }}</td>
+            <td>{{ inv.cedenteDenominazione }}</td>
+            <td>{{ inv.cessionarioDenominazione }}</td>
+            <td class="text-right" [class]="amountClass(inv)">{{ formatAmount(inv) }}</td>
+            <td><span [class]="badgeClass(inv.stato)">{{ statusLabel(inv.stato) }}</span></td>
+            <td class="text-right actions-cell">
+              <button class="btn-secondary btn-sm" (click)="navigateToDetail(inv.id)">Dettaglio</button>
+              @if (inv.stato === "draft") {
+                <button class="btn-secondary btn-sm" (click)="navigateToEdit(inv.id)">Modifica</button>
+                <button class="btn-danger btn-sm" (click)="deleteInvoice(inv, $event)">Elimina</button>
+              }
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  } @else {
+    <div class="empty-state">
+      <p>Nessuna fattura trovata. Crea la prima fattura o importa un XML.</p>
+    </div>
+  }
+</div>
