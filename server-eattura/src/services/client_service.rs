@@ -25,7 +25,7 @@ impl ClientService {
         .await?;
 
         if existing.is_some() {
-            return Err(AppError::Internal(format!(
+            return Err(AppError::Conflict(format!(
                 "Client with P.IVA {}{} already exists",
                 req.id_paese, req.id_codice
             )));

@@ -15,6 +15,12 @@ pub enum AppError {
     #[error("Not found: {0}")]
     NotFound(String),
 
+    #[error("Bad request: {0}")]
+    BadRequest(String),
+
+    #[error("Conflict: {0}")]
+    Conflict(String),
+
     #[error("Validation failed")]
     Validation(common::validation::ValidationResult),
 
@@ -33,6 +39,14 @@ impl IntoResponse for AppError {
         let (status, body) = match self {
             AppError::NotFound(msg) => (
                 StatusCode::NOT_FOUND,
+                serde_json::json!({ "error": msg }),
+            ),
+            AppError::BadRequest(msg) => (
+                StatusCode::BAD_REQUEST,
+                serde_json::json!({ "error": msg }),
+            ),
+            AppError::Conflict(msg) => (
+                StatusCode::CONFLICT,
                 serde_json::json!({ "error": msg }),
             ),
             AppError::Validation(result) => {

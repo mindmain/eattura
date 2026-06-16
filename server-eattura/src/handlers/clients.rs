@@ -178,7 +178,7 @@ pub async fn delete_client(
     .await?;
 
     if has_invoices.is_some() {
-        return Err(AppError::Internal(
+        return Err(AppError::Conflict(
             "Cannot delete client with associated invoices".to_string(),
         ));
     }
