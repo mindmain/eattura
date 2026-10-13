@@ -110,6 +110,16 @@
   height: 280px;
 }
 
+.annual-chart-container {
+  height: 320px;
+}
+
+.chart-period {
+  color: #666;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
 .chart-container.hidden {
   display: none;
 }

@@ -44,7 +44,12 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   private router = inject(Router);
 
   @ViewChild("yearChart") private chartCanvas?: ElementRef<HTMLCanvasElement>;
+  @ViewChild("annualChart") private annualChartCanvas?: ElementRef<HTMLCanvasElement>;
   private chart?: Chart;
+  private annualChart?: Chart;
+  private readonly currentYear = new Date().getFullYear();
+  readonly annualYears = Array.from({ length: 8 }, (_, index) => String(this.currentYear - 7 + index));
+  private annualIncome = new Array<number>(8).fill(0);
 
   /** Monthly stats keyed by year. */
   private monthlyByYear = new Map<string, MonthlyStats>();
@@ -75,6 +80,13 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
       this.clientCount.set(clients.length);
 
       this.aggregateByMonth(invoices);
+      for (const invoice of invoices) {
+        const index = this.annualYears.indexOf(invoice.data?.slice(0, 4) ?? "");
+        if (index >= 0 && invoice.direction === "sale") {
+          this.annualIncome[index] += invoice.importoTotale ?? 0;
+        }
+      }
+      this.renderAnnualChart();
       const years = Array.from(this.monthlyByYear.keys()).sort((a, b) => b.localeCompare(a));
       this.years.set(years);
 
@@ -90,6 +102,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.chart?.destroy();
+    this.annualChart?.destroy();
   }
 
   /** Handle the year <select> change. */
@@ -157,6 +170,63 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
       }
       stats.counts[month] += 1;
     }
+  }
+
+  private renderAnnualChart(): void {
+    const canvas = this.annualChartCanvas?.nativeElement;
+    if (!canvas) return;
+    this.annualChart?.destroy();
+    const currency = new Intl.NumberFormat("it-IT", {
+      style: "currency",
+      currency: "EUR",
+      maximumFractionDigits: 0,
+    });
+    this.annualChart = new Chart(canvas, {
+      type: "line",
+      data: {
+        labels: this.annualYears,
+        datasets: [{
+          label: "Fatturato",
+          data: this.annualIncome,
+          borderColor: "#2563eb",
+          backgroundColor: "rgba(37, 99, 235, 0.14)",
+          borderWidth: 3,
+          fill: true,
+          tension: 0.35,
+          pointRadius: 5,
+          pointHoverRadius: 7,
+          pointBackgroundColor: "#2563eb",
+          pointBorderColor: "#fff",
+          pointBorderWidth: 2,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (context) => ` Fatturato: ${currency.format(Number(context.raw ?? 0))}`,
+            },
+          },
+        },
+        onClick: (_event, elements) => {
+          if (elements.length > 0) {
+            const year = this.annualYears[elements[0].index];
+            void this.router.navigate(["/invoices"], { queryParams: { year } });
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              callback: (value) => `${Number(value).toLocaleString("it-IT")} €`,
+            },
+          },
+        },
+      },
+    });
   }
 
   /** Render (or re-render) the monthly income/cost chart for the given year. */
