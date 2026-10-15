@@ -53,7 +53,8 @@ pub fn progressivo_from_id(id: &str) -> String {
 }
 
 /// The category of an SDI notification, identified by the XML root element.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum SdiMessageType {
     /// RC — RicevutaConsegna: the invoice was delivered to the recipient.
     RicevutaConsegna,
@@ -79,8 +80,8 @@ impl SdiMessageType {
             "RicevutaConsegna" => SdiMessageType::RicevutaConsegna,
             "NotificaScarto" => SdiMessageType::NotificaScarto,
             "NotificaMancataConsegna" => SdiMessageType::NotificaMancataConsegna,
-            "NotificaEsito" => SdiMessageType::NotificaEsito,
-            "NotificaDecorrenzaTermini" => SdiMessageType::NotificaDecorrenzaTermini,
+            "NotificaEsito" | "NotificaEsitoCommittente" => SdiMessageType::NotificaEsito,
+            "NotificaDecorrenzaTermini" | "DecorrenzaTermini" => SdiMessageType::NotificaDecorrenzaTermini,
             "AttestazioneTrasmissioneFattura" => SdiMessageType::AttestazioneTrasmissione,
             "MetadatiInvioFile" => SdiMessageType::MetadatiInvio,
             other => SdiMessageType::Unknown(other.to_string()),
@@ -103,14 +104,16 @@ impl SdiMessageType {
 }
 
 /// A single error entry inside a NotificaScarto.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SdiError {
     pub codice: String,
     pub descrizione: String,
 }
 
 /// A parsed SDI notification with the fields relevant to invoice lifecycle.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ParsedNotification {
     pub message_type: SdiMessageType,
     /// SDI's internal identifier for the transmitted file.
@@ -121,6 +124,44 @@ pub struct ParsedNotification {
     pub esito: Option<String>,
     /// For NotificaScarto: the list of validation errors.
     pub errors: Vec<SdiError>,
+    /// Timestamp of receipt / delivery (DataOraRicezione, DataOraConsegna, etc.).
+    pub data_ora_ricezione: Option<String>,
+    /// Recipient code or PEC (CodiceDestinatario, Destinatario, etc.).
+    pub destinatario: Option<String>,
+    /// File hash (HashFattura, MessageDigest).
+    pub hash_file: Option<String>,
+    /// Informational note from SDI.
+    pub note: Option<String>,
+}
+
+/// Generate SDI receipt filename according to SDI specifications:
+/// `{NomeFileSenzaEstensione}_{TipoMessaggio}_{Progressivo:03}.xml`
+pub fn sdi_receipt_filename(original_invoice_filename: &str, receipt_type: &str, counter: u32) -> String {
+    let base = original_invoice_filename
+        .strip_suffix(".xml.p7m")
+        .or_else(|| original_invoice_filename.strip_suffix(".p7m"))
+        .or_else(|| original_invoice_filename.strip_suffix(".xml"))
+        .unwrap_or(original_invoice_filename);
+    format!("{base}_{receipt_type}_{counter:03}.xml")
+}
+
+/// Deduce original invoice filename from an SDI receipt filename if it matches
+/// the pattern `{Base}_{Tipo}_{Seq}.xml`.
+pub fn sdi_invoice_filename_from_receipt(receipt_filename: &str) -> Option<String> {
+    let name = receipt_filename.strip_suffix(".xml")?;
+    // Match parts: {Base}_{Tipo}_{Seq} where Tipo is 2 chars (RC, MC, NS, NE, DT, AT, MT)
+    let parts: Vec<&str> = name.rsplitn(3, '_').collect();
+    if parts.len() == 3 {
+        let seq = parts[0];
+        let tipo = parts[1];
+        let base = parts[2];
+        if (seq.len() == 3 || seq.chars().all(|c| c.is_ascii_digit()))
+            && (tipo.len() == 2 && tipo.chars().all(|c| c.is_ascii_alphabetic()))
+        {
+            return Some(format!("{base}.xml"));
+        }
+    }
+    None
 }
 
 impl ParsedNotification {
@@ -157,6 +198,10 @@ pub fn parse_notification(xml: &str) -> Result<ParsedNotification, XmlError> {
     let mut nome_file = None;
     let mut esito = None;
     let mut errors: Vec<SdiError> = Vec::new();
+    let mut data_ora_ricezione = None;
+    let mut destinatario = None;
+    let mut hash_file = None;
+    let mut note = None;
 
     // Scratch state for the current Errore being read.
     let mut cur_codice: Option<String> = None;
@@ -185,6 +230,22 @@ pub fn parse_notification(xml: &str) -> Result<ParsedNotification, XmlError> {
                     }
                     "Esito" => {
                         esito = Some(read_text(&mut reader)?);
+                    }
+                    "DataOraRicezione" | "DataOraConsegna" | "DataOraInvio" | "DataOraEsito"
+                        if data_ora_ricezione.is_none() =>
+                    {
+                        data_ora_ricezione = Some(read_text(&mut reader)?);
+                    }
+                    "Destinatario" | "CodiceDestinatario" | "IndirizzoPECDestinatario"
+                        if destinatario.is_none() =>
+                    {
+                        destinatario = Some(read_text(&mut reader)?);
+                    }
+                    "HashFattura" | "MessageDigest" if hash_file.is_none() => {
+                        hash_file = Some(read_text(&mut reader)?);
+                    }
+                    "Note" | "Dettaglio" if note.is_none() => {
+                        note = Some(read_text(&mut reader)?);
                     }
                     "Codice" if in_errore => {
                         cur_codice = Some(read_text(&mut reader)?);
@@ -219,6 +280,10 @@ pub fn parse_notification(xml: &str) -> Result<ParsedNotification, XmlError> {
         nome_file,
         esito,
         errors,
+        data_ora_ricezione,
+        destinatario,
+        hash_file,
+        note,
     })
 }
 
@@ -324,5 +389,37 @@ mod tests {
         let n = parse_notification(xml).unwrap();
         assert_eq!(n.message_type, SdiMessageType::RicevutaConsegna);
         assert_eq!(n.identificativo_sdi.as_deref(), Some("5"));
+    }
+
+    #[test]
+    fn test_sdi_receipt_filenames_and_roundtrip() {
+        let rc = sdi_receipt_filename("IT01234567890_00001.xml", "RC", 1);
+        assert_eq!(rc, "IT01234567890_00001_RC_001.xml");
+
+        let p7m_rc = sdi_receipt_filename("IT01234567890_00001.xml.p7m", "NS", 2);
+        assert_eq!(p7m_rc, "IT01234567890_00001_NS_002.xml");
+
+        let deduced = sdi_invoice_filename_from_receipt("IT01234567890_00001_RC_001.xml");
+        assert_eq!(deduced.as_deref(), Some("IT01234567890_00001.xml"));
+
+        let non_receipt = sdi_invoice_filename_from_receipt("IT01234567890_00001.xml");
+        assert_eq!(non_receipt, None);
+    }
+
+    #[test]
+    fn test_parse_ricevuta_consegna_full() {
+        let xml = r#"<RicevutaConsegna>
+            <IdentificativoSdI>888123</IdentificativoSdI>
+            <NomeFile>IT01234567890_00001.xml</NomeFile>
+            <DataOraRicezione>2026-06-16T10:00:00.000+02:00</DataOraRicezione>
+            <DataOraConsegna>2026-06-16T10:05:00.000+02:00</DataOraConsegna>
+            <Destinatario>ABC1234</Destinatario>
+            <MessageDigest>abcdef0123456789</MessageDigest>
+        </RicevutaConsegna>"#;
+        let n = parse_notification(xml).unwrap();
+        assert_eq!(n.message_type, SdiMessageType::RicevutaConsegna);
+        assert_eq!(n.destinatario.as_deref(), Some("ABC1234"));
+        assert_eq!(n.hash_file.as_deref(), Some("abcdef0123456789"));
+        assert_eq!(n.data_ora_ricezione.as_deref(), Some("2026-06-16T10:00:00.000+02:00"));
     }
 }

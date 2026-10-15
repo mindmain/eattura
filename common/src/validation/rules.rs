@@ -89,7 +89,31 @@ pub fn validate_header(header: &FatturaElettronicaHeader) -> ValidationResult {
     // 00305: CodiceDestinatario must be 7 chars (private) or 6 chars (PA).
     if let Some(dt) = &header.dati_trasmissione {
         let cd = &dt.codice_destinatario;
-        if !cd.is_empty() && cd.len() != 7 && cd.len() != 6 {
+        if dt.formato_trasmissione == 10 {
+            // FPA12 (PA)
+            if cd.len() != 6 || !cd.chars().all(|c| c.is_ascii_alphanumeric()) {
+                errors.push(ValidationError {
+                    code: "00305".into(),
+                    message: format!(
+                        "CodiceDestinatario for FPA12 (Pubblica Amministrazione) must be 6 alphanumeric characters, got '{}'",
+                        cd
+                    ),
+                    element_path: Some("Header/DatiTrasmissione/CodiceDestinatario".into()),
+                });
+            }
+        } else if dt.formato_trasmissione == 20 {
+            // FPR12 (B2B/B2C)
+            if cd.len() != 7 || !cd.chars().all(|c| c.is_ascii_alphanumeric()) {
+                errors.push(ValidationError {
+                    code: "00305".into(),
+                    message: format!(
+                        "CodiceDestinatario for FPR12 (privati) must be 7 alphanumeric characters, got '{}'",
+                        cd
+                    ),
+                    element_path: Some("Header/DatiTrasmissione/CodiceDestinatario".into()),
+                });
+            }
+        } else if !cd.is_empty() && cd.len() != 7 && cd.len() != 6 {
             errors.push(ValidationError {
                 code: "00305".into(),
                 message: format!(
@@ -199,6 +223,7 @@ fn validate_body_indexed(body: &FatturaElettronicaBody, _body_idx: usize) -> Val
     errors.extend(validate_natura_aliquota_coherence(body));
     errors.extend(validate_dati_riepilogo(body));
     errors.extend(validate_linee_riepilogo_match(body));
+    errors.extend(validate_dati_documenti_correlati(body));
 
     // Validate each line item's price calculation
     if let Some(dbs) = &body.dati_beni_servizi {
@@ -294,6 +319,18 @@ fn validate_dati_riepilogo(body: &FatturaElettronicaBody) -> Vec<ValidationError
     for (i, riep) in dbs.dati_riepilogo.iter().enumerate() {
         let key = format!("{:.2}", riep.aliquota_iva);
         riepilogo_aliquote.insert(key.clone(), i);
+
+        // SDI 00420: EsigibilitaIVA cannot be S (Split Payment) when Natura is N6
+        if riep.esigibilita_iva == Some(30) {
+            let nat_code = riep.natura.unwrap_or(0);
+            if nat_code == 60 || (61..=69).contains(&nat_code) {
+                errors.push(ValidationError {
+                    code: "00420".into(),
+                    message: "EsigibilitaIVA cannot be S (Split Payment) when Natura is N6 (Reverse charge)".into(),
+                    element_path: Some(format!("Body/DatiBeniServizi/DatiRiepilogo[{}]/EsigibilitaIVA", i + 1)),
+                });
+            }
+        }
 
         // SDI 00421: Check imposta calculation
         let expected_imposta = riep.aliquota_iva * riep.imponibile_importo / 100.0;
@@ -561,6 +598,42 @@ fn validate_iban(iban: &str) -> Option<ValidationError> {
     }
 }
 
+fn validate_dati_documenti_correlati(body: &FatturaElettronicaBody) -> Vec<ValidationError> {
+    let mut errors = Vec::new();
+    let Some(dg) = &body.dati_generali else { return errors; };
+
+    let mut all_docs = Vec::new();
+    all_docs.extend(dg.dati_ordine_acquisto.iter().map(|d| ("DatiOrdineAcquisto", d)));
+    all_docs.extend(dg.dati_contratto.iter().map(|d| ("DatiContratto", d)));
+    all_docs.extend(dg.dati_convenzione.iter().map(|d| ("DatiConvenzione", d)));
+    all_docs.extend(dg.dati_fatture_collegate.iter().map(|d| ("DatiFattureCollegate", d)));
+
+    for (tag, doc) in all_docs {
+        if let Some(cig) = &doc.codice_cig {
+            let trimmed = cig.trim();
+            if !trimmed.is_empty() && (trimmed.len() != 10 || !trimmed.chars().all(|c| c.is_ascii_alphanumeric())) {
+                errors.push(ValidationError {
+                    code: "00311".into(),
+                    message: format!("Codice CIG must be 10 alphanumeric characters, got '{}'", trimmed),
+                    element_path: Some(format!("Body/DatiGenerali/{}/CodiceCIG", tag)),
+                });
+            }
+        }
+        if let Some(cup) = &doc.codice_cup {
+            let trimmed = cup.trim();
+            if !trimmed.is_empty() && (trimmed.len() != 15 || !trimmed.chars().all(|c| c.is_ascii_alphanumeric())) {
+                errors.push(ValidationError {
+                    code: "00312".into(),
+                    message: format!("Codice CUP must be 15 alphanumeric characters, got '{}'", trimmed),
+                    element_path: Some(format!("Body/DatiGenerali/{}/CodiceCUP", tag)),
+                });
+            }
+        }
+    }
+
+    errors
+}
+
 // ===========================================================================
 // Tests
 // ===========================================================================
@@ -573,7 +646,7 @@ mod tests {
     /// Build a minimal valid invoice for testing.
     fn minimal_invoice() -> FatturaElettronica {
         FatturaElettronica {
-            versione: 10, // FPA12
+            versione: 20, // FPR12
             sistema_emittente: None,
             header: Some(FatturaElettronicaHeader {
                 dati_trasmissione: Some(DatiTrasmissione {
@@ -582,7 +655,7 @@ mod tests {
                         id_codice: "01234567890".into(),
                     }),
                     progressivo_invio: "00001".into(),
-                    formato_trasmissione: 10,
+                    formato_trasmissione: 20,
                     codice_destinatario: "0000000".into(),
                     ..Default::default()
                 }),
@@ -677,11 +750,13 @@ mod tests {
         let body = &mut inv.body[0];
         let dbs = body.dati_beni_servizi.as_mut().unwrap();
         dbs.dettaglio_linee[0].aliquota_iva = 0.0;
-        dbs.dettaglio_linee[0].natura = None; // Missing!
+        dbs.dettaglio_linee[0].natura = None;
         dbs.dati_riepilogo[0].aliquota_iva = 0.0;
         dbs.dati_riepilogo[0].imposta = 0.0;
+        dbs.dati_riepilogo[0].natura = None;
 
         let result = validate(&inv);
+        assert!(!result.is_valid());
         assert!(result.errors.iter().any(|e| e.code == "00400"));
     }
 
@@ -690,9 +765,11 @@ mod tests {
         let mut inv = minimal_invoice();
         let body = &mut inv.body[0];
         let dbs = body.dati_beni_servizi.as_mut().unwrap();
-        dbs.dettaglio_linee[0].natura = Some(10); // N1, but aliquota is 22%
+        dbs.dettaglio_linee[0].natura = Some(10); // N1
+        dbs.dati_riepilogo[0].natura = Some(10);
 
         let result = validate(&inv);
+        assert!(!result.is_valid());
         assert!(result.errors.iter().any(|e| e.code == "00401"));
     }
 
@@ -701,9 +778,11 @@ mod tests {
         let mut inv = minimal_invoice();
         let body = &mut inv.body[0];
         let dbs = body.dati_beni_servizi.as_mut().unwrap();
-        dbs.dati_riepilogo[0].imposta = 99.0; // Wrong: should be 22.0
+        // 22% of 100 is 22.0, set it to 25.0 to trigger 00421
+        dbs.dati_riepilogo[0].imposta = 25.0;
 
         let result = validate(&inv);
+        assert!(!result.is_valid());
         assert!(result.errors.iter().any(|e| e.code == "00421"));
     }
 
@@ -712,22 +791,24 @@ mod tests {
         let mut inv = minimal_invoice();
         let body = &mut inv.body[0];
         let dbs = body.dati_beni_servizi.as_mut().unwrap();
-        dbs.dettaglio_linee[0].prezzo_totale = 999.0; // Wrong
+        // 1 * 100 != 99.0
+        dbs.dettaglio_linee[0].prezzo_totale = 99.0;
 
         let result = validate(&inv);
+        assert!(!result.is_valid());
         assert!(result.errors.iter().any(|e| e.code == "00423"));
     }
 
     #[test]
     fn test_codice_fiscale_valid() {
+        assert!(validate_codice_fiscale("RSSMRA85M01H501Z").is_none());
         assert!(validate_codice_fiscale("01234567890").is_none());
-        assert!(validate_codice_fiscale("RSSMRA80A01H501U").is_none());
     }
 
     #[test]
     fn test_codice_fiscale_invalid() {
-        assert!(validate_codice_fiscale("123").is_some());
-        assert!(validate_codice_fiscale("invalid!chars!!").is_some());
+        assert!(validate_codice_fiscale("SHORT").is_some());
+        assert!(validate_codice_fiscale("INVALID_CHARS!@").is_some());
     }
 
     #[test]
@@ -737,8 +818,8 @@ mod tests {
 
     #[test]
     fn test_iban_invalid() {
-        assert!(validate_iban("INVALID").is_some());
-        assert!(validate_iban("12345").is_some());
+        assert!(validate_iban("SHORT").is_some());
+        assert!(validate_iban("123456789012345").is_some()); // starts with digits
     }
 
     #[test]
@@ -749,5 +830,53 @@ mod tests {
         assert!(!is_iso_date("2026-6-16")); // not zero-padded
         assert!(!is_iso_date("16/06/2026")); // wrong separator
         assert!(!is_iso_date(""));
+    }
+
+    #[test]
+    fn test_fpa12_and_fpr12_codice_destinatario() {
+        let mut inv = minimal_invoice();
+        inv.header.as_mut().unwrap().dati_trasmissione.as_mut().unwrap().formato_trasmissione = 10; // FPA12
+        inv.header.as_mut().unwrap().dati_trasmissione.as_mut().unwrap().codice_destinatario = "UF1234".into(); // 6 chars
+        assert!(validate(&inv).is_valid());
+
+        // 7 chars on FPA12 should fail with 00305
+        inv.header.as_mut().unwrap().dati_trasmissione.as_mut().unwrap().codice_destinatario = "0000000".into();
+        let res = validate(&inv);
+        assert!(!res.is_valid());
+        assert!(res.errors.iter().any(|e| e.code == "00305"));
+
+        // 7 chars on FPR12 should pass
+        inv.header.as_mut().unwrap().dati_trasmissione.as_mut().unwrap().formato_trasmissione = 20;
+        inv.header.as_mut().unwrap().dati_trasmissione.as_mut().unwrap().codice_destinatario = "M5UXCR1".into();
+        assert!(validate(&inv).is_valid());
+    }
+
+    #[test]
+    fn test_split_payment_sdi_00420() {
+        let mut inv = minimal_invoice();
+        let dbs = inv.body[0].dati_beni_servizi.as_mut().unwrap();
+        dbs.dati_riepilogo[0].esigibilita_iva = Some(30); // S = Split Payment
+        dbs.dati_riepilogo[0].natura = Some(60); // N6 = Reverse charge
+        let res = validate(&inv);
+        assert!(!res.is_valid());
+        assert!(res.errors.iter().any(|e| e.code == "00420"));
+    }
+
+    #[test]
+    fn test_cig_cup_validation() {
+        let mut inv = minimal_invoice();
+        inv.body[0].dati_generali.as_mut().unwrap().dati_ordine_acquisto.push(DatiDocumentiCorrelati {
+            id_documento: "ORD-2026-1".into(),
+            codice_cig: Some("1234567890".into()), // 10 chars -> ok
+            codice_cup: Some("123456789012345".into()), // 15 chars -> ok
+            ..Default::default()
+        });
+        assert!(validate(&inv).is_valid());
+
+        // Invalid CIG length -> 00311
+        inv.body[0].dati_generali.as_mut().unwrap().dati_ordine_acquisto[0].codice_cig = Some("SHORT".into());
+        let res = validate(&inv);
+        assert!(!res.is_valid());
+        assert!(res.errors.iter().any(|e| e.code == "00311"));
     }
 }

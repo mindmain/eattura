@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 /// Result of validating an invoice against SDI rules.
 /// Contains zero or more errors found during validation.
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationResult {
     pub errors: Vec<ValidationError>,
 }
@@ -31,7 +33,7 @@ impl std::fmt::Display for ValidationResult {
 ///
 /// Each error corresponds to a specific check defined by the Agenzia delle Entrate.
 /// See `proto/eattura/sdi/v1/errors.proto` for the full error code catalog.
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationError {
     /// SDI error code (e.g., "00400", "00401").
     pub code: String,
