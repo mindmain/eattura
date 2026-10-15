@@ -6,6 +6,10 @@ export interface ClientSummary {
   idPaese: string;
   idCodice: string;
   comune: string;
+  /** Searchable metadata from the in-memory desktop index. */
+  searchText?: string;
+  isPa?: boolean;
+  codiceDestinatario?: string | null;
 }
 
 export interface ClientDetail extends ClientSummary {
@@ -20,6 +24,7 @@ export interface ClientDetail extends ClientSummary {
   email: string | null;
   pec: string | null;
   codiceDestinatario: string | null;
+  isPa?: boolean;
 }
 
 export interface CreateClientRequest {
@@ -40,4 +45,5 @@ export interface CreateClientRequest {
   email: string | null;
   pec: string | null;
   codiceDestinatario: string | null;
+  isPa?: boolean;
 }

@@ -1,4 +1,4 @@
-import { Injectable } from "@angular/core";
+import { Injectable, inject } from "@angular/core";
 import { TauriService } from "./tauri.service";
 import type {
   ClientSummary,
@@ -12,7 +12,7 @@ import type {
  */
 @Injectable({ providedIn: "root" })
 export class ClientService {
-  constructor(private tauri: TauriService) {}
+  private tauri = inject(TauriService);
 
   listClients(): Promise<ClientSummary[]> {
     return this.tauri.invoke("list_clients");

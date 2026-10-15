@@ -111,3 +111,49 @@ export const ESIGIBILITA_IVA: Record<string, string> = {
   I: "Esigibilità immediata",
   S: "Scissione dei pagamenti",
 };
+
+/** SDI professional pension fund types (Casse di Previdenza TC01-TC25). */
+export const TIPO_CASSA: Record<string, string> = {
+  TC01: "TC01 - Cassa Nazionale Previdenza e Assistenza Avvocati e Procuratori Legali",
+  TC02: "TC02 - Cassa Nazionale Previdenza e Assistenza Dottori Commercialisti",
+  TC03: "TC03 - Cassa Nazionale Previdenza e Assistenza Geometri",
+  TC04: "TC04 - Cassa Nazionale Previdenza e Assistenza Ingegneri e Architetti (Inarcassa)",
+  TC05: "TC05 - Cassa Nazionale Notariato",
+  TC06: "TC06 - Cassa Nazionale Previdenza e Assistenza Ragionieri e Periti Commerciali",
+  TC07: "TC07 - Ente Nazionale Previdenza e Assistenza Periti Industriali (EPPI)",
+  TC08: "TC08 - Ente Nazionale Previdenza e Assistenza Biologi (ENPAB)",
+  TC09: "TC09 - Ente Nazionale Previdenza e Assistenza Professione Infermieristica (ENPAPI)",
+  TC10: "TC10 - Ente Nazionale Previdenza e Assistenza Psicologi (ENPAP)",
+  TC11: "TC11 - Ente Nazionale Previdenza e Assistenza Veterinari (ENPAV)",
+  TC12: "TC12 - Ente Nazionale Previdenza e Assistenza Consulenti del Lavoro (ENPACL)",
+  TC13: "TC13 - Cassa Previdenza e Assistenza Dottori Agronomi e Forestali",
+  TC14: "TC14 - Cassa Nazionale Previdenza e Assistenza Giornalisti Italiani",
+  TC15: "TC15 - Cassa Nazionale Previdenza e Assistenza Spedizionieri Doganali",
+  TC16: "TC16 - Gestione Separata INPS ex art. 2 c. 26 L. 335/95",
+  TC17: "TC17 - Cassa Pensioni Medici (ENPAM)",
+  TC18: "TC18 - Cassa Pensioni Farmacisti (ENPAF)",
+  TC19: "TC19 - Cassa Pensioni Agenti e Rappresentanti di Commercio (ENASARCO)",
+  TC20: "TC20 - Cassa Pensioni periti agrari e periti agrari laureati (ENPAIA)",
+  TC21: "TC21 - Fondo previdenza impiegati agricoli e forestali (ENPAIA)",
+  TC22: "TC22 - Gestione Autonoma INPS (Rivalsa INPS 4%)",
+};
+
+/** SDI withholding tax types (RT01-RT06). */
+export const TIPO_RITENUTA: Record<string, string> = {
+  RT01: "RT01 - Ritenuta persone fisiche (es. professionisti)",
+  RT02: "RT02 - Ritenuta persone giuridiche",
+  RT03: "RT03 - Contributo INPS",
+  RT04: "RT04 - Contributo ENASARCO",
+  RT05: "RT05 - Contributo ENPAM",
+  RT06: "RT06 - Altro contributo previdenziale",
+};
+
+/** SDI payment reason codes for withholding tax. */
+export const CAUSALE_PAGAMENTO_RITENUTA: Record<string, string> = {
+  A: "A - Prestazioni di lavoro autonomo (arti e professioni abituali)",
+  M: "M - Prestazioni di lavoro autonomo non esercitate abitualmente (occasionali)",
+  O: "O - Prestazioni di lavoro autonomo non abituali con obbligo previdenziale",
+  Q: "Q - Provvigioni corrisposte ad agente monomandatario",
+  R: "R - Provvigioni corrisposte ad agente plurimandatario",
+  V: "V - Provvigioni corrisposte a mediatore",
+};

@@ -3,7 +3,7 @@ import { Injectable, signal } from "@angular/core";
 export interface Notification {
   id: number;
   message: string;
-  type: "success" | "error";
+  type: "success" | "error" | "warning";
 }
 
 /**
@@ -26,12 +26,17 @@ export class NotificationService {
     this.add(message, "error");
   }
 
+  /** Show a warning notification. */
+  warning(message: string): void {
+    this.add(message, "warning");
+  }
+
   /** Dismiss a notification by ID. */
   dismiss(id: number): void {
     this.notifications.update((list) => list.filter((n) => n.id !== id));
   }
 
-  private add(message: string, type: "success" | "error"): void {
+  private add(message: string, type: "success" | "error" | "warning"): void {
     const id = this.nextId++;
     this.notifications.update((list) => [...list, { id, message, type }]);
     setTimeout(() => this.dismiss(id), 5000);
