@@ -14,10 +14,23 @@
   gap: 0.5rem;
 }
 
+.pec-sync-timer {
+  margin: -0.5rem 0 1rem;
+  text-align: right;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.pec-sync-error {
+  margin-left: 0.75rem;
+  color: #b45309;
+}
+
 .filter-tabs {
   display: flex;
   gap: 0.25rem;
-  border-bottom: 2px solid #e0e0e0;
+  border-bottom: 2px solid var(--border-strong);
   padding-bottom: 0;
 }
 
@@ -31,17 +44,17 @@
   border-bottom: 2px solid transparent;
   margin-bottom: -2px;
   cursor: pointer;
-  color: #888;
+  color: var(--text-muted);
   transition: color 0.15s, border-color 0.15s;
 }
 
 .filter-tab:hover {
-  color: #444;
+  color: var(--text-secondary);
 }
 
 .filter-tab.active {
-  color: #1a1a2e;
-  border-bottom-color: #1a1a2e;
+  color: var(--text-primary);
+  border-bottom-color: var(--text-primary);
 }
 
 .search-bar input {
@@ -60,7 +73,7 @@
 }
 
 .link {
-  color: #1a1a2e;
+  color: var(--text-primary);
   cursor: pointer;
   text-decoration: underline;
 }
@@ -104,3 +117,28 @@
   color: #dc2626;
   font-weight: 600;
 }
+
+.badge-p7m {
+  background: #047857;
+  color: white;
+  font-size: 0.7rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  margin-left: 0.4rem;
+  font-family: monospace;
+}
+
+.badge-autofattura {
+  background: #6366f1;
+  color: white;
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+.filter-tabs { border-bottom-color: var(--border); }
+.filter-tab { color: var(--text-muted); }
+.filter-tab:hover, .filter-tab.active { color: var(--accent); }
+.filter-tab.active { border-bottom-color: var(--accent); }
+.link { color: var(--accent); }
+.period-banner { background: var(--accent-soft); border-color: var(--border); color: var(--text-primary); }

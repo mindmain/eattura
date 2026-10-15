@@ -1,8 +1,20 @@
 <div class="app-layout">
-  <app-sidebar />
-  <main class="main-content">
-    <router-outlet />
-  </main>
+  <header class="window-bar" [class.macos-overlay]="macOSOverlay" (mousedown)="startDragging($event)">
+    <a class="brand" routerLink="/dashboard" (mousedown)="$event.stopPropagation()" aria-label="Eattura, vai alla dashboard">
+      <img src="assets/eattura-mark.svg" width="32" height="32" alt="" />
+      <span>Eattura</span>
+    </a>
+    <nav class="top-actions" aria-label="Impostazioni rapide">
+      <a routerLink="/settings" [queryParams]="{ section: 'account' }" (mousedown)="$event.stopPropagation()"><lucide-icon [img]="icons.UserRound" [size]="18" />Account</a>
+      <a routerLink="/settings" [queryParams]="{ section: 'app' }" (mousedown)="$event.stopPropagation()"><lucide-icon [img]="icons.Settings2" [size]="18" />Impostazioni app</a>
+    </nav>
+  </header>
+  <div class="workspace">
+    <app-sidebar />
+    <main class="main-content">
+      <router-outlet />
+    </main>
+  </div>
 </div>
 
 <!-- Global notifications -->

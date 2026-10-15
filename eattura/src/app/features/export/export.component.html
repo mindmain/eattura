@@ -1,0 +1,215 @@
+<div class="export-page">
+  <div class="page-header">
+    <div class="header-titles">
+      <h1>Export Commercialista & Conservazione AgID</h1>
+      <p class="subtitle">
+        Esporta pacchetti strutturati per il commercialista e genera pacchetti SIP a norma UNI 11386 (SInCRO) con impronte SHA-256
+      </p>
+    </div>
+  </div>
+
+  <!-- Filter & Period Configuration Card -->
+  <div class="card filter-card">
+    <div class="card-header">
+      <h2>Parametri di Esportazione</h2>
+    </div>
+    <div class="filter-grid">
+      <div class="form-group">
+        <label for="yearSelect">Anno Fiscale</label>
+        <select id="yearSelect" [ngModel]="selectedYear()" (ngModelChange)="selectedYear.set($event)">
+          @for (y of years; track y) {
+            <option [value]="y">{{ y }}</option>
+          }
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="periodSelect">Periodo Fiscale</label>
+        <select id="periodSelect" [ngModel]="selectedPeriod()" (ngModelChange)="selectedPeriod.set($event)">
+          <option value="all">Intero Anno</option>
+          <optgroup label="Trimestri (IVA Trimestrale)">
+            <option value="q1">1° Trimestre (Gen - Mar)</option>
+            <option value="q2">2° Trimestre (Apr - Giu)</option>
+            <option value="q3">3° Trimestre (Lug - Set)</option>
+            <option value="q4">4° Trimestre (Ott - Dic)</option>
+          </optgroup>
+          <optgroup label="Mesi Singoli (IVA Mensile)">
+            <option value="01">Gennaio</option>
+            <option value="02">Febbraio</option>
+            <option value="03">Marzo</option>
+            <option value="04">Aprile</option>
+            <option value="05">Maggio</option>
+            <option value="06">Giugno</option>
+            <option value="07">Luglio</option>
+            <option value="08">Agosto</option>
+            <option value="09">Settembre</option>
+            <option value="10">Ottobre</option>
+            <option value="11">Novembre</option>
+            <option value="12">Dicembre</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="directionSelect">Tipologia Flusso</label>
+        <select id="directionSelect" [ngModel]="selectedDirection()" (ngModelChange)="selectedDirection.set($event)">
+          <option value="all">Tutte (Attive e Passive)</option>
+          <option value="sale">Solo Fatture Emesse (Vendite)</option>
+          <option value="purchase">Solo Fatture Ricevute (Acquisti)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="checkbox-row">
+      <label class="checkbox-label">
+        <input type="checkbox" [ngModel]="includePdf()" (ngModelChange)="includePdf.set($event)" />
+        <span>Includi PDF di cortesia formattati nel pacchetto</span>
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" [ngModel]="includeSdiReceipts()" (ngModelChange)="includeSdiReceipts.set($event)" />
+        <span>Includi Ricevute telematiche SDI (Consegna, Scarto, Mancata Consegna)</span>
+      </label>
+    </div>
+  </div>
+
+  @if (loading()) {
+    <div class="loading-banner">
+      <div class="spinner"></div>
+      <span>{{ lastAction() }}</span>
+    </div>
+  }
+
+  <!-- Action Cards Grid -->
+  <div class="actions-grid">
+    <!-- Accountant ZIP Package Card -->
+    <div class="card action-card">
+      <div class="card-badge primary">Consigliato</div>
+      <div class="card-icon">📦</div>
+      <h3>Pacchetto Completo Commercialista</h3>
+      <p class="description">
+        Archivio ZIP contenente le cartelle <code>01_Fatture_Emesse</code> e <code>02_Fatture_Ricevute</code> con tutti i file XML/P7M, i PDF di cortesia e le ricevute SDI, corredato dai file CSV di riepilogo.
+      </p>
+      <ul class="feature-list">
+        <li>Cartelle separate per flusso attivo e passivo</li>
+        <li>Fatture XML originali conformi SDI</li>
+        <li>PDF di cortesia per consultazione immediata</li>
+        <li>Ricevute telematiche associate al fascicolo</li>
+        <li>Foglio <code>Prima_Nota_Completa.csv</code> incluso</li>
+      </ul>
+      <button class="btn btn-primary" [disabled]="loading()" (click)="exportAccountantZip()">
+        📥 Scarica Pacchetto (.zip)
+      </button>
+    </div>
+
+    <!-- Prima Nota CSV Card -->
+    <div class="card action-card">
+      <div class="card-badge">Contabilità</div>
+      <div class="card-icon">📊</div>
+      <h3>Tracciato Prima Nota CSV</h3>
+      <p class="description">
+        Foglio di calcolo con separatore punto e virgola <code>;</code> e codifica UTF-8 BOM, direttamente importabile nei gestionali contabili (Zucchetti, TeamSystem, Datev, Profis) ed Excel.
+      </p>
+      <ul class="feature-list">
+        <li>Dettaglio aliquote IVA (4%, 5%, 10%, 22%)</li>
+        <li>Operazioni esenti/non imponibili con Natura SDI</li>
+        <li>Ritenute d'acconto, cassa e imposta di bollo</li>
+        <li>Scissione dei pagamenti (Split Payment PA)</li>
+        <li>Modalità di pagamento e date di scadenza</li>
+      </ul>
+      <button class="btn btn-secondary" [disabled]="loading()" (click)="exportPrimaNotaCsv()">
+        📄 Scarica Prima Nota (.csv)
+      </button>
+    </div>
+
+    <!-- AgID Digital Preservation Package (SIP) -->
+    <div class="card action-card">
+      <div class="card-badge law">A Norma di Legge</div>
+      <div class="card-icon">🏛️</div>
+      <h3>Pacchetto Conservazione AgID (SIP)</h3>
+      <p class="description">
+        Pacchetto di Versamento conforme allo standard <strong>UNI 11386:2010 (SInCRO)</strong> e alle Linee Guida AgID per la conservazione a norma decennale (art. 44 CAD, D.M. 17 giugno 2014).
+      </p>
+      <ul class="feature-list">
+        <li>File <code>indice_conservazione.xml</code> a radice archivio</li>
+        <li>Impronta crittografica SHA-256 per ogni componente</li>
+        <li>Metadati fiscali strutturati e identificativo URN UUID</li>
+        <li>Soggetto produttore e datazione temporale UTC</li>
+        <li>Pronto per l'invio al conservatore accreditato</li>
+      </ul>
+      <button class="btn btn-primary law-btn" [disabled]="loading()" (click)="exportAgidPackage()">
+        🛡️ Genera Pacchetto AgID (.zip)
+      </button>
+    </div>
+  </div>
+
+  <!-- AgID Package Integrity Verifier -->
+  <div class="card verifier-card">
+    <div class="card-header">
+      <h2>Verificatore Integrità Pacchetto AgID (SIP / SInCRO)</h2>
+      <p class="section-desc">
+        Carica un pacchetto ZIP di conservazione per verificare l'indice XML, la corrispondenza delle dimensioni in byte e la validità delle impronte SHA-256.
+      </p>
+    </div>
+
+    <div class="drop-zone">
+      <input
+        type="file"
+        id="agidFileInput"
+        accept=".zip"
+        (change)="onVerificationFileSelected($event)"
+        [disabled]="verifying()"
+      />
+      <label for="agidFileInput" class="drop-label">
+        @if (verifying()) {
+          <div class="spinner"></div>
+          <span>Verifica crittografica SHA-256 in corso...</span>
+        } @else {
+          <span class="upload-icon">🔍</span>
+          <span>Seleziona o trascina qui il pacchetto ZIP da verificare</span>
+          <small class="upload-hint">Supporta archivi ZIP con indice_conservazione.xml</small>
+        }
+      </label>
+    </div>
+
+    @if (verificationResult()) {
+      <div class="verification-panel" [class.success]="verificationResult()!.valid" [class.error]="!verificationResult()!.valid">
+        <div class="panel-header">
+          <span class="status-badge" [class.valid]="verificationResult()!.valid">
+            {{ verificationResult()!.valid ? '✓ Pacchetto Valido & Integro' : '⚠️ Anomalie Rilevate' }}
+          </span>
+          <span class="pkg-id">{{ verificationResult()!.packageId }}</span>
+        </div>
+
+        <div class="meta-grid">
+          <div class="meta-item">
+            <span class="label">Soggetto Produttore:</span>
+            <span class="value">{{ verificationResult()!.producer }}</span>
+          </div>
+          <div class="meta-item">
+            <span class="label">Data Creazione:</span>
+            <span class="value">{{ verificationResult()!.createdAt }}</span>
+          </div>
+          <div class="meta-item">
+            <span class="label">Algoritmo Impronta:</span>
+            <span class="value">{{ verificationResult()!.algorithm }}</span>
+          </div>
+          <div class="meta-item">
+            <span class="label">Documenti Verificati:</span>
+            <span class="value">{{ verificationResult()!.verifiedFiles }} su {{ verificationResult()!.totalFiles }}</span>
+          </div>
+        </div>
+
+        @if (verificationResult()!.errors.length > 0) {
+          <div class="errors-list">
+            <h4>Anomalie riscontrate:</h4>
+            <ul>
+              @for (err of verificationResult()!.errors; track err) {
+                <li>{{ err }}</li>
+              }
+            </ul>
+          </div>
+        }
+      </div>
+    }
+  </div>
+</div>

@@ -16,13 +16,13 @@
   padding: 0.5rem 0.75rem;
   border-radius: 6px;
   font-size: 0.85rem;
-  color: #888;
-  background: #f0f0f0;
+  color: var(--text-muted);
+  background: var(--surface-hover);
   transition: background 0.15s, color 0.15s;
 }
 
 .step.active {
-  background: #1a1a2e;
+  background: #345dbb;
   color: #fff;
 }
 
@@ -77,13 +77,13 @@
 
 .total-display {
   font-size: 1.1rem;
-  color: #1a1a2e;
+  color: var(--text-primary);
 }
 
 .btn-link {
   background: none;
   border: none;
-  color: #1a1a2e;
+  color: var(--text-primary);
   font-size: 0.82rem;
   cursor: pointer;
   padding: 0;
@@ -109,7 +109,7 @@
 
 .summary-label {
   font-size: 0.8rem;
-  color: #888;
+  color: var(--text-muted);
   font-weight: 500;
   margin-bottom: 0.15rem;
 }
@@ -118,3 +118,200 @@
   padding: 0.25rem 0.5rem;
   font-size: 0.82rem;
 }
+
+/* Step 3 & Financial widgets */
+.card-forfettario {
+  background: var(--surface-soft);
+  border-left: 4px solid #3b82f6;
+}
+
+.banner-forfettario-active {
+  display: flex;
+  align-items: center;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+}
+
+.banner-bollo-required {
+  background: #fffbeb;
+  border: 1px solid #fef3c7;
+  color: #b45309;
+  padding: 0.35rem 0.5rem;
+  border-radius: 4px;
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--border-strong);
+  transition: 0.2s;
+  border-radius: 24px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.2s;
+  border-radius: 50%;
+}
+
+input:checked + .slider {
+  background-color: #10b981;
+}
+
+input:checked + .slider:before {
+  transform: translateX(20px);
+}
+
+.computed-badge {
+  background: var(--surface-hover);
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+.financial-card {
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.financial-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.fin-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.88rem;
+  padding: 0.2rem 0;
+}
+
+.fin-gross {
+  border-top: 1px dashed var(--border-strong);
+  padding-top: 0.5rem;
+  margin-top: 0.25rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.fin-net {
+  border-top: 2px solid var(--text-primary);
+  padding-top: 0.5rem;
+  margin-top: 0.25rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.highlight-net {
+  color: var(--text-primary);
+}
+
+.col-2 {
+  flex: 2;
+}
+
+.gap-2 {
+  gap: 1rem;
+}
+
+/* Autofattura / Reverse Charge UI */
+.autofattura-banner {
+  background: #f5f3ff;
+  border: 1px solid #ddd6fe;
+  border-left: 4px solid #6366f1;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.autofattura-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.badge-autofattura {
+  background: #6366f1;
+  color: white;
+  border-radius: 4px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.emittente-tag {
+  background: #e0e7ff;
+  color: #3730a3;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.autofattura-info-text {
+  font-size: 0.85rem;
+  color: #4b5563;
+  margin: 0.5rem 0 0 0;
+  line-height: 1.4;
+}
+
+.summary-autofattura-banner {
+  background: #f5f3ff;
+  border: 1px solid #ddd6fe;
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+.collegata-summary-line {
+  font-size: 0.85rem;
+  color: #1f2937;
+}
+
+.badge-format {
+  background: #e0e7ff;
+  color: #3730a3;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+.pa-b2g-section, .ddt-section, .allegati-section {
+  background: var(--glass-surface);
+  border: 1px solid var(--glass-border);
+}
+.ddt-section { border-left: 4px solid #38bdf8; }
+.allegati-section { border-left: 4px solid #34d399; }
+.tracciabilita-pa-box { border-top: 1px solid var(--border); }
+.ddt-row, .allegato-row { background: var(--surface-solid); border: 1px solid var(--border); border-radius: 8px; }
+.summary-pa-banner { background: var(--accent-soft); border: 1px solid var(--border); border-radius: 8px; }

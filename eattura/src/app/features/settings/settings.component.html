@@ -1,16 +1,49 @@
 <div class="settings">
-  <h1>Impostazioni</h1>
+  <h1>{{ section() === 'account' ? 'Account' : 'Impostazioni app' }}</h1>
+
+  @if (section() === 'app') {
+  <section class="appearance-section">
+    <h2>Aspetto</h2>
+    <p>Scegli il tema dell'app. Con Sistema segue automaticamente le preferenze del dispositivo.</p>
+    <div class="theme-options" role="group" aria-label="Tema dell'app">
+      <button type="button" [class.selected]="theme.preference() === 'system'" [attr.aria-pressed]="theme.preference() === 'system'" (click)="setTheme('system')"><lucide-icon [img]="themeIcons.Monitor" [size]="19" />Sistema</button>
+      <button type="button" [class.selected]="theme.preference() === 'light'" [attr.aria-pressed]="theme.preference() === 'light'" (click)="setTheme('light')"><lucide-icon [img]="themeIcons.Sun" [size]="19" />Chiaro</button>
+      <button type="button" [class.selected]="theme.preference() === 'dark'" [attr.aria-pressed]="theme.preference() === 'dark'" (click)="setTheme('dark')"><lucide-icon [img]="themeIcons.Moon" [size]="19" />Scuro</button>
+    </div>
+  </section>
+  }
 
   <!-- Section 1 - Company data -->
+  @if (section() === 'account') {
   <section>
-    <h2>Dati Azienda</h2>
-    <p>Configura i dati della tua azienda. Verranno usati come cedente predefinito nelle fatture.</p>
+    <h2>Dati del cedente</h2>
+    <p>Configura i tuoi dati fiscali. Verranno usati come cedente predefinito nelle fatture.</p>
 
     <form [formGroup]="companyForm" (ngSubmit)="saveCompany()">
       <div class="form-group">
-        <label for="c-denominazione">Denominazione *</label>
-        <input id="c-denominazione" type="text" formControlName="denominazione" />
+        <span>Tipo soggetto</span>
+        <div class="subject-options">
+          <label><input type="radio" name="companySubjectType" value="azienda" [checked]="subjectType() === 'azienda'" (change)="onSubjectTypeChange('azienda')" /> Azienda</label>
+          <label><input type="radio" name="companySubjectType" value="persona" [checked]="subjectType() === 'persona'" (change)="onSubjectTypeChange('persona')" /> Persona fisica / libero professionista</label>
+        </div>
       </div>
+      @if (subjectType() === "azienda") {
+        <div class="form-group">
+          <label for="c-denominazione">Denominazione *</label>
+          <input id="c-denominazione" type="text" formControlName="denominazione" />
+        </div>
+      } @else {
+        <div class="form-row">
+          <div class="form-group">
+            <label for="c-nome">Nome *</label>
+            <input id="c-nome" type="text" formControlName="nome" />
+          </div>
+          <div class="form-group">
+            <label for="c-cognome">Cognome *</label>
+            <input id="c-cognome" type="text" formControlName="cognome" />
+          </div>
+        </div>
+      }
       <div class="form-row">
         <div class="form-group">
           <label for="c-idPaese">Paese *</label>
@@ -83,17 +116,15 @@
           <input id="c-pec" type="email" formControlName="pec" />
         </div>
       </div>
-      <div class="form-group">
-        <label for="c-codiceDestinatario">Codice Destinatario</label>
-        <input id="c-codiceDestinatario" type="text" formControlName="codiceDestinatario" maxlength="7" />
-      </div>
       <div class="form-actions">
-        <button type="submit" class="btn-primary" [disabled]="companyForm.invalid">Salva Dati Azienda</button>
+        <button type="submit" class="btn-primary" [disabled]="companyForm.invalid">Salva dati del cedente</button>
       </div>
     </form>
   </section>
+  }
 
   <!-- Section 2 - PEC Configuration -->
+  @if (section() === 'app') {
   <section>
     <h2>Configurazione PEC</h2>
     <p>Configura la PEC per l'invio e la ricezione delle fatture tramite SDI.</p>
@@ -102,6 +133,11 @@
       <div class="form-group">
         <label for="p-pecEmail">Indirizzo PEC</label>
         <input id="p-pecEmail" type="email" formControlName="pecEmail" placeholder="pec@esempio.it" />
+      </div>
+      <div class="form-group">
+        <label for="p-sdiAddress">PEC SdI per l'invio delle fatture *</label>
+        <input id="p-sdiAddress" type="email" formControlName="sdiAddress" />
+        <small class="field-hint">Per il primo invio usa sdi01@pec.fatturapa.it. Dopo la prima risposta dello SdI, inserisci qui l'indirizzo PEC che ti ha assegnato per gli invii successivi.</small>
       </div>
       <div class="form-row">
         <div class="form-group">
@@ -132,4 +168,145 @@
       </div>
     </form>
   </section>
+  }
+
+  <!-- Section 3 - Local Storage & Data Directory -->
+  @if (section() === 'app') {
+  <section>
+    <h2>Archivio Dati Locale</h2>
+    <p>Le fatture e le anagrafiche sono memorizzate in modo sicuro e permanente nella home utente.</p>
+
+    <div class="storage-box">
+      <div class="form-group">
+        <label>Percorso archivio su disco</label>
+        <div class="path-display">
+          <code>{{ dataDir() || "~/.eattura" }}</code>
+        </div>
+      </div>
+      <p class="storage-hint">
+        I dati risiedono fuori dalla directory dell'applicazione: disinstallare o aggiornare l'app non cancellerà le tue fatture.
+      </p>
+      <div class="form-actions">
+        <button type="button" class="btn-secondary" (click)="openDataDir()">
+          Apri Cartella Archivio nel Finder / File Manager
+        </button>
+      </div>
+    </div>
+  </section>
+  }
+
+  <!-- Section 4 - Multi-Device Synchronization (Zero-DB E2EE Relay & Cloud Drive) -->
+  @if (section() === 'app') {
+  <section class="sync-section">
+    <h2>Sincronizzazione Multi-Dispositivo Senza DB</h2>
+    <p>
+      Accedi alle tue fatture su più dispositivi mantenendo l'architettura <strong>senza database</strong> e la sovranità totale sui dati.
+    </p>
+
+    <!-- Sub-section: Cloud Drive (Approach A) -->
+    <div class="storage-box mb-4">
+      <h3>Metodo A: Sincronizzazione tramite Cloud Drive (Zero Server)</h3>
+      <p class="storage-hint">
+        Poiché l'archivio locale di Eattura è composto da file canonici XML immutabili con digest univoci SHA-256 e un catalogo locale autorigenerante, puoi posizionare la cartella del Vault su <strong>iCloud Drive, Dropbox, Google Drive, Nextcloud o un NAS Synology</strong>.
+      </p>
+      <ul class="sync-benefits">
+        <li><strong>Nessun conflitto</strong>: due dispositivi che emettono o importano la stessa fattura generano lo stesso identico ID deterministico.</li>
+        <li><strong>Zero server</strong>: non è necessario alcun server esterno attivo.</li>
+        <li><strong>Auto-Reload</strong>: le modifiche esterne vengono rilevate automaticamente dal file watcher in tempo reale.</li>
+      </ul>
+    </div>
+
+    <!-- Sub-section: E2EE Relay (Approach B) -->
+    <div class="relay-box">
+      <h3>Metodo B: Relay Server Passa-Carte Effimero (Crittografia End-to-End E2EE)</h3>
+      <p class="storage-hint">
+        Sincronizza direttamente tra i tuoi dispositivi attraverso il server passa-carte. I dati vengono <strong>cifrati con AES-256-GCM sul tuo dispositivo</strong> prima dell'invio. Il server inoltra solo payload cifrati effimeri in memoria (RAM) e <strong>non ha database né capacità di decifrare i dati</strong>.
+      </p>
+
+      <form [formGroup]="syncForm">
+        <div class="form-row">
+          <div class="form-group flex-2">
+            <label for="s-relayUrl">Indirizzo Server Relay Passa-Carte *</label>
+            <input id="s-relayUrl" type="url" formControlName="relayUrl" placeholder="http://localhost:8080" />
+          </div>
+          <div class="form-group flex-1">
+            <label for="s-deviceId">Nome Questo Dispositivo *</label>
+            <input id="s-deviceId" type="text" formControlName="deviceId" placeholder="es. MacBook Portatile" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="s-passphrase">
+            Codice di Accoppiamento / Passphrase E2EE *
+            <span class="badge-crypto">AES-256-GCM Zero Knowledge</span>
+          </label>
+          <div class="pairing-input-group">
+            <input
+              id="s-passphrase"
+              type="text"
+              formControlName="passphrase"
+              placeholder="es. aquila-torre-fiume-7821"
+              autocomplete="off"
+            />
+            <button type="button" class="btn-secondary btn-sm" (click)="generatePairingCode()">
+              🔑 Genera Nuovo Codice
+            </button>
+          </div>
+          <small class="field-hint">
+            Usa la stessa identica passphrase su tutti i dispositivi che vuoi sincronizzare. Il server vede solo l'hash opaco del canale e non conosce questa chiave.
+          </small>
+        </div>
+
+        <div class="form-group">
+          <label for="s-apiKey">Chiave API Server (Opzionale, se richiesta dal relay)</label>
+          <input id="s-apiKey" type="password" formControlName="apiKey" placeholder="Lascia vuoto se non richiesta" />
+        </div>
+
+        @if (lastSyncResult()) {
+          <div class="sync-status-banner">
+            <span>{{ lastSyncResult() }}</span>
+          </div>
+        }
+
+        <div class="sync-actions-row">
+          <button
+            type="button"
+            class="btn-primary"
+            [disabled]="syncing() || syncForm.invalid"
+            (click)="syncAll()"
+          >
+            ⚡ {{ syncing() ? 'Sincronizzazione...' : 'Sincronizza Ora (Invia e Ricevi)' }}
+          </button>
+
+          <button
+            type="button"
+            class="btn-secondary"
+            [disabled]="syncing() || syncForm.invalid"
+            (click)="pushSync()"
+          >
+            📤 Invia Modifiche (Push)
+          </button>
+
+          <button
+            type="button"
+            class="btn-secondary"
+            [disabled]="syncing() || syncForm.invalid"
+            (click)="pullSync()"
+          >
+            📥 Scarica Aggiornamenti (Pull)
+          </button>
+
+          <button
+            type="button"
+            class="btn-outline"
+            [disabled]="syncing() || syncForm.invalid"
+            (click)="checkRelay()"
+          >
+            🔍 Verifica Relay
+          </button>
+        </div>
+      </form>
+    </div>
+  </section>
+  }
 </div>

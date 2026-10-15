@@ -1,11 +1,32 @@
 .app-layout {
   display: flex;
-  height: 100vh;
+  flex-direction: column;
+  height: 100dvh;
   overflow: hidden;
+  background: var(--app-gradient);
 }
 
-.main-content {
-  flex: 1;
-  overflow-y: auto;
-  background: #f6f6f6;
+.window-bar {
+  height: 56px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0 1.15rem;
+  border-bottom: 1px solid var(--glass-border);
+  background: var(--glass-surface);
+  color: var(--text-primary);
+  user-select: none;
+  -webkit-user-select: none;
 }
+
+.window-bar.macos-overlay { padding-left: 5.5rem; }
+.brand { display: inline-flex; align-items: center; gap: 0.55rem; color: var(--text-primary); text-decoration: none; font-size: 0.96rem; font-weight: 750; }
+.brand img { display: block; object-fit: contain; }
+.top-actions { display: flex; align-items: center; gap: 0.35rem; }
+.top-actions a { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.7rem; border-radius: 9px; color: var(--text-secondary); text-decoration: none; font-size: 0.82rem; font-weight: 600; }
+.top-actions a:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.workspace { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.main-content { flex: 1; min-width: 0; overflow-y: auto; background: var(--main-surface); }

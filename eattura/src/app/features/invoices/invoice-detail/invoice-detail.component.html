@@ -3,10 +3,34 @@
     <div class="page-header">
       <div>
         <h1>Fattura {{ inv.numero }}</h1>
-        <span [class]="badgeClass(inv.stato)">{{ statusLabel(inv.stato) }}</span>
+        <span class="badge" [class]="'badge-' + inv.stato">{{ inv.stato | invoiceStatus }}</span>
+        @if (inv.isSigned) {
+          <span class="badge badge-signed ml-1">Firmata CAdES (.p7m)</span>
+        }
+        @if (isAutofattura()) {
+          <span class="badge badge-autofattura ml-1">Autofattura / Integrazione ({{ inv.tipoDocumento }})</span>
+        }
+        @if (inv.isPa || inv.formatoTrasmissione === 'FPA12') {
+          <span class="badge badge-pa ml-1">FatturaPA (B2G - FPA12)</span>
+        }
+        @if (inv.isSplitPayment || inv.esigibilitaIva === 'S') {
+          <span class="badge badge-split ml-1">Split Payment (Art. 17-ter)</span>
+        }
       </div>
       <div class="actions">
         <button class="btn-secondary" (click)="goBack()">Torna alla lista</button>
+        <button class="btn-secondary" (click)="toggleAdeView()">
+          {{ showAdeView() ? "Vista Compatta" : "Vista Ufficiale AdE" }}
+        </button>
+        <button class="btn-secondary" (click)="printInvoice()">Stampa</button>
+        @if (isPurchase() && !isAutofattura()) {
+          <button class="btn-primary btn-autofattura" (click)="createAutofattura()" [disabled]="generatingAutofattura()">
+            {{ generatingAutofattura() ? "Generazione..." : "⚡ Genera Integrazione SDI (Autofattura)" }}
+          </button>
+        }
+        <button class="btn-primary" (click)="downloadPdf()" [disabled]="downloadingPdf()">
+          {{ downloadingPdf() ? "Generazione..." : "Scarica PDF" }}
+        </button>
         @if (inv.stato === "draft") {
           <button class="btn-secondary" (click)="edit()">Modifica</button>
           <button class="btn-primary" (click)="validate()">Valida</button>
@@ -18,9 +42,378 @@
             {{ sending() ? "Invio in corso..." : "Invia via PEC" }}
           </button>
         }
+        @if (inv.stato === "rejected") {
+          <button class="btn-primary btn-rectify" (click)="rectifyRejected()" [disabled]="rectifying()">
+            {{ rectifying() ? "Sblocco in corso..." : "Rettifica e Correggi (5 gg)" }}
+          </button>
+        }
         <button class="btn-primary" (click)="exportXml()">Esporta XML</button>
+        <button class="btn-secondary" (click)="signP7m()" [disabled]="signingP7m()">
+          {{ signingP7m() ? "Firma in corso..." : "Firma CAdES (.p7m)" }}
+        </button>
       </div>
     </div>
+
+    @if (showAdeView()) {
+      <div class="ade-view mb-2">
+        <div class="ade-header-bar">
+          <span>MODELLO FATTURA ELETTRONICA - AGENZIA DELLE ENTRATE</span>
+          <span>Versione {{ (inv.isPa || inv.formatoTrasmissione === 'FPA12') ? 'FPA12' : 'FPR12' }}</span>
+        </div>
+
+        <div class="ade-section">
+          <div class="ade-section-title">1. DATI TRASMISSIONE</div>
+          <div class="ade-section-body">
+            <p><strong>Formato Trasmissione:</strong> {{ (inv.isPa || inv.formatoTrasmissione === 'FPA12') ? 'FPA12 (Pubblica Amministrazione)' : 'FPR12 (Fattura ordinaria tra privati)' }}</p>
+            <p><strong>Codice Destinatario:</strong> {{ (inv.isPa || inv.formatoTrasmissione === 'FPA12') ? 'Codice Univoco Ufficio (IPA)' : '0000000' }}</p>
+          </div>
+        </div>
+
+        <div class="ade-section">
+          <div class="ade-section-title">2. CEDENTE / PRESTATORE (FORNITORE)</div>
+          <div class="ade-section-body">
+            <p><strong>Denominazione / Cognome Nome:</strong> {{ inv.cedenteDenominazione }}</p>
+          </div>
+        </div>
+
+        <div class="ade-section">
+          <div class="ade-section-title">3. CESSIONARIO / COMMITTENTE (CLIENTE)</div>
+          <div class="ade-section-body">
+            <p><strong>Denominazione / Cognome Nome:</strong> {{ inv.cessionarioDenominazione }}</p>
+          </div>
+        </div>
+
+        <div class="ade-section">
+          <div class="ade-section-title">4. DATI GENERALI DEL DOCUMENTO</div>
+          <div class="ade-section-body">
+            <p><strong>Tipologia:</strong> {{ inv.tipoDocumento | tipoDocumento }} ({{ inv.tipoDocumento }})</p>
+            <p><strong>Numero Documento:</strong> {{ inv.numero }} | <strong>Data:</strong> {{ inv.data }}</p>
+            <p><strong>{{ inv.totalCalculated ? 'Totale calcolato dai riepiloghi IVA:' : 'Importo Totale Documento:' }}</strong> {{ inv.importoTotale | appCurrency }}</p>
+          </div>
+        </div>
+      </div>
+    }
+
+    @if (inv.isSigned && inv.signerInfo; as signer) {
+      <section class="card mb-2 signature-card">
+        <h3>Firma Digitale CAdES-BES</h3>
+        <div class="detail-grid mt-1">
+          <div class="detail-item">
+            <span class="detail-label">Firmatario</span>
+            <span>{{ signer.signerName || "Non specificato" }}</span>
+          </div>
+          @if (signer.signerFiscalCode) {
+            <div class="detail-item">
+              <span class="detail-label">Codice Fiscale</span>
+              <span class="mono">{{ signer.signerFiscalCode }}</span>
+            </div>
+          }
+          @if (signer.issuer) {
+            <div class="detail-item">
+              <span class="detail-label">Autorità di Certificazione (CA)</span>
+              <span>{{ signer.issuer }}</span>
+            </div>
+          }
+          @if (signer.algorithm) {
+            <div class="detail-item">
+              <span class="detail-label">Algoritmo</span>
+              <span class="mono">{{ signer.algorithm }}</span>
+            </div>
+          }
+          @if (signer.digestHex) {
+            <div class="detail-item full-width">
+              <span class="detail-label">Digest Impronta (SHA-256)</span>
+              <span class="mono digest-code">{{ signer.digestHex }}</span>
+            </div>
+          }
+        </div>
+      </section>
+    }
+
+    @if (isAutofattura()) {
+      <section class="card mb-2 autofattura-card">
+        <div class="card-header-with-badge">
+          <h3>Autofattura / Integrazione Reverse Charge</h3>
+          <span class="badge badge-emittente">Soggetto Emittente: CC (Cessionario/Committente)</span>
+        </div>
+        <p class="autofattura-notice">
+          Documento emesso per l'assolvimento dell'imposta ex art. 17 c. 2 D.P.R. 633/72 / D.L. 331/93 (inversione contabile con IVA a debito e credito).
+        </p>
+        @if (inv.datiFattureCollegate && inv.datiFattureCollegate.length > 0) {
+          <div class="detail-grid mt-1">
+            @for (fc of inv.datiFattureCollegate; track $index) {
+              <div class="detail-item">
+                <span class="detail-label">Fattura Fornitore Collegata</span>
+                <span class="font-medium">N. {{ fc.idDocumento }}</span>
+              </div>
+              @if (fc.data) {
+                <div class="detail-item">
+                  <span class="detail-label">Data Fattura Fornitore</span>
+                  <span>{{ fc.data }}</span>
+                </div>
+              }
+            }
+          </div>
+        }
+      </section>
+    }
+
+    <!-- Fascicolo Elettronico SDI & Lifecycle Timeline -->
+    <section class="card mb-2 sdi-dossier-card">
+      <div class="dossier-header">
+        <div>
+          <h3>Fascicolo Elettronico SDI</h3>
+          <p class="text-muted text-sm">Gestione ciclo di vita, ricevute ufficiali e conformità probatoria AdE</p>
+        </div>
+        <div class="dossier-actions">
+          <label class="btn-secondary btn-file-upload">
+            Importa Ricevuta SDI (.xml)
+            <input type="file" accept=".xml" (change)="onReceiptFileSelected($event)" style="display: none;" />
+          </label>
+        </div>
+      </div>
+
+      <!-- Lifecycle Timeline Steps -->
+      <div class="timeline-container mt-2">
+        <div class="timeline-step" [class.step-active]="true" [class.step-completed]="inv.stato !== 'draft'">
+          <div class="step-dot">1</div>
+          <div class="step-content">
+            <span class="step-title">Creazione Bozza</span>
+            <span class="step-sub">{{ inv.data }}</span>
+          </div>
+        </div>
+
+        <div class="timeline-line" [class.line-completed]="inv.stato !== 'draft'"></div>
+
+        <div class="timeline-step" [class.step-active]="inv.stato === 'validated' || inv.stato === 'sent' || inv.stato === 'accepted' || inv.stato === 'rejected'" [class.step-completed]="inv.stato === 'sent' || inv.stato === 'accepted' || inv.stato === 'rejected'">
+          <div class="step-dot">2</div>
+          <div class="step-content">
+            <span class="step-title">Validata</span>
+            <span class="step-sub">Conforme XSD/SDI</span>
+          </div>
+        </div>
+
+        <div class="timeline-line" [class.line-completed]="inv.stato === 'sent' || inv.stato === 'accepted' || inv.stato === 'rejected'"></div>
+
+        <div class="timeline-step" [class.step-active]="inv.stato === 'sent' || inv.stato === 'accepted' || inv.stato === 'rejected'" [class.step-completed]="inv.stato === 'accepted' || inv.stato === 'rejected'">
+          <div class="step-dot">3</div>
+          <div class="step-content">
+            <span class="step-title">Inviata a SDI</span>
+            <span class="step-sub">PEC / Interscambio</span>
+          </div>
+        </div>
+
+        <div class="timeline-line" [class.line-completed]="inv.stato === 'accepted' || inv.stato === 'rejected'"></div>
+
+        <div class="timeline-step" [class.step-active]="inv.stato === 'accepted' || inv.stato === 'rejected'" [class.step-success]="inv.stato === 'accepted'" [class.step-error]="inv.stato === 'rejected'">
+          <div class="step-dot">
+            @if (inv.stato === 'accepted') { ✓ }
+            @else if (inv.stato === 'rejected') { ✗ }
+            @else { 4 }
+          </div>
+          <div class="step-content">
+            <span class="step-title">
+              @if (inv.stato === 'accepted') { Consegnata (RC) }
+              @else if (inv.stato === 'rejected') { Scartata (NS) }
+              @else { In elaborazione SDI }
+            </span>
+            <span class="step-sub">
+              @if (latestNotification(); as n) { {{ n.tipo }} - {{ n.identificativoSdi || "SDI" }} }
+              @else { In attesa esito }
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scarto Notice (NS) with 5-Day Countdown -->
+      @if (scartoInfo(); as s) {
+        <div class="alert-ns mt-2">
+          <div class="alert-ns-header">
+            <div class="alert-ns-title">
+              <strong>NOTIFICA DI SCARTO SDI (NS)</strong>
+              <span class="badge badge-scarto-countdown" [class.badge-expired]="s.expired">
+                @if (s.expired) {
+                  Termine 5 giorni scaduto (necessaria nuova numerazione)
+                } @else {
+                  Termine 5 giorni per reinvio: {{ s.daysRemaining }} giorni rimanenti
+                }
+              </span>
+            </div>
+            <button class="btn-primary btn-sm btn-rectify" (click)="rectifyRejected()" [disabled]="rectifying()">
+              {{ rectifying() ? "Rettifica..." : "Rettifica e Reinvia Fattura Scartata" }}
+            </button>
+          </div>
+          <p class="text-sm mt-1">
+            Ai sensi della <strong>Circolare AdE n. 13/E/2018</strong>, hai a disposizione <strong>5 giorni solari</strong> dalla ricezione della notifica di scarto per correggere gli errori e ritrasmettere la fattura con il <strong>medesimo numero e data</strong> senza incorrere in sanzioni.
+          </p>
+          @if (s.notification && s.notification.errori.length > 0) {
+            <div class="error-box mt-1">
+              <strong>Errori riscontrati dal Sistema di Interscambio:</strong>
+              <ul class="error-list mt-1">
+                @for (err of s.notification.errori; track err.codice) {
+                  <li><strong>Codice {{ err.codice }}:</strong> {{ err.descrizione }}</li>
+                }
+              </ul>
+            </div>
+          }
+        </div>
+      }
+
+      <!-- Mancata Consegna (MC) Banner -->
+      @for (notif of inv.notifications || []; track notif.id) {
+        @if (notif.tipo === 'MC') {
+          <div class="alert-mc mt-2">
+            <strong>AVVISO MANCATA CONSEGNA SDI (MC) - CASSETTO FISCALE</strong>
+            <p class="text-sm mt-1">
+              Il Sistema di Interscambio ha accettato il documento ma non è riuscito a recapitarlo al canale telematico del destinatario. La fattura è stata messa a disposizione nell'<strong>area riservata (Cassetto Fiscale)</strong> del cliente.
+            </p>
+            <p class="text-sm font-semibold mt-1">
+              ⚠️ È obbligatorio trasmettere tempestivamente una <strong>copia di cortesia in formato PDF</strong> via email ordinaria al cliente comunicando che il documento originale è disponibile nel suo Cassetto Fiscale.
+            </p>
+            <button class="btn-secondary btn-sm mt-1" (click)="downloadPdf()">Scarica Copia di Cortesia PDF</button>
+          </div>
+        }
+      }
+
+      <!-- Attached Dossier Receipts List -->
+      <div class="dossier-receipts mt-2">
+        <h4 class="text-sm font-semibold">Ricevute e Notifiche Ufficiali nel Fascicolo</h4>
+        @if ((inv.notifications || []).length > 0) {
+          <table class="table receipts-table mt-1">
+            <thead>
+              <tr>
+                <th>Tipo</th>
+                <th>Id SDI</th>
+                <th>Nome File</th>
+                <th>Data Ricezione</th>
+                <th>Destinatario / Note</th>
+                <th class="text-right">Azioni</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (r of inv.notifications; track r.id) {
+                <tr>
+                  <td>
+                    <span class="badge" [class]="'badge-sdi-' + r.tipo.toLowerCase()">{{ r.tipo }}</span>
+                  </td>
+                  <td>{{ r.identificativoSdi || "-" }}</td>
+                  <td class="mono text-xs">{{ r.nomeFile || "-" }}</td>
+                  <td>{{ r.dataOraRicezione || "-" }}</td>
+                  <td>
+                    @if (r.destinatario) {
+                      <span class="text-xs">Dest: {{ r.destinatario }}</span>
+                    }
+                    @if (r.note) {
+                      <span class="text-xs text-muted block">{{ r.note }}</span>
+                    }
+                    @if (r.errori.length > 0) {
+                      <span class="text-xs text-danger block">{{ r.errori.length }} errori SDI</span>
+                    }
+                  </td>
+                  <td class="text-right">
+                    <button class="btn-xs btn-secondary mr-1" (click)="viewReceipt(r)">Vedi XML</button>
+                    <button class="btn-xs btn-secondary" (click)="downloadReceipt(r)">Scarica</button>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        } @else {
+          <p class="text-muted text-xs p-1">Nessuna ricevuta SDI ancora archiviata nel fascicolo di questa fattura.</p>
+        }
+      </div>
+    </section>
+
+    <!-- Modal for viewing Raw Receipt XML -->
+    @if (selectedReceipt(); as receipt) {
+      <div class="receipt-modal-backdrop" (click)="closeReceiptModal()">
+        <div class="receipt-modal-card" (click)="$event.stopPropagation()">
+          <div class="modal-header">
+            <h3>Ricevuta SDI - {{ receipt.tipo }} ({{ receipt.identificativoSdi || "ID N/D" }})</h3>
+            <button class="btn-close" (click)="closeReceiptModal()">&times;</button>
+          </div>
+          <div class="modal-body">
+            <pre class="raw-xml-viewer">{{ receipt.rawXml }}</pre>
+          </div>
+          <div class="modal-footer">
+            <button class="btn-secondary" (click)="downloadReceipt(receipt)">Scarica File XML</button>
+            <button class="btn-primary" (click)="closeReceiptModal()">Chiudi</button>
+          </div>
+        </div>
+      </div>
+    }
+
+    <!-- Tracciabilita Flussi Finanziari PA (CIG / CUP) -->
+    @if ((inv.datiOrdineAcquisto && inv.datiOrdineAcquisto.length > 0) || (inv.datiContratto && inv.datiContratto.length > 0) || (inv.datiConvenzione && inv.datiConvenzione.length > 0)) {
+      <section class="card mb-2 tracciabilita-card">
+        <div class="card-header-with-badge d-flex align-center justify-between">
+          <h3 style="margin: 0;">Tracciabilita Flussi Finanziari Appalti PA (L. 136/2010)</h3>
+          <span class="badge badge-pa">Dati Documenti Correlati PA</span>
+        </div>
+        <div class="detail-grid mt-1">
+          @for (ord of inv.datiOrdineAcquisto; track $index) {
+            <div class="detail-item">
+              <span class="detail-label">Ordine di Acquisto</span>
+              <span class="font-medium">{{ ord.idDocumento }}</span>
+            </div>
+            @if (ord.codiceCig) {
+              <div class="detail-item">
+                <span class="detail-label">Codice CIG</span>
+                <span class="mono" style="font-weight: 700; color: #4a148c;">{{ ord.codiceCig }}</span>
+              </div>
+            }
+            @if (ord.codiceCup) {
+              <div class="detail-item">
+                <span class="detail-label">Codice CUP</span>
+                <span class="mono" style="font-weight: 700; color: #4a148c;">{{ ord.codiceCup }}</span>
+              </div>
+            }
+            @if (ord.data) {
+              <div class="detail-item">
+                <span class="detail-label">Data Ordine</span>
+                <span>{{ ord.data }}</span>
+              </div>
+            }
+          }
+          @for (con of inv.datiContratto; track $index) {
+            <div class="detail-item">
+              <span class="detail-label">Contratto</span>
+              <span class="font-medium">{{ con.idDocumento }}</span>
+            </div>
+            @if (con.codiceCig) {
+              <div class="detail-item">
+                <span class="detail-label">Codice CIG</span>
+                <span class="mono" style="font-weight: 700; color: #4a148c;">{{ con.codiceCig }}</span>
+              </div>
+            }
+            @if (con.codiceCup) {
+              <div class="detail-item">
+                <span class="detail-label">Codice CUP</span>
+                <span class="mono" style="font-weight: 700; color: #4a148c;">{{ con.codiceCup }}</span>
+              </div>
+            }
+          }
+          @for (conv of inv.datiConvenzione; track $index) {
+            <div class="detail-item">
+              <span class="detail-label">Convenzione</span>
+              <span class="font-medium">{{ conv.idDocumento }}</span>
+            </div>
+            @if (conv.codiceCig) {
+              <div class="detail-item">
+                <span class="detail-label">Codice CIG</span>
+                <span class="mono" style="font-weight: 700; color: #4a148c;">{{ conv.codiceCig }}</span>
+              </div>
+            }
+            @if (conv.codiceCup) {
+              <div class="detail-item">
+                <span class="detail-label">Codice CUP</span>
+                <span class="mono" style="font-weight: 700; color: #4a148c;">{{ conv.codiceCup }}</span>
+              </div>
+            }
+          }
+        </div>
+      </section>
+    }
 
     <!-- General info -->
     <section class="card mb-2">
@@ -28,7 +421,7 @@
       <div class="detail-grid mt-1">
         <div class="detail-item">
           <span class="detail-label">Tipo Documento</span>
-          <span>{{ tipoLabel(inv.tipoDocumento) }}</span>
+          <span>{{ inv.tipoDocumento | tipoDocumento }}</span>
         </div>
         <div class="detail-item">
           <span class="detail-label">Numero</span>
@@ -51,8 +444,8 @@
           <span>{{ inv.cessionarioDenominazione }}</span>
         </div>
         <div class="detail-item">
-          <span class="detail-label">Importo Totale</span>
-          <span>{{ formatCurrency(inv.importoTotale) }}</span>
+          <span class="detail-label">{{ inv.totalCalculated ? 'Totale calcolato dai riepiloghi IVA' : 'Importo Totale' }}</span>
+          <span>{{ inv.importoTotale | appCurrency }}</span>
         </div>
       </div>
       @if (inv.causale.length > 0) {
@@ -88,10 +481,10 @@
               <td>{{ line.descrizione }}</td>
               <td class="text-right">{{ line.quantita ?? "-" }}</td>
               <td>{{ line.unitaMisura ?? "-" }}</td>
-              <td class="text-right">{{ formatCurrency(line.prezzoUnitario) }}</td>
+              <td class="text-right">{{ line.prezzoUnitario | appCurrency }}</td>
               <td class="text-right">{{ line.aliquotaIva }}%</td>
               <td>{{ line.natura ?? "-" }}</td>
-              <td class="text-right">{{ formatCurrency(line.prezzoTotale) }}</td>
+              <td class="text-right">{{ line.prezzoTotale | appCurrency }}</td>
             </tr>
           } @empty {
             <tr>
@@ -101,6 +494,55 @@
         </tbody>
       </table>
     </section>
+
+    <!-- Previdenza, Ritenute e Bollo -->
+    @if ((inv.datiCassaPrevidenziale && inv.datiCassaPrevidenziale.length > 0) || (inv.datiRitenuta && inv.datiRitenuta.length > 0) || inv.datiBollo || inv.nettoAPagare) {
+      <section class="card mb-2">
+        <h3>Previdenza, Ritenute e Bollo</h3>
+        <div class="financial-card mt-1">
+          <div class="financial-grid">
+            @if (inv.datiCassaPrevidenziale && inv.datiCassaPrevidenziale.length > 0) {
+              @for (c of inv.datiCassaPrevidenziale; track c.tipoCassa) {
+                <div class="fin-row">
+                  <span>Cassa Previdenziale ({{ c.tipoCassa }} {{ c.alCassa }}%):</span>
+                  <strong>+{{ c.importoContributoCassa | appCurrency }}</strong>
+                </div>
+              }
+            }
+            @if (inv.datiBollo && inv.datiBollo.bolloVirtuale === "SI") {
+              <div class="fin-row">
+                <span>Imposta di Bollo Virtuale (D.M. 17 giugno 2014):</span>
+                <strong>+{{ (inv.datiBollo.importoBollo ?? 2.0) | appCurrency }}</strong>
+              </div>
+            }
+            <div class="fin-row fin-gross">
+              <span>{{ inv.totalCalculated ? 'TOTALE CALCOLATO DAI RIEPILOGHI IVA:' : 'TOTALE DOCUMENTO (Lordo):' }}</span>
+              <strong>{{ inv.importoTotale | appCurrency }}</strong>
+            </div>
+            @if (inv.isSplitPayment || inv.esigibilitaIva === 'S') {
+              <div class="fin-row" style="color: #b26a00;">
+                <span>- Scissione Pagamenti (Split Payment PA ex art. 17-ter DPR 633/72):</span>
+                <strong>IVA versata da PA all'Erario</strong>
+              </div>
+            }
+            @if (inv.datiRitenuta && inv.datiRitenuta.length > 0) {
+              @for (r of inv.datiRitenuta; track r.tipoRitenuta) {
+                <div class="fin-row text-danger">
+                  <span>- Ritenuta d'Acconto ({{ r.tipoRitenuta }} {{ r.aliquotaRitenuta }}% - Causale {{ r.causalePagamento }}):</span>
+                  <strong>-{{ r.importoRitenuta | appCurrency }}</strong>
+                </div>
+              }
+            }
+            @if (inv.nettoAPagare) {
+              <div class="fin-row fin-net">
+                <span>NETTO A PAGARE:</span>
+                <strong class="highlight-net">{{ inv.nettoAPagare | appCurrency }}</strong>
+              </div>
+            }
+          </div>
+        </div>
+      </section>
+    }
 
     <!-- Payments -->
     <section class="card mb-2">
@@ -117,8 +559,8 @@
         <tbody>
           @for (p of inv.pagamenti; track $index) {
             <tr>
-              <td>{{ modalitaLabel(p.modalitaPagamento) }}</td>
-              <td class="text-right">{{ formatCurrency(p.importoPagamento) }}</td>
+              <td>{{ p.modalitaPagamento | modalitaPagamento }}</td>
+              <td class="text-right">{{ p.importoPagamento | appCurrency }}</td>
               <td>{{ p.dataScadenzaPagamento ?? "-" }}</td>
               <td>{{ p.iban ?? "-" }}</td>
             </tr>
@@ -130,6 +572,82 @@
         </tbody>
       </table>
     </section>
+
+    <!-- Documenti di Trasporto (DDT) ex art. 21 c. 4 DPR 633/72 -->
+    @if (hasDdt()) {
+      <section class="card mb-2 ddt-card">
+        <div class="card-header-with-badge">
+          <h3>Documenti di Trasporto (DDT - Sez. 2.1.8)</h3>
+          <span class="badge badge-ddt">Fattura Differita (TD24)</span>
+        </div>
+        <table class="table mt-1">
+          <thead>
+            <tr>
+              <th>Numero DDT</th>
+              <th>Data DDT</th>
+              <th>Riferimento Linee Merci</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (ddt of inv.datiDdt; track ddt.numeroDdt) {
+              <tr>
+                <td><strong class="mono">{{ ddt.numeroDdt }}</strong></td>
+                <td>{{ ddt.dataDdt }}</td>
+                <td>
+                  @if (ddt.riferimentoNumeroLinea && ddt.riferimentoNumeroLinea.length > 0) {
+                    <span class="badge-linee">Linee: {{ ddt.riferimentoNumeroLinea.join(", ") }}</span>
+                  } @else {
+                    <span class="text-muted">Intero documento</span>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </section>
+    }
+
+    <!-- Allegati Incorporati nel File XML (Sez. 2.5 Allegati) -->
+    @if (hasAllegati()) {
+      <section class="card mb-2 allegati-card">
+        <div class="card-header-with-badge">
+          <h3>Allegati Incorporati nel File XML (Sez. 2.5)</h3>
+          <span class="badge badge-allegati">{{ inv.allegati?.length }} File Embedded</span>
+        </div>
+        <p class="text-sm text-muted mt-1">
+          File conservati in Base64 all'interno della fattura elettronica SDI. Possono essere visualizzati o estratti in locale.
+        </p>
+        <div class="allegati-grid mt-1">
+          @for (att of inv.allegati; track att.nomeAttachment) {
+            <div class="allegato-item">
+              <div class="allegato-info">
+                <span class="attachment-icon">📎</span>
+                <div class="attachment-details">
+                  <strong class="attachment-name">{{ att.nomeAttachment }}</strong>
+                  <div class="attachment-meta">
+                    <span class="badge-format">{{ att.formatoAttachment || "FILE" }}</span>
+                    <span class="text-muted text-sm">{{ formatBytes(att.sizeBytes) }}</span>
+                    @if (att.descrizioneAttachment) {
+                      <span class="attachment-desc">{{ att.descrizioneAttachment }}</span>
+                    }
+                  </div>
+                </div>
+              </div>
+              <div class="allegato-actions">
+                @if ((att.formatoAttachment || '').toUpperCase() === 'PDF' || att.nomeAttachment.toLowerCase().endsWith('.pdf')) {
+                  <button type="button" class="btn-secondary btn-sm" (click)="previewAttachment(att)" title="Visualizza anteprima PDF">
+                    👁️ Anteprima
+                  </button>
+                }
+                <button type="button" class="btn-primary btn-sm" (click)="downloadAttachment(att)" title="Scarica file su disco">
+                  📥 Scarica
+                </button>
+              </div>
+            </div>
+          }
+        </div>
+      </section>
+    }
 
     <!-- Validation results -->
     @if (validationResult(); as result) {

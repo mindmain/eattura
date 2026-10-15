@@ -22,7 +22,7 @@
               <label for="tipoDocumento">Tipo Documento *</label>
               <select id="tipoDocumento" formControlName="tipoDocumento">
                 @for (td of tipiDocumento; track td[0]) {
-                  <option [value]="td[0]">{{ td[0] }} - {{ td[1] }}</option>
+                  <option [value]="td[0]">{{ td[0] | tipoDocumento }}</option>
                 }
               </select>
             </div>
@@ -47,16 +47,19 @@
               <select id="cedenteId" formControlName="cedenteId">
                 <option value="">-- Seleziona --</option>
                 @for (c of clients(); track c.id) {
-                  <option [value]="c.id">{{ clientDisplayName(c) }}</option>
+                  <option [value]="c.id">{{ c | clientName }}</option>
                 }
               </select>
             </div>
             <div class="form-group">
-              <label for="cessionarioId">Cessionario (Cliente) *</label>
-              <select id="cessionarioId" formControlName="cessionarioId">
+              <label for="cessionarioId">
+                Cessionario (Cliente) *
+                <a routerLink="/clients/new" target="_blank" class="text-xs" style="margin-left: 0.5rem; text-decoration: none; color: #0284c7; font-weight: 600;" title="Aggiungi nuovo cliente con verifica Partita IVA su registro VIES">+ Nuovo con VIES</a>
+              </label>
+              <select id="cessionarioId" formControlName="cessionarioId" (change)="onCessionarioChange()">
                 <option value="">-- Seleziona --</option>
                 @for (c of clients(); track c.id) {
-                  <option [value]="c.id">{{ clientDisplayName(c) }}</option>
+                  <option [value]="c.id">{{ c | clientName }}</option>
                 }
               </select>
             </div>
@@ -64,6 +67,158 @@
           <div class="form-group">
             <label for="causale">Causale</label>
             <textarea id="causale" formControlName="causale" rows="3" placeholder="Opzionale"></textarea>
+          </div>
+
+          @if (isAutofattura()) {
+            <div class="autofattura-banner mt-2">
+              <div class="autofattura-header">
+                <span class="badge badge-autofattura">Autofattura / Integrazione Reverse Charge</span>
+                <span class="emittente-tag">Soggetto Emittente: CC (Cessionario/Committente)</span>
+              </div>
+              <p class="autofattura-info-text">
+                Documento integrativo ex art. 17 c. 2 D.P.R. 633/72 o D.L. 331/93.
+                Il <strong>Cedente</strong> è il fornitore estero o subappaltatore; il <strong>Cessionario</strong> è la tua azienda che assolve l'imposta.
+              </p>
+              <div class="form-row mt-2">
+                <div class="form-group">
+                  <label for="collegataNumero">Numero Fattura Fornitore Collegata *</label>
+                  <input id="collegataNumero" type="text" formControlName="collegataNumero" placeholder="es. INV-2026-00123" />
+                </div>
+                <div class="form-group">
+                  <label for="collegataData">Data Fattura Fornitore</label>
+                  <input id="collegataData" type="date" formControlName="collegataData" />
+                </div>
+              </div>
+            </div>
+          }
+
+          <!-- Pubblica Amministrazione & Split Payment (B2G) -->
+          <div class="pa-b2g-section mt-2 p-2 card">
+            <div class="d-flex align-center justify-between mb-1">
+              <h4 style="margin: 0; font-size: 0.95rem;">Fatturazione Elettronica PA (B2G) & Split Payment</h4>
+              <span class="badge badge-pa">Tracciato FPA12</span>
+            </div>
+
+            <div class="form-row mt-1">
+              <div class="form-group">
+                <label class="checkbox-label" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                  <input type="checkbox" formControlName="isPa" />
+                  <strong>Committente Pubblica Amministrazione (PA)</strong>
+                </label>
+                <span class="text-xs text-muted" style="display: block; margin-top: 0.2rem;">
+                  Utilizza formato FPA12 e Codice Univoco Ufficio (IPA) a 6 caratteri.
+                </span>
+              </div>
+
+              <div class="form-group">
+                <label class="checkbox-label" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                  <input type="checkbox" formControlName="isSplitPayment" />
+                  <strong>Scissione dei Pagamenti (Split Payment)</strong>
+                </label>
+                <span class="text-xs text-muted" style="display: block; margin-top: 0.2rem;">
+                  IVA addebitata ma versata direttamente all'Erario dalla PA (art. 17-ter D.P.R. 633/72).
+                </span>
+              </div>
+            </div>
+
+            @if (form.value.isPa || form.value.isSplitPayment) {
+              <div class="tracciabilita-pa-box mt-2 pt-2">
+                <h5 style="margin: 0 0 0.5rem 0; font-size: 0.9rem;">Tracciabilita Flussi Finanziari (L. 136/2010 - Appalti Pubblici)</h5>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="tipoDocumentoTracciabilita">Tipo Documento</label>
+                    <select id="tipoDocumentoTracciabilita" formControlName="tipoDocumentoTracciabilita">
+                      <option value="ordine">Ordine di Acquisto</option>
+                      <option value="contratto">Contratto</option>
+                      <option value="convenzione">Convenzione</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label for="idDocumentoTracciabilita">Identificativo Documento PA</label>
+                    <input id="idDocumentoTracciabilita" type="text" formControlName="idDocumentoTracciabilita" placeholder="es. DET-2026-42" />
+                  </div>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="codiceCig">Codice CIG (10 caratteri) *</label>
+                    <input id="codiceCig" type="text" formControlName="codiceCig" maxlength="10" placeholder="es. 1234567890" />
+                    @if (form.get('codiceCig')?.invalid && form.get('codiceCig')?.touched) {
+                      <span class="form-error">Il CIG deve contenere esattamente 10 caratteri alfanumerici.</span>
+                    }
+                  </div>
+                  <div class="form-group">
+                    <label for="codiceCup">Codice CUP (15 caratteri)</label>
+                    <input id="codiceCup" type="text" formControlName="codiceCup" maxlength="15" placeholder="es. B12C34000050006" />
+                    @if (form.get('codiceCup')?.invalid && form.get('codiceCup')?.touched) {
+                      <span class="form-error">Il CUP deve contenere esattamente 15 caratteri alfanumerici.</span>
+                    }
+                  </div>
+                </div>
+              </div>
+            }
+          </div>
+
+          <!-- Documenti di Trasporto (DDT - Sez. 2.1.8 SDI) -->
+          <div class="ddt-section mt-2 p-2 card">
+            <div class="d-flex align-center justify-between mb-1">
+              <div>
+                <h4 style="margin: 0; font-size: 0.95rem;">Documenti di Trasporto (DDT - Sezione 2.1.8)</h4>
+                <span class="text-xs text-muted">Obbligatorio per Fatture Differite (TD24) ex art. 21 c. 4 DPR 633/72.</span>
+              </div>
+              <button type="button" class="btn-secondary btn-sm" (click)="addDdt()">+ Aggiungi DDT</button>
+            </div>
+
+            @for (ddt of datiDdt(); track $index) {
+              <div class="form-row mt-1 p-2 ddt-row">
+                <div class="form-group" style="flex: 2;">
+                  <label>Numero DDT *</label>
+                  <input type="text" [value]="ddt.numeroDdt" (input)="updateDdtNumber($index, $any($event.target).value)" placeholder="es. DDT-2026/012" />
+                </div>
+                <div class="form-group" style="flex: 2;">
+                  <label>Data DDT *</label>
+                  <input type="date" [value]="ddt.dataDdt" (input)="updateDdtDate($index, $any($event.target).value)" />
+                </div>
+                <div class="form-group" style="flex: 2;">
+                  <label>Linee Collegate (es. 1, 2)</label>
+                  <input type="text" [value]="ddt.riferimentoNumeroLinea?.join(', ') || ''" (input)="updateDdtLinee($index, $any($event.target).value)" placeholder="Vuoto per tutte le linee" />
+                </div>
+                <div class="form-group" style="flex: 0 0 auto; align-self: flex-end;">
+                  <button type="button" class="btn-danger btn-sm" (click)="removeDdt($index)" title="Rimuovi DDT">✕</button>
+                </div>
+              </div>
+            } @empty {
+              <p class="text-xs text-muted mb-0">Nessun DDT inserito. Clicca su "+ Aggiungi DDT" se emetti una fattura differita TD24.</p>
+            }
+          </div>
+
+          <!-- Allegati Embedded nel File XML (Sez. 2.5 SDI) -->
+          <div class="allegati-section mt-2 p-2 card">
+            <div class="d-flex align-center justify-between mb-1">
+              <div>
+                <h4 style="margin: 0; font-size: 0.95rem;">Allegati Incorporati nella Fattura (Sezione 2.5)</h4>
+                <span class="text-xs text-muted">Incorpora file (PDF, DDT firmati, perizie) codificati Base64 nell'XML SDI (max 5 MB).</span>
+              </div>
+              <label class="btn-secondary btn-sm" style="cursor: pointer; margin: 0;">
+                📎 Allega File
+                <input type="file" multiple (change)="onFileUpload($event)" style="display: none;" />
+              </label>
+            </div>
+
+            @for (att of allegati(); track $index) {
+              <div class="d-flex align-center justify-between p-2 mt-1 allegato-row">
+                <div style="flex: 1; display: flex; flex-direction: column; gap: 0.25rem;">
+                  <div class="d-flex align-center gap-1">
+                    <strong style="font-size: 0.9rem;">{{ att.nomeAttachment }}</strong>
+                    <span class="badge-format">{{ att.formatoAttachment }}</span>
+                  </div>
+                  <input type="text" [value]="att.descrizioneAttachment || ''" (input)="updateAllegatoDesc($index, $any($event.target).value)" placeholder="Descrizione allegato (opzionale)" style="font-size: 0.8rem; padding: 0.2rem 0.4rem; max-width: 350px;" />
+                </div>
+                <button type="button" class="btn-danger btn-sm" (click)="removeAllegato($index)" title="Rimuovi allegato">✕</button>
+              </div>
+            } @empty {
+              <p class="text-xs text-muted mb-0">Nessun file allegato. Puoi caricare documenti che viaggeranno dentro l'XML SDI.</p>
+            }
           </div>
         </div>
       }
@@ -102,7 +257,7 @@
                         }
                       </select>
                     </td>
-                    <td class="text-right">{{ formatCurrency(lineTotal(i)) }}</td>
+                    <td class="text-right">{{ lineTotal(i) | appCurrency }}</td>
                     <td>
                       @if (linee.length > 1) {
                         <button type="button" class="btn-danger btn-sm" (click)="removeLine(i)">X</button>
@@ -116,14 +271,217 @@
           <div class="d-flex justify-between align-center mt-2">
             <button type="button" class="btn-secondary" (click)="addLine()">+ Aggiungi Riga</button>
             <div class="total-display">
-              <strong>Totale: {{ formatCurrency(computeTotal()) }}</strong>
+              <strong>Totale: {{ runningTotal() | appCurrency }}</strong>
             </div>
           </div>
         </div>
       }
 
-      <!-- Step 3: Payment -->
+      <!-- Step 3: Previdenza, Ritenute e Bollo -->
       @case (3) {
+        <div class="form-section">
+          <h3>Previdenza, Ritenute e Bollo</h3>
+
+          <!-- Regime Forfettario Toggle & Automation -->
+          <div class="card mb-2 card-forfettario">
+            <div class="d-flex justify-between align-center">
+              <div>
+                <strong>Regime Forfettario (RF19 - L. 190/2014)</strong>
+                <p class="text-xs text-muted mt-05">
+                  Applica automaticamente franchigia IVA (0% - Natura N2.2), inibisce la ritenuta d'acconto, attiva il bollo virtuale per importi &gt; &euro;77,47 e inserisce le diciture di legge.
+                </p>
+              </div>
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  formControlName="isForfettario"
+                  (change)="toggleForfettario(form.value.isForfettario!)"
+                />
+                <span class="slider"></span>
+              </label>
+            </div>
+            @if (form.value.isForfettario) {
+              <div class="banner-forfettario-active mt-1">
+                <span class="badge badge-success">Regime Forfettario Attivo</span>
+                <span class="text-xs ml-1">IVA: 0% N2.2 | Ritenuta: Inibita | Clausole legali aggiunte</span>
+              </div>
+              <div class="form-group mt-1">
+                <label class="checkbox-label text-sm">
+                  <input type="checkbox" formControlName="riaddebitaBollo" />
+                  Riaddebita marca da bollo (&euro;2,00) in fattura come ricavo esente N2.2 (Risposta AdE 428/2022)
+                </label>
+              </div>
+            }
+          </div>
+
+          <!-- Cassa Previdenziale -->
+          <div class="card mb-2">
+            <div class="d-flex justify-between align-center mb-1">
+              <div>
+                <strong>Cassa Previdenziale / Rivalsa INPS</strong>
+                <p class="text-xs text-muted">Contributo integrativo cassa professionale o rivalsa Gestione Separata.</p>
+              </div>
+              <label class="checkbox-label">
+                <input type="checkbox" formControlName="applicaCassa" />
+                Attiva Cassa
+              </label>
+            </div>
+
+            @if (form.value.applicaCassa) {
+              <div class="form-row mt-1">
+                <div class="form-group col-2">
+                  <label for="tipoCassa">Cassa / Fondo (SDI)</label>
+                  <select id="tipoCassa" formControlName="tipoCassa">
+                    @for (tc of tipiCassa; track tc[0]) {
+                      <option [value]="tc[0]">{{ tc[1] }}</option>
+                    }
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="alCassa">Aliquota %</label>
+                  <input id="alCassa" type="number" formControlName="alCassa" min="0" max="100" step="0.01" />
+                </div>
+              </div>
+
+              <div class="d-flex gap-2 mt-1">
+                @if (!form.value.isForfettario) {
+                  <label class="checkbox-label text-sm">
+                    <input type="checkbox" formControlName="cassaSoggettaIva" />
+                    Soggetta ad IVA ordinaria (22%)
+                  </label>
+                }
+                <label class="checkbox-label text-sm">
+                  <input type="checkbox" formControlName="cassaSoggettaRitenuta" />
+                  Soggetta a ritenuta d'acconto (es. Rivalsa INPS 4%)
+                </label>
+              </div>
+
+              <div class="computed-badge mt-1">
+                Contributo Cassa calcolato: <strong>{{ financialSummary().contributoCassa | appCurrency }}</strong>
+              </div>
+            }
+          </div>
+
+          <!-- Ritenuta d'Acconto -->
+          <div class="card mb-2">
+            <div class="d-flex justify-between align-center mb-1">
+              <div>
+                <strong>Ritenuta d'Acconto (DatiRitenuta)</strong>
+                <p class="text-xs text-muted">Trattenuta alla fonte operata dal sostituto d'imposta (non applicabile in regime forfettario).</p>
+              </div>
+              @if (!form.value.isForfettario) {
+                <label class="checkbox-label">
+                  <input type="checkbox" formControlName="applicaRitenuta" />
+                  Attiva Ritenuta
+                </label>
+              } @else {
+                <span class="badge badge-secondary">Non applicabile in RF19</span>
+              }
+            </div>
+
+            @if (form.value.applicaRitenuta && !form.value.isForfettario) {
+              <div class="form-row mt-1">
+                <div class="form-group">
+                  <label for="tipoRitenuta">Tipo Ritenuta</label>
+                  <select id="tipoRitenuta" formControlName="tipoRitenuta">
+                    @for (tr of tipiRitenuta; track tr[0]) {
+                      <option [value]="tr[0]">{{ tr[1] }}</option>
+                    }
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="aliquotaRitenuta">Aliquota %</label>
+                  <input id="aliquotaRitenuta" type="number" formControlName="aliquotaRitenuta" min="0" max="100" step="0.01" />
+                </div>
+                <div class="form-group">
+                  <label for="causalePagamentoRitenuta">Causale Pagamento</label>
+                  <select id="causalePagamentoRitenuta" formControlName="causalePagamentoRitenuta">
+                    @for (cp of causaliPagamentoRitenuta; track cp[0]) {
+                      <option [value]="cp[0]">{{ cp[1] }}</option>
+                    }
+                  </select>
+                </div>
+              </div>
+              <div class="computed-badge mt-1">
+                Importo Ritenuta calcolato: <strong>-{{ financialSummary().importoRitenuta | appCurrency }}</strong>
+              </div>
+            }
+          </div>
+
+          <!-- Imposta di Bollo Virtuale -->
+          <div class="card mb-2">
+            <div class="d-flex justify-between align-center mb-1">
+              <div>
+                <strong>Imposta di Bollo Virtuale (&euro;2,00)</strong>
+                <p class="text-xs text-muted">
+                  Obbligatoria ai sensi del D.M. 17 giugno 2014 su operazioni esenti o non soggette superiori a &euro;77,47.
+                </p>
+              </div>
+              <label class="checkbox-label">
+                <input type="checkbox" formControlName="applicaBollo" />
+                Bollo Assolto Virtualmente
+              </label>
+            </div>
+            @if (financialSummary().isExemptOver77) {
+              <div class="banner-bollo-required text-xs mt-1">
+                &#9888; Rilevate operazioni esenti/non soggette superiori a &euro;77,47: applicazione del bollo virtuale obbligatoria per legge.
+              </div>
+            }
+          </div>
+
+          <!-- Live Financial Breakdown -->
+          <div class="financial-card mt-2">
+            <h4>Riepilogo Economico e Fiscale in Tempo Reale</h4>
+            <div class="financial-grid mt-1">
+              <div class="fin-row">
+                <span>Totale Imponibile Prestazioni:</span>
+                <strong>{{ financialSummary().imponibileLinee | appCurrency }}</strong>
+              </div>
+              @if (financialSummary().contributoCassa > 0) {
+                <div class="fin-row text-primary">
+                  <span>+ Cassa Previdenziale ({{ form.value.alCassa }}%):</span>
+                  <strong>+{{ financialSummary().contributoCassa | appCurrency }}</strong>
+                </div>
+              }
+              @if (financialSummary().totIva > 0) {
+                <div class="fin-row">
+                  <span>+ Totale IVA:</span>
+                  <strong>+{{ financialSummary().totIva | appCurrency }}</strong>
+                </div>
+              }
+              @if (financialSummary().bolloAmt > 0 && (form.value.riaddebitaBollo || form.value.applicaBollo)) {
+                <div class="fin-row">
+                  <span>+ Imposta di Bollo:</span>
+                  <strong>+{{ financialSummary().bolloAmt | appCurrency }}</strong>
+                </div>
+              }
+              <div class="fin-row fin-gross">
+                <span>TOTALE DOCUMENTO (Lordo):</span>
+                <strong>{{ financialSummary().totaleLordo | appCurrency }}</strong>
+              </div>
+              @if (form.value.isSplitPayment && financialSummary().totIva > 0) {
+                <div class="fin-row text-warning" style="color: #b26a00;">
+                  <span>- IVA Split Payment (versata da PA):</span>
+                  <strong>-{{ financialSummary().splitPaymentDeduction | appCurrency }}</strong>
+                </div>
+              }
+              @if (financialSummary().importoRitenuta > 0) {
+                <div class="fin-row text-danger">
+                  <span>- Ritenuta d'Acconto ({{ form.value.aliquotaRitenuta }}%):</span>
+                  <strong>-{{ financialSummary().importoRitenuta | appCurrency }}</strong>
+                </div>
+              }
+              <div class="fin-row fin-net">
+                <span>NETTO A PAGARE:</span>
+                <strong class="highlight-net">{{ financialSummary().nettoAPagare | appCurrency }}</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- Step 4: Payment -->
+      @case (4) {
         <div class="form-section">
           <h3>Dati Pagamento</h3>
           <div class="form-row">
@@ -131,7 +489,7 @@
               <label for="condizioniPagamento">Condizioni Pagamento</label>
               <select id="condizioniPagamento" formControlName="condizioniPagamento">
                 @for (cp of condizioniPagamento; track cp[0]) {
-                  <option [value]="cp[0]">{{ cp[0] }} - {{ cp[1] }}</option>
+                  <option [value]="cp[0]">{{ cp[0] | condizioniPagamento }}</option>
                 }
               </select>
             </div>
@@ -139,7 +497,7 @@
               <label for="modalitaPagamento">Modalita Pagamento *</label>
               <select id="modalitaPagamento" formControlName="modalitaPagamento">
                 @for (mp of modalitaPagamento; track mp[0]) {
-                  <option [value]="mp[0]">{{ mp[0] }} - {{ mp[1] }}</option>
+                  <option [value]="mp[0]">{{ mp[0] | modalitaPagamento }}</option>
                 }
               </select>
             </div>
@@ -148,7 +506,9 @@
             <div class="form-group">
               <label for="importoPagamento">Importo Pagamento *</label>
               <input id="importoPagamento" type="number" formControlName="importoPagamento" step="0.01" />
-              <button type="button" class="btn-link mt-1" (click)="syncPaymentAmount()">Copia da totale linee</button>
+              <button type="button" class="btn-link mt-1" (click)="syncPaymentAmount()">
+                Copia da Netto a Pagare ({{ financialSummary().nettoAPagare | appCurrency }})
+              </button>
             </div>
             <div class="form-group">
               <label for="dataScadenzaPagamento">Data Scadenza</label>
@@ -162,14 +522,45 @@
         </div>
       }
 
-      <!-- Step 4: Summary -->
-      @case (4) {
+      <!-- Step 5: Summary -->
+      @case (5) {
         <div class="form-section">
-          <h3>Riepilogo</h3>
+          <h3>Riepilogo Finale</h3>
+          @if (form.value.isPa) {
+            <div class="summary-pa-banner mb-2 p-2">
+              <span class="badge badge-pa">FatturaPA B2G (FPA12)</span>
+              @if (form.value.isSplitPayment) {
+                <span class="badge badge-split ml-1">Split Payment (Art. 17-ter)</span>
+              }
+              @if (form.value.codiceCig || form.value.codiceCup) {
+                <div class="mt-1" style="font-size: 0.85rem;">
+                  <strong>Tracciabilita Appalti Pubblici:</strong>
+                  @if (form.value.codiceCig) { <span class="mr-1">CIG: <code>{{ form.value.codiceCig }}</code></span> }
+                  @if (form.value.codiceCup) { <span>CUP: <code>{{ form.value.codiceCup }}</code></span> }
+                </div>
+              }
+            </div>
+          }
+
+          @if (isAutofattura()) {
+            <div class="summary-autofattura-banner mb-2">
+              <span class="badge badge-autofattura">Autofattura / Integrazione ({{ form.value.tipoDocumento }})</span>
+              <span class="emittente-tag ml-1">Soggetto Emittente: CC (Cessionario/Committente)</span>
+              @if (form.value.collegataNumero) {
+                <div class="collegata-summary-line mt-1">
+                  <strong>Fattura Collegata Fornitore:</strong> N. {{ form.value.collegataNumero }}
+                  @if (form.value.collegataData) {
+                    del {{ form.value.collegataData }}
+                  }
+                </div>
+              }
+            </div>
+          }
+
           <div class="summary-grid">
             <div class="summary-item">
               <span class="summary-label">Tipo Documento</span>
-              <span>{{ tipoLabel(form.value.tipoDocumento!) }}</span>
+              <span>{{ form.value.tipoDocumento | tipoDocumento }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">Numero</span>
@@ -209,29 +600,70 @@
                 <tr>
                   <td>{{ line.value.descrizione }}</td>
                   <td class="text-right">{{ line.value.quantita }}</td>
-                  <td class="text-right">{{ formatCurrency(line.value.prezzoUnitario) }}</td>
+                  <td class="text-right">{{ line.value.prezzoUnitario | appCurrency }}</td>
                   <td class="text-right">{{ line.value.aliquotaIva }}%</td>
-                  <td class="text-right">{{ formatCurrency(lineTotal(i)) }}</td>
+                  <td class="text-right">{{ lineTotal(i) | appCurrency }}</td>
                 </tr>
               }
             </tbody>
-            <tfoot>
-              <tr>
-                <td colspan="4" class="text-right"><strong>Totale</strong></td>
-                <td class="text-right"><strong>{{ formatCurrency(computeTotal()) }}</strong></td>
-              </tr>
-            </tfoot>
           </table>
+
+          <!-- Financial Breakdown in Summary -->
+          <div class="financial-card mt-2">
+            <h4>Quadro Fiscale e Finanziario</h4>
+            <div class="financial-grid mt-1">
+              <div class="fin-row">
+                <span>Imponibile Linee:</span>
+                <span>{{ financialSummary().imponibileLinee | appCurrency }}</span>
+              </div>
+              @if (financialSummary().contributoCassa > 0) {
+                <div class="fin-row">
+                  <span>Cassa Previdenziale ({{ form.value.tipoCassa }} {{ form.value.alCassa }}%):</span>
+                  <span>+{{ financialSummary().contributoCassa | appCurrency }}</span>
+                </div>
+              }
+              <div class="fin-row">
+                <span>IVA:</span>
+                <span>+{{ financialSummary().totIva | appCurrency }}</span>
+              </div>
+              @if (financialSummary().bolloAmt > 0) {
+                <div class="fin-row">
+                  <span>Bollo Virtuale:</span>
+                  <span>+{{ financialSummary().bolloAmt | appCurrency }}</span>
+                </div>
+              }
+              <div class="fin-row fin-gross">
+                <span>TOTALE DOCUMENTO (Lordo):</span>
+                <span>{{ financialSummary().totaleLordo | appCurrency }}</span>
+              </div>
+              @if (form.value.isSplitPayment && financialSummary().totIva > 0) {
+                <div class="fin-row text-warning" style="color: #b26a00;">
+                  <span>- IVA Split Payment (versata direttamente all'Erario dalla PA):</span>
+                  <span>-{{ financialSummary().splitPaymentDeduction | appCurrency }}</span>
+                </div>
+              }
+              @if (financialSummary().importoRitenuta > 0) {
+                <div class="fin-row text-danger">
+                  <span>Ritenuta d'Acconto ({{ form.value.tipoRitenuta }} {{ form.value.aliquotaRitenuta }}%):</span>
+                  <span>-{{ financialSummary().importoRitenuta | appCurrency }}</span>
+                </div>
+              }
+              <div class="fin-row fin-net">
+                <span>NETTO A PAGARE:</span>
+                <span class="highlight-net">{{ financialSummary().nettoAPagare | appCurrency }}</span>
+              </div>
+            </div>
+          </div>
 
           <h4 class="mt-2">Pagamento</h4>
           <div class="summary-grid mt-1">
             <div class="summary-item">
               <span class="summary-label">Modalita</span>
-              <span>{{ modalitaLabel(form.value.modalitaPagamento!) }}</span>
+              <span>{{ form.value.modalitaPagamento | modalitaPagamento }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">Importo</span>
-              <span>{{ formatCurrency(form.value.importoPagamento!) }}</span>
+              <span>{{ form.value.importoPagamento | appCurrency }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">Scadenza</span>
@@ -268,10 +700,10 @@
       @if (currentStep() > 1) {
         <button type="button" class="btn-secondary" (click)="prevStep()">Precedente</button>
       }
-      @if (currentStep() < 4) {
+      @if (currentStep() < 5) {
         <button type="button" class="btn-primary" (click)="nextStep()">Successivo</button>
       }
-      @if (currentStep() === 4) {
+      @if (currentStep() === 5) {
         <button type="submit" class="btn-primary">Salva Fattura</button>
       }
       <button type="button" class="btn-secondary" (click)="cancel()">Annulla</button>

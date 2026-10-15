@@ -58,6 +58,8 @@ export const routes: Routes = [
         (m) => m.InvoiceFormComponent
       ),
   },
+  { path: "schedule", redirectTo: "dashboard", pathMatch: "full" },
+  { path: "export", redirectTo: "dashboard", pathMatch: "full" },
   {
     path: "settings",
     loadComponent: () =>

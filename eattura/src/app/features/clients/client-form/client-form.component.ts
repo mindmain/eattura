@@ -1,8 +1,17 @@
-import { Component, inject, OnInit, signal } from "@angular/core";
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  input,
+  signal,
+} from "@angular/core";
 import { FormBuilder, ReactiveFormsModule, Validators } from "@angular/forms";
-import { ActivatedRoute, Router } from "@angular/router";
-import { ClientService } from "../../../core/services/client.service";
+import { Router } from "@angular/router";
+import { ClientStore } from "../../../core/stores/client.store";
 import { NotificationService } from "../../../core/services/notification.service";
+import { ViesService } from "../../../core/services/vies.service";
 import { REGIME_FISCALE } from "../../../core/models/sdi.model";
 
 @Component({
@@ -11,16 +20,22 @@ import { REGIME_FISCALE } from "../../../core/models/sdi.model";
   imports: [ReactiveFormsModule],
   templateUrl: "./client-form.component.html",
   styleUrl: "./client-form.component.css",
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class ClientFormComponent implements OnInit {
+export class ClientFormComponent {
   private fb = inject(FormBuilder);
-  private clientService = inject(ClientService);
+  private clientStore = inject(ClientStore);
   private router = inject(Router);
-  private route = inject(ActivatedRoute);
   private notify = inject(NotificationService);
+  private viesService = inject(ViesService);
 
-  isEditMode = signal(false);
-  clientId = signal<string | null>(null);
+  isViesLoading = signal<boolean>(false);
+  viesStatus = signal<{ valid: boolean; message: string } | null>(null);
+
+  /** Router input binding */
+  id = input<string | undefined>();
+
+  isEditMode = computed(() => !!this.id());
   subjectType = signal<"azienda" | "persona">("azienda");
 
   regimiFiscali = Object.entries(REGIME_FISCALE);
@@ -30,7 +45,7 @@ export class ClientFormComponent implements OnInit {
     nome: [""],
     cognome: [""],
     idPaese: ["IT", Validators.required],
-    idCodice: ["", [Validators.required, Validators.pattern(/^[0-9]{11}$/)]],
+    idCodice: ["", [Validators.required, Validators.pattern(/^[A-Za-z0-9]{2,16}$/)]],
     codiceFiscale: [""],
     regimeFiscale: ["RF01"],
     indirizzo: ["", Validators.required],
@@ -42,26 +57,109 @@ export class ClientFormComponent implements OnInit {
     telefono: [""],
     email: ["", Validators.email],
     pec: ["", Validators.email],
-    codiceDestinatario: ["0000000"],
+    codiceDestinatario: ["0000000", [Validators.pattern(/^[A-Za-z0-9]{6,7}$/)]],
+    isPa: [false],
   });
 
-  async ngOnInit(): Promise<void> {
-    const id = this.route.snapshot.paramMap.get("id");
-    if (id) {
-      this.isEditMode.set(true);
-      this.clientId.set(id);
+  constructor() {
+    effect(async () => {
+      const clientId = this.id();
+      if (!clientId) return;
+
       try {
-        const client = await this.clientService.getClient(id);
-        this.form.patchValue(client);
-        // Detect subject type from loaded data
+        const client = await this.clientStore.getClient(clientId);
+        const isPa = !!(client.isPa || (client.codiceDestinatario && client.codiceDestinatario.length === 6));
+        this.form.patchValue({
+          ...client,
+          isPa,
+        });
         if (client.nome || client.cognome) {
           this.subjectType.set("persona");
         }
+        this.updateCodiceDestinatarioValidation(isPa);
       } catch {
         this.notify.error("Errore nel caricamento del cliente");
         this.router.navigate(["/clients"]);
       }
+    });
+  }
+
+  async lookupVies(): Promise<void> {
+    const rawCountry = (this.form.get("idPaese")?.value || "IT").trim().toUpperCase();
+    const rawVat = (this.form.get("idCodice")?.value || "").trim();
+
+    if (!rawVat) {
+      this.notify.warning("Inserisci prima il numero di Partita IVA da verificare");
+      return;
     }
+
+    this.isViesLoading.set(true);
+    this.viesStatus.set(null);
+
+    try {
+      const res = await this.viesService.lookupVat(rawCountry, rawVat);
+      if (res.valid) {
+        this.viesStatus.set({ valid: true, message: "Attiva e valida nel registro VIES" });
+        this.notify.success(`Partita IVA valida! Dati recuperati per ${res.name || rawVat}`);
+
+        const patch: Record<string, string | null> = {};
+        if (res.name) {
+          patch["denominazione"] = res.name;
+          this.subjectType.set("azienda");
+        }
+        if (res.street) {
+          patch["indirizzo"] = res.street;
+        } else if (res.address) {
+          patch["indirizzo"] = res.address;
+        }
+        if (res.postalCode) {
+          patch["cap"] = res.postalCode;
+        }
+        if (res.city) {
+          patch["comune"] = res.city;
+        }
+        if (res.province) {
+          patch["provincia"] = res.province;
+        }
+        if (res.countryCode) {
+          patch["idPaese"] = res.countryCode;
+          patch["nazione"] = res.countryCode;
+        }
+        if (!this.form.get("codiceFiscale")?.value && (res.countryCode === "IT" || rawCountry === "IT")) {
+          patch["codiceFiscale"] = res.vatNumber;
+        }
+        this.form.patchValue(patch);
+      } else {
+        const msg = res.userError || "Partita IVA inesistente o non registrata al VIES";
+        this.viesStatus.set({ valid: false, message: msg });
+        this.notify.warning(`Attenzione: ${msg}`);
+      }
+    } catch (err: unknown) {
+      const errStr = err instanceof Error ? err.message : String(err);
+      this.viesStatus.set({ valid: false, message: errStr });
+      this.notify.error(`Impossibile verificare VIES: ${errStr}`);
+    } finally {
+      this.isViesLoading.set(false);
+    }
+  }
+
+  onPaChange(): void {
+    const isPa = !!this.form.get("isPa")?.value;
+    if (isPa && this.form.get("codiceDestinatario")?.value === "0000000") {
+      this.form.patchValue({ codiceDestinatario: "" });
+    }
+    this.updateCodiceDestinatarioValidation(isPa);
+  }
+
+  private updateCodiceDestinatarioValidation(isPa: boolean): void {
+    const ctrl = this.form.get("codiceDestinatario");
+    if (!ctrl) return;
+    if (isPa) {
+      ctrl.setValidators([Validators.required, Validators.pattern(/^[A-Za-z0-9]{6}$/)]);
+    } else {
+      ctrl.setValidators([Validators.pattern(/^[A-Za-z0-9]{7}$/)]);
+    }
+    ctrl.updateValueAndValidity();
   }
 
   onSubjectTypeChange(type: "azienda" | "persona"): void {
@@ -97,15 +195,17 @@ export class ClientFormComponent implements OnInit {
       telefono: value.telefono || null,
       email: value.email || null,
       pec: value.pec || null,
-      codiceDestinatario: value.codiceDestinatario || null,
+      codiceDestinatario: value.codiceDestinatario ? value.codiceDestinatario.toUpperCase() : null,
+      isPa: !!value.isPa,
     };
 
     try {
-      if (this.isEditMode()) {
-        await this.clientService.updateClient(this.clientId()!, request);
+      const clientId = this.id();
+      if (this.isEditMode() && clientId) {
+        await this.clientStore.updateClient(clientId, request);
         this.notify.success("Cliente aggiornato");
       } else {
-        await this.clientService.createClient(request);
+        await this.clientStore.createClient(request);
         this.notify.success("Cliente creato");
       }
       this.router.navigate(["/clients"]);

@@ -13,6 +13,19 @@
     </div>
   </div>
 
+  @if (pecSyncStatus()?.configured) {
+    <div class="pec-sync-timer" role="status">
+      @if (syncing()) {
+        Sincronizzazione PEC in corso…
+      } @else if (secondsToPecSync() !== null) {
+        Prossima sincronizzazione PEC tra {{ pecCountdown() }}
+      }
+      @if (pecSyncStatus()?.lastError) {
+        <span class="pec-sync-error" [title]="pecSyncStatus()?.lastError ?? ''">Ultimo tentativo non riuscito</span>
+      }
+    </div>
+  }
+
   @if (periodLabel()) {
     <div class="period-banner mb-2">
       <span>Periodo: <strong>{{ periodLabel() }}</strong></span>
@@ -42,44 +55,71 @@
     />
   </div>
 
-  @if (filteredInvoices().length > 0) {
-    <table class="table">
-      <thead>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Numero</th>
+        <th>Data</th>
+        <th>Tipo</th>
+        <th>Cedente</th>
+        <th>Cessionario</th>
+        <th class="text-right">Importo</th>
+        <th>Stato</th>
+        <th class="text-right">Azioni</th>
+      </tr>
+    </thead>
+    <tbody>
+      @for (inv of filteredInvoices(); track inv.id) {
         <tr>
-          <th>Numero</th>
-          <th>Data</th>
-          <th>Tipo</th>
-          <th>Cedente</th>
-          <th>Cessionario</th>
-          <th class="text-right">Importo</th>
-          <th>Stato</th>
-          <th class="text-right">Azioni</th>
+          <td>
+            <a (click)="navigateToDetail(inv.id)" class="link">{{ inv.numero }}</a>
+            @if (inv.isSigned) {
+              <span class="badge badge-p7m" title="Firmata digitalmente CAdES-BES">.p7m</span>
+            }
+            @if (inv.isAutofattura) {
+              <span class="badge badge-autofattura ml-1" title="Autofattura / Integrazione Reverse Charge">{{ inv.tipoDocumento }}</span>
+            }
+            @if (inv.isPa) {
+              <span class="badge badge-pa ml-1" title="FatturaPA (B2G - FPA12)">PA</span>
+            }
+            @if (inv.isSplitPayment) {
+              <span class="badge badge-split ml-1" title="Scissione Pagamenti (Split Payment)">Split</span>
+            }
+          </td>
+          <td>{{ inv.data }}</td>
+          <td>{{ inv.tipoDocumento | tipoDocumento }}</td>
+          <td>{{ inv.cedenteDenominazione }}</td>
+          <td>{{ inv.cessionarioDenominazione }}</td>
+          <td
+            class="text-right"
+            [class.amount-cost]="inv.direction === 'purchase'"
+            [class.amount-income]="inv.direction === 'sale'"
+          >
+            {{ calcSignedAmount(inv) | appCurrency }}
+            @if (inv.totalCalculated) {
+              <span title="Totale calcolato dai riepiloghi IVA: il campo totale non è presente nell'XML">*</span>
+            }
+          </td>
+          <td>
+            <span class="badge" [class]="'badge-' + inv.stato">
+              {{ inv.stato | invoiceStatus }}
+            </span>
+          </td>
+          <td class="text-right actions-cell">
+            <button class="btn-secondary btn-sm" (click)="navigateToDetail(inv.id)">Dettaglio</button>
+            @if (inv.stato === "draft") {
+              <button class="btn-secondary btn-sm" (click)="navigateToEdit(inv.id)">Modifica</button>
+              <button class="btn-danger btn-sm" (click)="deleteInvoice(inv, $event)">Elimina</button>
+            }
+          </td>
         </tr>
-      </thead>
-      <tbody>
-        @for (inv of filteredInvoices(); track inv.id) {
-          <tr>
-            <td><a (click)="navigateToDetail(inv.id)" class="link">{{ inv.numero }}</a></td>
-            <td>{{ inv.data }}</td>
-            <td>{{ tipoLabel(inv.tipoDocumento) }}</td>
-            <td>{{ inv.cedenteDenominazione }}</td>
-            <td>{{ inv.cessionarioDenominazione }}</td>
-            <td class="text-right" [class]="amountClass(inv)">{{ formatAmount(inv) }}</td>
-            <td><span [class]="badgeClass(inv.stato)">{{ statusLabel(inv.stato) }}</span></td>
-            <td class="text-right actions-cell">
-              <button class="btn-secondary btn-sm" (click)="navigateToDetail(inv.id)">Dettaglio</button>
-              @if (inv.stato === "draft") {
-                <button class="btn-secondary btn-sm" (click)="navigateToEdit(inv.id)">Modifica</button>
-                <button class="btn-danger btn-sm" (click)="deleteInvoice(inv, $event)">Elimina</button>
-              }
-            </td>
-          </tr>
-        }
-      </tbody>
-    </table>
-  } @else {
-    <div class="empty-state">
-      <p>Nessuna fattura trovata. Crea la prima fattura o importa un XML.</p>
-    </div>
-  }
+      } @empty {
+        <tr>
+          <td colspan="8" class="empty-state">
+            <p>Nessuna fattura trovata. Crea la prima fattura o importa un XML.</p>
+          </td>
+        </tr>
+      }
+    </tbody>
+  </table>
 </div>

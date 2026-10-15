@@ -1,39 +1,42 @@
-import { Component, computed, inject, OnInit, signal } from "@angular/core";
+import { ChangeDetectionStrategy, Component, computed, inject, OnInit, signal } from "@angular/core";
 import { Router, RouterLink } from "@angular/router";
-import { ClientService } from "../../../core/services/client.service";
+import { ClientStore } from "../../../core/stores/client.store";
 import { NotificationService } from "../../../core/services/notification.service";
-import type { ClientSummary } from "../../../core/models/client.model";
+import { ClientNamePipe } from "../../../shared/pipes/client-name.pipe";
 
 @Component({
   selector: "app-client-list",
   standalone: true,
-  imports: [RouterLink],
+  imports: [RouterLink, ClientNamePipe],
   templateUrl: "./client-list.component.html",
   styleUrl: "./client-list.component.css",
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ClientListComponent implements OnInit {
-  private clientService = inject(ClientService);
+  readonly clientStore = inject(ClientStore);
   private router = inject(Router);
   private notify = inject(NotificationService);
 
-  clients = signal<ClientSummary[]>([]);
+  readonly clients = this.clientStore.clients;
+  readonly loading = this.clientStore.loading;
   searchTerm = signal("");
 
   filteredClients = computed(() => {
-    const term = this.searchTerm().toLowerCase();
+    const term = this.searchTerm().trim().toLowerCase();
     if (!term) return this.clients();
     return this.clients().filter((c) => {
-      const name = c.denominazione ?? `${c.nome ?? ""} ${c.cognome ?? ""}`;
-      return (
-        name.toLowerCase().includes(term) ||
-        c.idCodice.toLowerCase().includes(term) ||
-        c.comune.toLowerCase().includes(term)
-      );
+      const text = c.searchText ?? [c.denominazione, c.nome, c.cognome, c.idCodice, c.comune]
+        .filter(Boolean).join(" ").toLowerCase();
+      return term.split(/\s+/).every((part) => text.includes(part));
     });
   });
 
   async ngOnInit(): Promise<void> {
-    await this.loadClients();
+    try {
+      await this.clientStore.loadAll();
+    } catch {
+      this.notify.error("Errore nel caricamento dei clienti");
+    }
   }
 
   onSearch(event: Event): void {
@@ -50,26 +53,12 @@ export class ClientListComponent implements OnInit {
   }
 
   async deleteClient(id: string): Promise<void> {
-    if (!confirm("Sei sicuro di voler eliminare questo cliente?")) return;
+    if (typeof window !== "undefined" && !window.confirm("Sei sicuro di voler eliminare questo cliente?")) return;
     try {
-      await this.clientService.deleteClient(id);
+      await this.clientStore.deleteClient(id);
       this.notify.success("Cliente eliminato");
-      await this.loadClients();
-    } catch (e) {
-      this.notify.error("Errore durante l'eliminazione del cliente");
-    }
-  }
-
-  displayName(client: ClientSummary): string {
-    return client.denominazione ?? `${client.nome ?? ""} ${client.cognome ?? ""}`.trim();
-  }
-
-  private async loadClients(): Promise<void> {
-    try {
-      const list = await this.clientService.listClients();
-      this.clients.set(list);
     } catch {
-      this.notify.error("Errore nel caricamento dei clienti");
+      this.notify.error("Errore durante l'eliminazione del cliente");
     }
   }
 }

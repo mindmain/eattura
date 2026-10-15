@@ -1,0 +1,488 @@
+<div class="schedule-page">
+  <div class="page-header">
+    <div class="header-titles">
+      <h1>Scadenzario & Liquidazione IVA</h1>
+      <p class="subtitle">Monitoraggio finanziario, incassi clienti, uscite fornitori e calcolo IVA senza database</p>
+    </div>
+    <div class="tab-switcher">
+      <button
+        type="button"
+        class="tab-btn"
+        [class.active]="activeTab() === 'schedule'"
+        (click)="activeTab.set('schedule')"
+      >
+        📅 Scadenzario Incassi & Pagamenti
+      </button>
+      <button
+        type="button"
+        class="tab-btn"
+        [class.active]="activeTab() === 'iva'"
+        (click)="activeTab.set('iva')"
+      >
+        🏛️ Liquidazione IVA Periodica & F24
+      </button>
+    </div>
+  </div>
+
+  <!-- TAB 1: SCADENZARIO -->
+  @if (activeTab() === 'schedule') {
+    <!-- KPI Counters -->
+    <div class="kpi-grid">
+      <div class="kpi-card danger">
+        <span class="kpi-label">Scaduto in Ritardo</span>
+        <span class="kpi-value">{{ metrics().totalScaduto | appCurrency }}</span>
+        <span class="kpi-sub">{{ metrics().countScaduto }} fatture insolute</span>
+      </div>
+      <div class="kpi-card warning">
+        <span class="kpi-label">In Scadenza (7 gg)</span>
+        <span class="kpi-value">{{ metrics().totalInScadenza | appCurrency }}</span>
+        <span class="kpi-sub">{{ metrics().countInScadenza }} pagamenti vicini</span>
+      </div>
+      <div class="kpi-card success">
+        <span class="kpi-label">Crediti Clienti Residui</span>
+        <span class="kpi-value">{{ metrics().totalCreditiAttivi | appCurrency }}</span>
+        <span class="kpi-sub">Fatture emesse attive</span>
+      </div>
+      <div class="kpi-card info">
+        <span class="kpi-label">Debiti Fornitori Residui</span>
+        <span class="kpi-value">{{ metrics().totalDebitiPassivi | appCurrency }}</span>
+        <span class="kpi-sub">Fatture ricevute passive</span>
+      </div>
+    </div>
+
+    <!-- Filters Bar -->
+    <div class="filters-container">
+      <div class="filter-group">
+        <span class="filter-label">Flusso:</span>
+        <div class="chip-group">
+          <button
+            type="button"
+            class="chip"
+            [class.active]="directionFilter() === 'all'"
+            (click)="setDirectionFilter('all')"
+          >
+            Tutti
+          </button>
+          <button
+            type="button"
+            class="chip"
+            [class.active]="directionFilter() === 'outbound'"
+            (click)="setDirectionFilter('outbound')"
+          >
+            🟢 Crediti Clienti
+          </button>
+          <button
+            type="button"
+            class="chip"
+            [class.active]="directionFilter() === 'inbound'"
+            (click)="setDirectionFilter('inbound')"
+          >
+            🔴 Debiti Fornitori
+          </button>
+        </div>
+      </div>
+
+      <div class="filter-group">
+        <span class="filter-label">Stato:</span>
+        <div class="chip-group">
+          <button
+            type="button"
+            class="chip"
+            [class.active]="statusFilter() === 'all'"
+            (click)="setStatusFilter('all')"
+          >
+            Tutti
+          </button>
+          <button
+            type="button"
+            class="chip chip-danger"
+            [class.active]="statusFilter() === 'scaduta'"
+            (click)="setStatusFilter('scaduta')"
+          >
+            Scadute
+          </button>
+          <button
+            type="button"
+            class="chip chip-warning"
+            [class.active]="statusFilter() === 'in_scadenza'"
+            (click)="setStatusFilter('in_scadenza')"
+          >
+            In Scadenza
+          </button>
+          <button
+            type="button"
+            class="chip"
+            [class.active]="statusFilter() === 'futura'"
+            (click)="setStatusFilter('futura')"
+          >
+            Future
+          </button>
+          <button
+            type="button"
+            class="chip chip-success"
+            [class.active]="statusFilter() === 'saldata'"
+            (click)="setStatusFilter('saldata')"
+          >
+            Saldate
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Schedule Table -->
+    <div class="table-card">
+      @if (filteredSchedule().length === 0) {
+        <div class="empty-state">
+          <p>Nessuna scadenza trovata con i filtri selezionati.</p>
+        </div>
+      } @else {
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Scadenza</th>
+              <th>Documento</th>
+              <th>Controparte</th>
+              <th>Flusso</th>
+              <th class="text-right">Importo Totale</th>
+              <th class="text-right">Incassato / Pagato</th>
+              <th class="text-right">Saldo Residuo</th>
+              <th>Stato</th>
+              <th class="text-center">Azione</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (item of filteredSchedule(); track item.invoiceId) {
+              <tr [class.row-danger]="item.statoScadenza === 'scaduta'" [class.row-success]="item.pagata">
+                <td>
+                  <div class="due-date-cell">
+                    <strong>{{ item.dataScadenza | date:'dd/MM/yyyy' }}</strong>
+                    @if (item.statoScadenza === 'scaduta') {
+                      <span class="badge-delay">{{ item.giorniRitardo }} gg ritardo</span>
+                    }
+                  </div>
+                </td>
+                <td>
+                  <span class="doc-num">{{ item.numero }}</span>
+                  <small class="doc-date">{{ item.dataDocumento | date:'dd/MM/yyyy' }}</small>
+                </td>
+                <td>
+                  <div class="party-name">{{ item.controparteNome }}</div>
+                </td>
+                <td>
+                  @if (item.direction === 'outbound') {
+                    <span class="badge-direction outbound">🟢 Entrata</span>
+                  } @else {
+                    <span class="badge-direction inbound">🔴 Uscita</span>
+                  }
+                </td>
+                <td class="text-right font-mono">{{ item.importoTotale | appCurrency }}</td>
+                <td class="text-right font-mono text-muted">{{ item.importoPagato | appCurrency }}</td>
+                <td class="text-right font-mono">
+                  <strong>{{ item.saldoResiduo | appCurrency }}</strong>
+                </td>
+                <td>
+                  @if (item.pagata) {
+                    <span class="status-badge saldata">✓ Saldata</span>
+                  } @else if (item.statoScadenza === 'scaduta') {
+                    <span class="status-badge scaduta">Scaduta</span>
+                  } @else if (item.statoScadenza === 'in_scadenza') {
+                    <span class="status-badge in-scadenza">In Scadenza</span>
+                  } @else {
+                    <span class="status-badge futura">Futura</span>
+                  }
+                </td>
+                <td class="text-center">
+                  @if (!item.pagata) {
+                    <button type="button" class="btn-action" (click)="openPaymentModal(item)">
+                      💳 Registra Incasso/Pagamento
+                    </button>
+                  } @else {
+                    <button type="button" class="btn-action-done" (click)="openPaymentModal(item)">
+                      Visualizza Pagamenti
+                    </button>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    </div>
+  }
+
+  <!-- TAB 2: LIQUIDAZIONE IVA -->
+  @if (activeTab() === 'iva') {
+    <div class="iva-container">
+      <!-- Controls Bar -->
+      <div class="iva-controls-card">
+        <form [formGroup]="ivaForm" (ngSubmit)="calculateIva()" class="iva-form">
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label for="iva-regime">Regime Liquidazione</label>
+              <div class="chip-group">
+                <button
+                  type="button"
+                  class="chip"
+                  [class.active]="ivaForm.get('isTrimestrale')?.value === true"
+                  (click)="onPeriodTypeChange(true)"
+                >
+                  Trimestrale (art. 74)
+                </button>
+                <button
+                  type="button"
+                  class="chip"
+                  [class.active]="ivaForm.get('isTrimestrale')?.value === false"
+                  (click)="onPeriodTypeChange(false)"
+                >
+                  Mensile Ordinario
+                </button>
+              </div>
+            </div>
+
+            <div class="form-group flex-1">
+              <label for="iva-year">Anno Fiscale</label>
+              <input id="iva-year" type="number" formControlName="year" (change)="calculateIva()" />
+            </div>
+
+            <div class="form-group flex-1">
+              <label for="iva-period">Periodo</label>
+              <select id="iva-period" formControlName="period" (change)="calculateIva()">
+                @if (ivaForm.get('isTrimestrale')?.value) {
+                  <option value="Q1">1° Trimestre (Gen - Mar)</option>
+                  <option value="Q2">2° Trimestre (Apr - Giu)</option>
+                  <option value="Q3">3° Trimestre (Lug - Set)</option>
+                  <option value="Q4">4° Trimestre (Ott - Dic)</option>
+                } @else {
+                  <option value="M01">Gennaio</option>
+                  <option value="M02">Febbraio</option>
+                  <option value="M03">Marzo</option>
+                  <option value="M04">Aprile</option>
+                  <option value="M05">Maggio</option>
+                  <option value="M06">Giugno</option>
+                  <option value="M07">Luglio</option>
+                  <option value="M08">Agosto</option>
+                  <option value="M09">Settembre</option>
+                  <option value="M10">Ottobre</option>
+                  <option value="M11">Novembre</option>
+                  <option value="M12">Dicembre</option>
+                }
+              </select>
+            </div>
+
+            <div class="form-group flex-1">
+              <label for="iva-credito">Credito Periodo Prec. (€)</label>
+              <input id="iva-credito" type="number" step="0.01" formControlName="creditoPrecedente" (change)="calculateIva()" />
+            </div>
+          </div>
+        </form>
+      </div>
+
+      <!-- Liquidation Results -->
+      @if (liquidationResult(); as liq) {
+        <!-- Outcome Banner -->
+        @if (liq.totaleDaVersareF24 > 0) {
+          <div class="banner-f24-debit">
+            <div class="banner-icon">⚠️</div>
+            <div class="banner-text">
+              <h3>IVA DA VERSARE CON MODELLO F24: {{ liq.totaleDaVersareF24 | appCurrency }}</h3>
+              <p>
+                Scadenza versamento: <strong>{{ liq.dataScadenzaVersamento | date:'dd/MM/yyyy' }}</strong> &nbsp;|&nbsp;
+                Codice Tributo F24: <strong>{{ liq.codiceTributoF24 }}</strong> &nbsp;|&nbsp;
+                Anno di riferimento: <strong>{{ liq.year }}</strong>
+              </p>
+            </div>
+          </div>
+        } @else if (liq.versamentoSottoSoglia100Euro) {
+          <div class="banner-f24-warning">
+            <div class="banner-icon">ℹ️</div>
+            <div class="banner-text">
+              <h3>VERSAMENTO SOSPESO (IMPORTO SOTTO SOGLIA 100,00 €)</h3>
+              <p>
+                Il debito di {{ liq.saldoIvaPeriodo | appCurrency }} è inferiore alla soglia minima (art. 1 c. 4 D.Lgs 127/2015).
+                Non occorre eseguire il versamento F24 in questa scadenza: l'importo sarà sommato al periodo successivo.
+              </p>
+            </div>
+          </div>
+        } @else {
+          <div class="banner-f24-credit">
+            <div class="banner-icon">✅</div>
+            <div class="banner-text">
+              <h3>CREDITO IVA DEL PERIODO: {{ liq.creditoDaRiportare | appCurrency }}</h3>
+              <p>
+                Nessun versamento F24 dovuto. Il credito può essere riportato nella liquidazione successiva o utilizzato in compensazione.
+              </p>
+            </div>
+          </div>
+        }
+
+        <!-- Breakdown Grid -->
+        <div class="breakdown-grid">
+          <!-- Column 1: Sales / Debito -->
+          <div class="breakdown-card">
+            <h4>Operazioni Attive (Vendite / Fatture Emesse)</h4>
+            <div class="row-stat">
+              <span>Imponibile complessivo</span>
+              <strong class="font-mono">{{ liq.imponibileVendite | appCurrency }}</strong>
+            </div>
+            <div class="row-stat">
+              <span>IVA totale fatturata</span>
+              <strong class="font-mono">{{ liq.ivaVenditeTotale | appCurrency }}</strong>
+            </div>
+            @if (liq.ivaVenditeSplitPayment > 0) {
+              <div class="row-stat text-split">
+                <span>Storno Split Payment PA (art. 17-ter)</span>
+                <strong class="font-mono">- {{ liq.ivaVenditeSplitPayment | appCurrency }}</strong>
+              </div>
+            }
+            <div class="row-stat total-row">
+              <span>IVA a Debito Esigibile</span>
+              <strong class="font-mono text-danger">+ {{ liq.ivaVenditeEsigibile | appCurrency }}</strong>
+            </div>
+          </div>
+
+          <!-- Column 2: Purchases / Credito -->
+          <div class="breakdown-card">
+            <h4>Operazioni Passive (Acquisti / Fatture Ricevute)</h4>
+            <div class="row-stat">
+              <span>Imponibile acquisti</span>
+              <strong class="font-mono">{{ liq.imponibileAcquisti | appCurrency }}</strong>
+            </div>
+            <div class="row-stat total-row">
+              <span>IVA Detraibile sugli Acquisti</span>
+              <strong class="font-mono text-success">- {{ liq.ivaAcquistiDetraibile | appCurrency }}</strong>
+            </div>
+            @if (liq.creditoIvaPrecedente > 0) {
+              <div class="row-stat">
+                <span>Credito IVA periodo precedente</span>
+                <strong class="font-mono text-success">- {{ liq.creditoIvaPrecedente | appCurrency }}</strong>
+              </div>
+            }
+          </div>
+
+          <!-- Column 3: Epilogo F24 -->
+          <div class="breakdown-card highlight">
+            <h4>Quadro Riepilogativo F24</h4>
+            <div class="row-stat">
+              <span>Saldo IVA Periodo</span>
+              <strong class="font-mono">{{ liq.saldoIvaPeriodo | appCurrency }}</strong>
+            </div>
+            @if (liq.interessiTrimestrali1Perc > 0) {
+              <div class="row-stat">
+                <span>Maggiorazione interessi trimestrali 1%</span>
+                <strong class="font-mono">+ {{ liq.interessiTrimestrali1Perc | appCurrency }}</strong>
+              </div>
+            }
+            <div class="row-stat total-final">
+              <span>Totale Versamento F24</span>
+              <strong class="font-mono">{{ liq.totaleDaVersareF24 | appCurrency }}</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- VAT Breakdown by Rate -->
+        @if (liq.aliquoteDettaglio.length > 0) {
+          <div class="vat-rate-table-card">
+            <h4>Ripartizione per Aliquota IVA</h4>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Aliquota</th>
+                  <th class="text-right">Imponibile Vendite</th>
+                  <th class="text-right">Imposta Vendite</th>
+                  <th class="text-right">Imponibile Acquisti</th>
+                  <th class="text-right">Imposta Acquisti</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (rate of liq.aliquoteDettaglio; track rate.aliquota) {
+                  <tr>
+                    <td><strong>{{ rate.aliquota }}%</strong></td>
+                    <td class="text-right font-mono">{{ rate.imponibileVendite | appCurrency }}</td>
+                    <td class="text-right font-mono">{{ rate.impostaVendite | appCurrency }}</td>
+                    <td class="text-right font-mono">{{ rate.imponibileAcquisti | appCurrency }}</td>
+                    <td class="text-right font-mono">{{ rate.impostaAcquisti | appCurrency }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+
+        <!-- Fiscal Notes -->
+        @if (liq.noteFiscali.length > 0) {
+          <div class="fiscal-notes-card">
+            <h4>Annotazioni e Riferimenti Normativi</h4>
+            <ul>
+              @for (nota of liq.noteFiscali; track nota) {
+                <li>{{ nota }}</li>
+              }
+            </ul>
+          </div>
+        }
+      }
+    </div>
+  }
+
+  <!-- Payment Registration Modal -->
+  @if (selectedItemForPayment(); as item) {
+    <div class="modal-backdrop">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Registra Incasso / Pagamento</h3>
+          <button type="button" class="btn-close" (click)="closePaymentModal()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="invoice-summary-box">
+            <div>Fattura N. <strong>{{ item.numero }}</strong> del {{ item.dataDocumento | date:'dd/MM/yyyy' }}</div>
+            <div>Controparte: <strong>{{ item.controparteNome }}</strong></div>
+            <div>Importo Totale: <strong>{{ item.importoTotale | appCurrency }}</strong></div>
+            <div>Saldo Residuo Attuale: <strong class="text-danger">{{ item.saldoResiduo | appCurrency }}</strong></div>
+          </div>
+
+          <form [formGroup]="paymentForm" (ngSubmit)="submitPayment()">
+            <div class="form-row">
+              <div class="form-group flex-1">
+                <label for="pay-date">Data Pagamento *</label>
+                <input id="pay-date" type="date" formControlName="dataPagamento" />
+              </div>
+              <div class="form-group flex-1">
+                <label for="pay-amount">Importo Pagato (€) *</label>
+                <input id="pay-amount" type="number" step="0.01" formControlName="importo" />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="pay-mode">Modalità Pagamento</label>
+              <select id="pay-mode" formControlName="modalita">
+                <option value="MP05">MP05 - Bonifico Bancario</option>
+                <option value="MP01">MP01 - Contanti</option>
+                <option value="MP08">MP08 - Carta di Pagamento</option>
+                <option value="MP12">MP12 - RIBA</option>
+                <option value="MP02">MP02 - Assegno Bancario</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="pay-notes">Note / Riconciliazione Contabile</label>
+              <input id="pay-notes" type="text" formControlName="note" placeholder="es. Bonifico pervenuto su c/c primario" />
+            </div>
+
+            <div class="form-group-checkbox">
+              <label>
+                <input type="checkbox" formControlName="saldaTutto" />
+                Segna la fattura come completamente saldata
+              </label>
+            </div>
+
+            <div class="modal-footer">
+              <button type="button" class="btn-secondary" (click)="closePaymentModal()">Annulla</button>
+              <button type="submit" class="btn-primary" [disabled]="paymentForm.invalid">
+                Salva nel Ledger
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  }
+</div>

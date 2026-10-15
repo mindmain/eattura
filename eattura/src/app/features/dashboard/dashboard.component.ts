@@ -1,31 +1,30 @@
 import {
-  AfterViewInit,
+  ChangeDetectionStrategy,
   Component,
   ElementRef,
   OnDestroy,
-  ViewChild,
+  computed,
+  effect,
   inject,
   signal,
+  viewChild,
 } from "@angular/core";
 import { Router, RouterLink } from "@angular/router";
 import { Chart, registerables } from "chart.js";
-import { InvoiceService } from "../../core/services/invoice.service";
-import { ClientService } from "../../core/services/client.service";
-import type { InvoiceSummary } from "../../core/models/invoice.model";
+import { InvoiceStore } from "../../core/stores/invoice.store";
+import { ClientStore } from "../../core/stores/client.store";
+import { AppCurrencyPipe } from "../../shared/pipes/app-currency.pipe";
+import { ThemeService } from "../../core/services/theme.service";
 
 Chart.register(...registerables);
 
 /** Monthly aggregation (12 entries, Jan..Dec) for a single year. */
 interface MonthlyStats {
-  /** Income per month (owner is cedente). */
   income: number[];
-  /** Cost per month (owner is cessionario). */
   cost: number[];
-  /** Invoice count per month (income + cost). */
   counts: number[];
 }
 
-/** Italian short month labels, January first. */
 const MONTH_LABELS = [
   "Gen", "Feb", "Mar", "Apr", "Mag", "Giu",
   "Lug", "Ago", "Set", "Ott", "Nov", "Dic",
@@ -34,70 +33,140 @@ const MONTH_LABELS = [
 @Component({
   selector: "app-dashboard",
   standalone: true,
-  imports: [RouterLink],
+  imports: [RouterLink, AppCurrencyPipe],
   templateUrl: "./dashboard.component.html",
   styleUrl: "./dashboard.component.css",
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class DashboardComponent implements AfterViewInit, OnDestroy {
-  private invoiceService = inject(InvoiceService);
-  private clientService = inject(ClientService);
+export class DashboardComponent implements OnDestroy {
+  readonly invoiceStore = inject(InvoiceStore);
+  readonly clientStore = inject(ClientStore);
   private router = inject(Router);
+  private readonly theme = inject(ThemeService);
 
-  @ViewChild("yearChart") private chartCanvas?: ElementRef<HTMLCanvasElement>;
-  @ViewChild("annualChart") private annualChartCanvas?: ElementRef<HTMLCanvasElement>;
+  readonly chartCanvas = viewChild<ElementRef<HTMLCanvasElement>>("yearChart");
+  readonly annualChartCanvas = viewChild<ElementRef<HTMLCanvasElement>>("annualChart");
   private chart?: Chart;
   private annualChart?: Chart;
   private readonly currentYear = new Date().getFullYear();
-  readonly annualYears = Array.from({ length: 8 }, (_, index) => String(this.currentYear - 7 + index));
-  private annualIncome = new Array<number>(8).fill(0);
 
-  /** Monthly stats keyed by year. */
-  private monthlyByYear = new Map<string, MonthlyStats>();
+  readonly annualYears = Array.from(
+    { length: 8 },
+    (_, index) => String(this.currentYear - 7 + index),
+  );
 
-  totalInvoices = signal(0);
-  draftCount = signal(0);
-  sentCount = signal(0);
-  clientCount = signal(0);
+  // Expose store metrics directly to template
+  readonly totalInvoices = this.invoiceStore.totalCount;
+  readonly draftCount = this.invoiceStore.draftCount;
+  readonly sentCount = this.invoiceStore.sentCount;
+  readonly clientCount = this.clientStore.clientCount;
+
+  /** Monthly stats grouped by year derived from invoices. */
+  readonly monthlyByYear = computed(() => {
+    const invoices = this.invoiceStore.invoices();
+    const map = new Map<string, MonthlyStats>();
+
+    for (const inv of invoices) {
+      if (!inv.data || inv.data.length < 7) continue;
+      const year = inv.data.substring(0, 4);
+      const month = Number(inv.data.substring(5, 7)) - 1; // 0..11
+      if (Number.isNaN(month) || month < 0 || month > 11) continue;
+
+      let stats = map.get(year);
+      if (!stats) {
+        stats = {
+          income: new Array(12).fill(0),
+          cost: new Array(12).fill(0),
+          counts: new Array(12).fill(0),
+        };
+        map.set(year, stats);
+      }
+
+      const total = inv.importoTotale ?? 0;
+      stats.counts[month] += 1;
+      if (inv.direction === "sale") {
+        stats.income[month] += total;
+      } else if (inv.direction === "purchase") {
+        stats.cost[month] += total;
+      }
+    }
+    return map;
+  });
 
   /** Available years (descending) shown in the select. */
-  years = signal<string[]>([]);
+  readonly years = computed(() => {
+    return Array.from(this.monthlyByYear().keys()).sort((a, b) => b.localeCompare(a));
+  });
+
   /** Currently selected year. */
   selectedYear = signal<string>("");
-  /** Income / cost totals for the selected year. */
-  yearIncome = signal(0);
-  yearCost = signal(0);
 
-  async ngAfterViewInit(): Promise<void> {
-    try {
-      const [invoices, clients] = await Promise.all([
-        this.invoiceService.listInvoices(),
-        this.clientService.listClients(),
-      ]);
+  /** Income / cost totals for the selected year computed reactively. */
+  readonly yearIncome = computed(() => {
+    const year = this.selectedYear();
+    const stats = this.monthlyByYear().get(year);
+    return stats ? sum(stats.income) : 0;
+  });
 
-      this.totalInvoices.set(invoices.length);
-      this.draftCount.set(invoices.filter((i) => i.stato === "draft").length);
-      this.sentCount.set(invoices.filter((i) => i.stato === "sent").length);
-      this.clientCount.set(clients.length);
+  readonly yearCost = computed(() => {
+    const year = this.selectedYear();
+    const stats = this.monthlyByYear().get(year);
+    return stats ? sum(stats.cost) : 0;
+  });
 
-      this.aggregateByMonth(invoices);
-      for (const invoice of invoices) {
-        const index = this.annualYears.indexOf(invoice.data?.slice(0, 4) ?? "");
-        if (index >= 0 && invoice.direction === "sale") {
-          this.annualIncome[index] += invoice.importoTotale ?? 0;
-        }
+  readonly annualIncome = computed(() => {
+    const monthlyMap = this.monthlyByYear();
+    return this.annualYears.map((year) => sum(monthlyMap.get(year)?.income ?? []));
+  });
+
+  constructor() {
+    // Initial data load
+    void Promise.all([
+      this.invoiceStore.loadAll(),
+      this.clientStore.loadAll(),
+    ]);
+
+    // Automatically pick default year when years list changes
+    effect(() => {
+      const available = this.years();
+      const current = this.selectedYear();
+      if (available.length > 0 && (!current || !available.includes(current))) {
+        const thisYear = String(new Date().getFullYear());
+        this.selectedYear.set(available.includes(thisYear) ? thisYear : available[0]);
       }
-      this.renderAnnualChart();
-      const years = Array.from(this.monthlyByYear.keys()).sort((a, b) => b.localeCompare(a));
-      this.years.set(years);
+    });
 
-      if (years.length > 0) {
-        // Default to the current year when present, otherwise the most recent.
-        const current = String(new Date().getFullYear());
-        this.selectYear(years.includes(current) ? current : years[0]);
-      }
-    } catch {
-      // Stats remain at 0 / chart stays empty if the backend is unavailable.
-    }
+    // Render / update chart whenever chartCanvas or selectedYear or data changes
+    effect((onCleanup) => {
+      const canvasRef = this.chartCanvas();
+      const year = this.selectedYear();
+      const monthlyMap = this.monthlyByYear();
+      this.theme.effectiveTheme();
+
+      if (!canvasRef || !year) return;
+
+      const stats = monthlyMap.get(year) ?? {
+        income: new Array(12).fill(0),
+        cost: new Array(12).fill(0),
+        counts: new Array(12).fill(0),
+      };
+
+      const chartInstance = this.renderChart(canvasRef.nativeElement, stats);
+
+      onCleanup(() => {
+        chartInstance.destroy();
+      });
+    });
+
+    effect((onCleanup) => {
+      const canvasRef = this.annualChartCanvas();
+      const income = this.annualIncome();
+      this.theme.effectiveTheme();
+      if (!canvasRef) return;
+
+      const chartInstance = this.renderAnnualChart(canvasRef.nativeElement, income);
+      onCleanup(() => chartInstance.destroy());
+    });
   }
 
   ngOnDestroy(): void {
@@ -107,16 +176,12 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
 
   /** Handle the year <select> change. */
   onYearChange(event: Event): void {
-    this.selectYear((event.target as HTMLSelectElement).value);
+    this.selectedYear.set((event.target as HTMLSelectElement).value);
   }
 
-  /** Select a year and refresh totals + chart. */
+  /** Select a year. */
   selectYear(year: string): void {
     this.selectedYear.set(year);
-    const stats = this.monthlyByYear.get(year);
-    this.yearIncome.set(stats ? sum(stats.income) : 0);
-    this.yearCost.set(stats ? sum(stats.cost) : 0);
-    this.renderChart(year);
   }
 
   /** Open the invoices list filtered to the selected year. */
@@ -135,59 +200,99 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     this.router.navigate(["/invoices"], { queryParams: { year, month } });
   }
 
-  formatCurrency(value: number): string {
-    return new Intl.NumberFormat("it-IT", {
-      style: "currency",
-      currency: "EUR",
-      maximumFractionDigits: 0,
-    }).format(value);
-  }
-
-  /** Build the per-year, per-month income/cost aggregation. */
-  private aggregateByMonth(invoices: InvoiceSummary[]): void {
-    this.monthlyByYear.clear();
-    for (const inv of invoices) {
-      if (!inv.data || inv.data.length < 7) continue;
-      const year = inv.data.substring(0, 4);
-      const month = Number(inv.data.substring(5, 7)) - 1; // 0..11
-      if (Number.isNaN(month) || month < 0 || month > 11) continue;
-
-      let stats = this.monthlyByYear.get(year);
-      if (!stats) {
-        stats = {
-          income: new Array(12).fill(0),
-          cost: new Array(12).fill(0),
-          counts: new Array(12).fill(0),
-        };
-        this.monthlyByYear.set(year, stats);
-      }
-      const amount = inv.importoTotale ?? 0;
-      // `purchase` = cost (owner is cessionario); everything else counts as income.
-      if (inv.direction === "purchase") {
-        stats.cost[month] += amount;
-      } else {
-        stats.income[month] += amount;
-      }
-      stats.counts[month] += 1;
+  private renderChart(canvas: HTMLCanvasElement, stats: MonthlyStats): Chart {
+    if (this.chart) {
+      this.chart.destroy();
     }
-  }
 
-  private renderAnnualChart(): void {
-    const canvas = this.annualChartCanvas?.nativeElement;
-    if (!canvas) return;
-    this.annualChart?.destroy();
-    const currency = new Intl.NumberFormat("it-IT", {
+    const self = this;
+    const textColor = this.theme.effectiveTheme() === "dark" ? "#d0d5dc" : "#34465f";
+    const gridColor = this.theme.effectiveTheme() === "dark" ? "#2b3038" : "#dce3ee";
+    const currencyFormatter = new Intl.NumberFormat("it-IT", {
       style: "currency",
       currency: "EUR",
       maximumFractionDigits: 0,
     });
-    this.annualChart = new Chart(canvas, {
+
+    const chart = new Chart(canvas, {
+      type: "bar",
+      data: {
+        labels: MONTH_LABELS,
+        datasets: [
+          {
+            label: "Fatturato (Vendite)",
+            data: stats.income,
+            backgroundColor: "#2e7d32",
+            borderRadius: 4,
+          },
+          {
+            label: "Costi (Acquisti)",
+            data: stats.cost,
+            backgroundColor: "#c62828",
+            borderRadius: 4,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: "top",
+            labels: { color: textColor },
+          },
+          tooltip: {
+            callbacks: {
+              label: (context) => {
+                const label = context.dataset.label ?? "";
+                const val = Number(context.raw ?? 0);
+                return ` ${label}: ${currencyFormatter.format(val)}`;
+              },
+            },
+          },
+        },
+        onClick: (_event, elements) => {
+          if (elements.length > 0) {
+            const monthIndex = elements[0].index;
+            self.viewMonthInvoices(monthIndex);
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            grid: { color: gridColor },
+            ticks: {
+              color: textColor,
+              callback: (val) => `${Number(val).toLocaleString("it-IT")} €`,
+            },
+          },
+          x: { ticks: { color: textColor }, grid: { color: gridColor } },
+        },
+      },
+    });
+
+    this.chart = chart;
+    return chart;
+  }
+
+  private renderAnnualChart(canvas: HTMLCanvasElement, income: number[]): Chart {
+    this.annualChart?.destroy();
+    const textColor = this.theme.effectiveTheme() === "dark" ? "#d0d5dc" : "#34465f";
+    const gridColor = this.theme.effectiveTheme() === "dark" ? "#2b3038" : "#dce3ee";
+
+    const currencyFormatter = new Intl.NumberFormat("it-IT", {
+      style: "currency",
+      currency: "EUR",
+      maximumFractionDigits: 0,
+    });
+
+    const chart = new Chart(canvas, {
       type: "line",
       data: {
         labels: this.annualYears,
         datasets: [{
           label: "Fatturato",
-          data: this.annualIncome,
+          data: income,
           borderColor: "#2563eb",
           backgroundColor: "rgba(37, 99, 235, 0.14)",
           borderWidth: 3,
@@ -207,7 +312,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
           legend: { display: false },
           tooltip: {
             callbacks: {
-              label: (context) => ` Fatturato: ${currency.format(Number(context.raw ?? 0))}`,
+              label: (context) => ` Fatturato: ${currencyFormatter.format(Number(context.raw ?? 0))}`,
             },
           },
         },
@@ -220,92 +325,22 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
         scales: {
           y: {
             beginAtZero: true,
+            grid: { color: gridColor },
             ticks: {
-              callback: (value) => `${Number(value).toLocaleString("it-IT")} €`,
+              color: textColor,
+              callback: (val) => `${Number(val).toLocaleString("it-IT")} €`,
             },
           },
+          x: { ticks: { color: textColor }, grid: { color: gridColor } },
         },
       },
     });
-  }
 
-  /** Render (or re-render) the monthly income/cost chart for the given year. */
-  private renderChart(year: string): void {
-    const canvas = this.chartCanvas?.nativeElement;
-    const stats = this.monthlyByYear.get(year);
-    if (!canvas || !stats) {
-      return;
-    }
-
-    const currency = new Intl.NumberFormat("it-IT", {
-      style: "currency",
-      currency: "EUR",
-      maximumFractionDigits: 0,
-    });
-
-    this.chart?.destroy();
-    this.chart = new Chart(canvas, {
-      type: "bar",
-      data: {
-        labels: MONTH_LABELS,
-        datasets: [
-          {
-            label: "Guadagni",
-            data: stats.income,
-            backgroundColor: "rgba(59, 130, 246, 0.7)",
-            borderColor: "rgba(59, 130, 246, 1)",
-            borderWidth: 1,
-            borderRadius: 6,
-          },
-          {
-            label: "Costi",
-            // Shown below the axis as negative values.
-            data: stats.cost.map((v) => -v),
-            backgroundColor: "rgba(239, 68, 68, 0.7)",
-            borderColor: "rgba(239, 68, 68, 1)",
-            borderWidth: 1,
-            borderRadius: 6,
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        onClick: (_event, elements) => {
-          if (elements.length > 0) {
-            this.viewMonthInvoices(elements[0].index);
-          }
-        },
-        onHover: (event, elements) => {
-          const target = event.native?.target as HTMLElement | undefined;
-          if (target) {
-            target.style.cursor = elements.length > 0 ? "pointer" : "default";
-          }
-        },
-        plugins: {
-          legend: { display: true },
-          tooltip: {
-            callbacks: {
-              label: (ctx) => `${ctx.dataset.label}: ${currency.format(Math.abs(Number(ctx.parsed.y)))}`,
-            },
-          },
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-            ticks: { callback: (value) => currency.format(Number(value)) },
-            title: { display: true, text: "Valore (€)" },
-          },
-          x: {
-            title: { display: true, text: "Mese" },
-          },
-        },
-      },
-    });
+    this.annualChart = chart;
+    return chart;
   }
 }
 
-/** Sum a numeric array. */
 function sum(values: number[]): number {
-  return values.reduce((a, b) => a + b, 0);
+  return values.reduce((acc, v) => acc + v, 0);
 }

@@ -13,33 +13,38 @@
     />
   </div>
 
-  @if (filteredClients().length > 0) {
-    <table class="table">
-      <thead>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Denominazione</th>
+        <th>P.IVA</th>
+        <th>Comune</th>
+        <th class="text-right">Azioni</th>
+      </tr>
+    </thead>
+    <tbody>
+      @for (client of filteredClients(); track client.id) {
         <tr>
-          <th>Denominazione</th>
-          <th>P.IVA</th>
-          <th>Comune</th>
-          <th class="text-right">Azioni</th>
+          <td>
+            {{ client | clientName }}
+            @if (client.isPa) {
+              <span class="badge badge-pa ml-1">PA</span>
+            }
+          </td>
+          <td>{{ client.idPaese }}{{ client.idCodice }}</td>
+          <td>{{ client.comune }}</td>
+          <td class="text-right actions-cell">
+            <button class="btn-secondary btn-sm" (click)="navigateToEdit(client.id)">Modifica</button>
+            <button class="btn-danger btn-sm" (click)="deleteClient(client.id)">Elimina</button>
+          </td>
         </tr>
-      </thead>
-      <tbody>
-        @for (client of filteredClients(); track client.id) {
-          <tr>
-            <td>{{ displayName(client) }}</td>
-            <td>{{ client.idPaese }}{{ client.idCodice }}</td>
-            <td>{{ client.comune }}</td>
-            <td class="text-right actions-cell">
-              <button class="btn-secondary btn-sm" (click)="navigateToEdit(client.id)">Modifica</button>
-              <button class="btn-danger btn-sm" (click)="deleteClient(client.id)">Elimina</button>
-            </td>
-          </tr>
-        }
-      </tbody>
-    </table>
-  } @else {
-    <div class="empty-state">
-      <p>Nessun cliente trovato. Crea il primo cliente per iniziare.</p>
-    </div>
-  }
+      } @empty {
+        <tr>
+          <td colspan="4" class="empty-state">
+            <p>Nessun cliente trovato. Crea il primo cliente per iniziare.</p>
+          </td>
+        </tr>
+      }
+    </tbody>
+  </table>
 </div>

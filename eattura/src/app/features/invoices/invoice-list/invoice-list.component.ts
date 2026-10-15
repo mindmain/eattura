@@ -1,13 +1,22 @@
-import { Component, computed, inject, OnInit, signal } from "@angular/core";
-import { ActivatedRoute, Router, RouterLink } from "@angular/router";
-import { open } from "@tauri-apps/plugin-dialog";
-import { readTextFile } from "@tauri-apps/plugin-fs";
-import { InvoiceService } from "../../../core/services/invoice.service";
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  input,
+  OnInit,
+  signal,
+} from "@angular/core";
+import { Router, RouterLink } from "@angular/router";
+import { InvoiceStore } from "../../../core/stores/invoice.store";
 import { NotificationService } from "../../../core/services/notification.service";
-import { TIPO_DOCUMENTO } from "../../../core/models/sdi.model";
-import type { InvoiceSummary, InvoiceStatus } from "../../../core/models/invoice.model";
+import { FileDialogService } from "../../../core/services/file-dialog.service";
+import { TipoDocumentoPipe } from "../../../shared/pipes/tipo-documento.pipe";
+import { InvoiceStatusPipe } from "../../../shared/pipes/invoice-status.pipe";
+import { AppCurrencyPipe } from "../../../shared/pipes/app-currency.pipe";
+import type { InvoiceSummary } from "../../../core/models/invoice.model";
 
-/** Italian month names, January first (for the period filter label). */
 const MONTH_NAMES = [
   "Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
   "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre",
@@ -16,25 +25,46 @@ const MONTH_NAMES = [
 @Component({
   selector: "app-invoice-list",
   standalone: true,
-  imports: [RouterLink],
+  imports: [RouterLink, TipoDocumentoPipe, InvoiceStatusPipe, AppCurrencyPipe],
   templateUrl: "./invoice-list.component.html",
   styleUrl: "./invoice-list.component.css",
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class InvoiceListComponent implements OnInit {
-  private invoiceService = inject(InvoiceService);
+  readonly invoiceStore = inject(InvoiceStore);
+  private fileDialog = inject(FileDialogService);
   private router = inject(Router);
-  private route = inject(ActivatedRoute);
   private notify = inject(NotificationService);
 
-  invoices = signal<InvoiceSummary[]>([]);
+  /** Router query param inputs bound via withComponentInputBinding */
+  year = input<string>("");
+  month = input<string>("");
+
+  readonly invoices = this.invoiceStore.invoices;
+  readonly loading = this.invoiceStore.loading;
+  readonly pecSyncStatus = this.invoiceStore.pecSyncStatus;
+  readonly secondsToPecSync = this.invoiceStore.secondsToPecSync;
+  readonly pecCountdown = computed(() => {
+    const seconds = this.secondsToPecSync();
+    if (seconds === null) return "";
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  });
+
   searchTerm = signal("");
   statusFilter = signal<string>("all");
   syncing = signal(false);
   importing = signal(false);
 
-  /** Period filter from the dashboard (year, and optionally month "01".."12"). */
+  /** Internal filter signals populated from inputs or user navigation */
   yearFilter = signal<string>("");
   monthFilter = signal<string>("");
+
+  constructor() {
+    effect(() => {
+      this.yearFilter.set(this.year() ?? "");
+      this.monthFilter.set(this.month() ?? "");
+    });
+  }
 
   /** Human-readable label of the active period filter, or empty when none. */
   periodLabel = computed(() => {
@@ -56,14 +86,13 @@ export class InvoiceListComponent implements OnInit {
       const prefix = this.monthFilter() ? `${year}-${this.monthFilter()}` : year;
       list = list.filter((i) => i.data?.startsWith(prefix));
     }
-    const term = this.searchTerm().toLowerCase();
+    const term = this.searchTerm().trim().toLowerCase();
     if (term) {
-      list = list.filter(
-        (i) =>
-          i.numero.toLowerCase().includes(term) ||
-          i.cedenteDenominazione.toLowerCase().includes(term) ||
-          i.cessionarioDenominazione.toLowerCase().includes(term)
-      );
+      list = list.filter((i) => {
+        const text = i.searchText ?? [i.numero, i.cedenteDenominazione, i.cessionarioDenominazione]
+          .join(" ").toLowerCase();
+        return term.split(/\s+/).every((part) => text.includes(part));
+      });
     }
     return list;
   });
@@ -78,18 +107,18 @@ export class InvoiceListComponent implements OnInit {
   ];
 
   async ngOnInit(): Promise<void> {
-    // Apply a period filter passed from the dashboard via query params.
-    const qp = this.route.snapshot.queryParamMap;
-    this.yearFilter.set(qp.get("year") ?? "");
-    this.monthFilter.set(qp.get("month") ?? "");
-    await this.loadInvoices();
+    try {
+      await this.invoiceStore.loadAll();
+    } catch {
+      this.notify.error("Errore nel caricamento delle fatture");
+    }
   }
 
   /** Clear the active period filter and drop it from the URL. */
   clearPeriod(): void {
     this.yearFilter.set("");
     this.monthFilter.set("");
-    this.router.navigate([], { relativeTo: this.route, queryParams: {} });
+    this.router.navigate([], { queryParams: {} });
   }
 
   onSearch(event: Event): void {
@@ -109,20 +138,15 @@ export class InvoiceListComponent implements OnInit {
     this.router.navigate(["/invoices", id, "edit"]);
   }
 
-  /** Import a single XML invoice file via a file picker. */
+  /** Import a single XML invoice file via isolated file dialog service. */
   async importXml(): Promise<void> {
     try {
-      const selected = await open({
-        multiple: false,
-        filters: [{ name: "Fattura XML", extensions: ["xml"] }],
-      });
-      if (!selected || Array.isArray(selected)) {
+      const fileData = await this.fileDialog.pickAndReadXmlFile();
+      if (!fileData) {
         return; // user cancelled
       }
-      const content = await readTextFile(selected);
-      const detail = await this.invoiceService.importXml(content);
+      const detail = await this.invoiceStore.importXml(fileData.content);
       this.notify.success(`Fattura ${detail.numero} importata`);
-      await this.loadInvoices();
     } catch (e) {
       this.notify.error(
         typeof e === "string" ? e : "Errore durante l'import del file XML"
@@ -133,12 +157,12 @@ export class InvoiceListComponent implements OnInit {
   /** Select a folder and recursively import every .xml invoice found. */
   async importFolder(): Promise<void> {
     try {
-      const selected = await open({ directory: true, multiple: false });
-      if (!selected || Array.isArray(selected)) {
+      const selectedDir = await this.fileDialog.pickDirectory();
+      if (!selectedDir) {
         return; // user cancelled
       }
       this.importing.set(true);
-      const summary = await this.invoiceService.importFromDir(selected);
+      const summary = await this.invoiceStore.importFromDir(selectedDir);
       if (summary.imported > 0) {
         this.notify.success(
           `Importate ${summary.imported}/${summary.totalFiles} fatture (clienti creati automaticamente). ${summary.skipped} saltate.`
@@ -151,7 +175,6 @@ export class InvoiceListComponent implements OnInit {
       if (summary.errors.length > 0) {
         console.warn("Import cartella — file saltati:", summary.errors);
       }
-      await this.loadInvoices();
     } catch (e) {
       this.notify.error(
         typeof e === "string" ? e : "Errore durante l'import della cartella"
@@ -164,12 +187,13 @@ export class InvoiceListComponent implements OnInit {
   async syncPec(): Promise<void> {
     this.syncing.set(true);
     try {
-      const results = await this.invoiceService.syncPec();
+      const results = await this.invoiceStore.syncPec();
+      const invoices = results.filter((r) => r.tipo === "FATTURA").length;
+      const notifications = results.length - invoices;
       const updated = results.filter((r) => r.newStatus).length;
       this.notify.success(
-        `Sincronizzazione PEC completata: ${results.length} notifiche, ${updated} fatture aggiornate`
+        `Sincronizzazione PEC completata: ${invoices} fatture, ${notifications} notifiche, ${updated} stati aggiornati`
       );
-      await this.loadInvoices();
     } catch (e) {
       this.notify.error(
         typeof e === "string" ? e : "Errore durante la sincronizzazione PEC"
@@ -181,13 +205,12 @@ export class InvoiceListComponent implements OnInit {
 
   async deleteInvoice(inv: InvoiceSummary, event: Event): Promise<void> {
     event.stopPropagation();
-    if (!confirm(`Eliminare la fattura ${inv.numero}? L'operazione è irreversibile.`)) {
+    if (typeof window !== "undefined" && !window.confirm(`Eliminare la fattura ${inv.numero}? L'operazione è irreversibile.`)) {
       return;
     }
     try {
-      await this.invoiceService.deleteInvoice(inv.id);
+      await this.invoiceStore.deleteInvoice(inv.id);
       this.notify.success("Fattura eliminata");
-      await this.loadInvoices();
     } catch (e) {
       this.notify.error(
         typeof e === "string" ? e : "Errore durante l'eliminazione della fattura"
@@ -195,50 +218,10 @@ export class InvoiceListComponent implements OnInit {
     }
   }
 
-  tipoLabel(code: string): string {
-    return TIPO_DOCUMENTO[code] ?? code;
-  }
-
-  statusLabel(status: InvoiceStatus): string {
-    const labels: Record<InvoiceStatus, string> = {
-      draft: "Bozza",
-      validated: "Validata",
-      sent: "Inviata",
-      accepted: "Accettata",
-      rejected: "Rifiutata",
-    };
-    return labels[status] ?? status;
-  }
-
-  badgeClass(status: InvoiceStatus): string {
-    return `badge badge-${status}`;
-  }
-
-  formatCurrency(value: number | null): string {
-    if (value == null) return "-";
-    return new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" }).format(value);
-  }
-
   /** Signed amount: negative for purchases (costs), positive for sales. */
-  formatAmount(inv: InvoiceSummary): string {
-    const value = inv.importoTotale ?? 0;
-    const signed = inv.direction === "purchase" ? -value : value;
-    return this.formatCurrency(signed);
-  }
-
-  /** CSS class coloring the amount by direction (income blue, cost red). */
-  amountClass(inv: InvoiceSummary): string {
-    if (inv.direction === "purchase") return "amount-cost";
-    if (inv.direction === "sale") return "amount-income";
-    return "";
-  }
-
-  private async loadInvoices(): Promise<void> {
-    try {
-      const list = await this.invoiceService.listInvoices();
-      this.invoices.set(list);
-    } catch {
-      this.notify.error("Errore nel caricamento delle fatture");
-    }
+  calcSignedAmount(inv: InvoiceSummary): number | null {
+    const value = inv.importoTotale;
+    if (value == null) return null;
+    return inv.direction === "purchase" ? -value : value;
   }
 }

@@ -1,47 +1,131 @@
-import { Component, inject, OnInit, signal } from "@angular/core";
-import { ActivatedRoute, Router } from "@angular/router";
-import { InvoiceService } from "../../../core/services/invoice.service";
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  input,
+  signal,
+} from "@angular/core";
+import { Router } from "@angular/router";
+import { InvoiceStore } from "../../../core/stores/invoice.store";
 import { NotificationService } from "../../../core/services/notification.service";
-import { TIPO_DOCUMENTO, MODALITA_PAGAMENTO } from "../../../core/models/sdi.model";
-import type { InvoiceDetail, InvoiceStatus } from "../../../core/models/invoice.model";
+import { FileDownloadService } from "../../../core/services/file-download.service";
+import { TipoDocumentoPipe } from "../../../shared/pipes/tipo-documento.pipe";
+import { InvoiceStatusPipe } from "../../../shared/pipes/invoice-status.pipe";
+import { AppCurrencyPipe } from "../../../shared/pipes/app-currency.pipe";
+import { ModalitaPagamentoPipe } from "../../../shared/pipes/modalita-pagamento.pipe";
+import type {
+  InvoiceDetail,
+  InvoiceStatus,
+  SdiNotificationDetail,
+  AttachmentDetail,
+  DatiDdtDetail,
+} from "../../../core/models/invoice.model";
 
 @Component({
   selector: "app-invoice-detail",
   standalone: true,
-  imports: [],
+  imports: [
+    TipoDocumentoPipe,
+    InvoiceStatusPipe,
+    AppCurrencyPipe,
+    ModalitaPagamentoPipe,
+  ],
   templateUrl: "./invoice-detail.component.html",
   styleUrl: "./invoice-detail.component.css",
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class InvoiceDetailComponent implements OnInit {
-  private invoiceService = inject(InvoiceService);
+export class InvoiceDetailComponent {
+  private invoiceStore = inject(InvoiceStore);
+  private fileDownload = inject(FileDownloadService);
   private router = inject(Router);
-  private route = inject(ActivatedRoute);
   private notify = inject(NotificationService);
+
+  /** Router input binding via withComponentInputBinding */
+  id = input.required<string>();
 
   invoice = signal<InvoiceDetail | null>(null);
   validationResult = signal<{ valid: boolean; errors: { code: string; message: string }[] } | null>(null);
   sending = signal(false);
+  downloadingPdf = signal(false);
+  showAdeView = signal(false);
+  signingP7m = signal(false);
+  rectifying = signal(false);
+  selectedReceipt = signal<SdiNotificationDetail | null>(null);
+  generatingAutofattura = signal(false);
 
-  async ngOnInit(): Promise<void> {
-    const id = this.route.snapshot.paramMap.get("id");
-    if (!id) {
-      this.router.navigate(["/invoices"]);
-      return;
+  isAutofattura = computed(() => {
+    const inv = this.invoice();
+    if (!inv) return false;
+    return !!(
+      inv.isAutofattura ||
+      ["TD16", "TD17", "TD18", "TD19", "TD20", "TD21", "TD27"].includes(inv.tipoDocumento)
+    );
+  });
+
+  isPurchase = computed(() => {
+    const inv = this.invoice();
+    return inv?.direction === "purchase";
+  });
+
+  /** Scarto calculation for the 5-day rectification window (Circolare AdE 13/E 2018). */
+  scartoInfo = computed(() => {
+    const inv = this.invoice();
+    if (!inv || inv.stato !== "rejected") return null;
+
+    const notifs = inv.notifications ?? [];
+    const ns = notifs.find((n) => n.tipo === "NS");
+    if (!ns) return { notification: null, daysRemaining: 5, expired: false };
+
+    let daysRemaining = 5;
+    let expired = false;
+
+    if (ns.dataOraRicezione) {
+      const receiptDate = new Date(ns.dataOraRicezione);
+      if (!isNaN(receiptDate.getTime())) {
+        const diffMs = Date.now() - receiptDate.getTime();
+        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        daysRemaining = Math.max(0, 5 - diffDays);
+        expired = diffDays > 5;
+      }
     }
-    try {
-      const inv = await this.invoiceService.getInvoice(id);
-      this.invoice.set(inv);
-    } catch {
-      this.notify.error("Errore nel caricamento della fattura");
-      this.router.navigate(["/invoices"]);
-    }
+
+    return { notification: ns, daysRemaining, expired };
+  });
+
+  /** Latest delivery or receipt notification (RC, MC, NS, NE, DT). */
+  latestNotification = computed(() => {
+    const inv = this.invoice();
+    const notifs = inv?.notifications ?? [];
+    return notifs.length > 0 ? notifs[notifs.length - 1] : null;
+  });
+
+  hasDdt = computed(() => (this.invoice()?.datiDdt?.length ?? 0) > 0);
+  hasAllegati = computed(() => (this.invoice()?.allegati?.length ?? 0) > 0);
+
+  constructor() {
+    effect(async () => {
+      const invoiceId = this.id();
+      // Refresh the open fascicolo when the background PEC sync completes.
+      this.invoiceStore.lastPecSuccessAt();
+      if (!invoiceId) return;
+
+      try {
+        const inv = await this.invoiceStore.getInvoice(invoiceId);
+        this.invoice.set(inv);
+      } catch {
+        this.notify.error("Errore nel caricamento della fattura");
+        this.router.navigate(["/invoices"]);
+      }
+    });
   }
 
   async validate(): Promise<void> {
     const inv = this.invoice();
     if (!inv) return;
     try {
-      const result = await this.invoiceService.validateInvoice(inv.id);
+      const result = await this.invoiceStore.validateInvoice(inv.id);
       this.validationResult.set(result);
       if (result.valid) {
         this.notify.success("Fattura valida");
@@ -69,8 +153,8 @@ export class InvoiceDetailComponent implements OnInit {
     if (!inv) return;
     this.sending.set(true);
     try {
-      await this.invoiceService.sendInvoicePec(inv.id);
-      const updated = await this.invoiceService.getInvoice(inv.id);
+      await this.invoiceStore.sendInvoicePec(inv.id);
+      const updated = await this.invoiceStore.getInvoice(inv.id);
       this.invoice.set(updated);
       this.notify.success("Fattura inviata a SDI via PEC");
     } catch (e) {
@@ -84,7 +168,7 @@ export class InvoiceDetailComponent implements OnInit {
     const inv = this.invoice();
     if (!inv) return;
     try {
-      const updated = await this.invoiceService.setStatus(inv.id, status);
+      const updated = await this.invoiceStore.setStatus(inv.id, status);
       this.invoice.set(updated);
       this.notify.success(successMsg);
     } catch (e) {
@@ -98,19 +182,195 @@ export class InvoiceDetailComponent implements OnInit {
     const inv = this.invoice();
     if (!inv) return;
     try {
-      const xml = await this.invoiceService.exportXml(inv.id);
-      // Download as file
-      const blob = new Blob([xml], { type: "application/xml" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${inv.numero}.xml`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const xml = await this.invoiceStore.exportXml(inv.id);
+      this.fileDownload.downloadTextFile(xml, `${inv.numero}.xml`, "application/xml");
       this.notify.success("XML esportato");
     } catch {
       this.notify.error("Errore durante l'esportazione XML");
     }
+  }
+
+  async downloadPdf(): Promise<void> {
+    const inv = this.invoice();
+    if (!inv) return;
+    this.downloadingPdf.set(true);
+    try {
+      const pdfBytes = await this.invoiceStore.renderPdf(inv.id);
+      this.fileDownload.downloadBinaryFile(
+        pdfBytes,
+        `Fattura_${inv.numero.replace(/\//g, "-")}.pdf`,
+        "application/pdf"
+      );
+      this.notify.success("PDF di cortesia scaricato con successo");
+    } catch {
+      this.notify.error("Errore durante la generazione del PDF");
+    } finally {
+      this.downloadingPdf.set(false);
+    }
+  }
+
+  formatBytes(bytes: number): string {
+    if (!bytes || bytes === 0) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+  }
+
+  private base64ToUint8Array(base64: string): Uint8Array {
+    const cleanBase64 = base64.replace(/\s/g, "");
+    const binaryString = window.atob(cleanBase64);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
+  }
+
+  private getMimeType(filename: string, formato?: string | null): string {
+    const ext = (formato || filename.split(".").pop() || "").toLowerCase();
+    switch (ext) {
+      case "pdf": return "application/pdf";
+      case "png": return "image/png";
+      case "jpg":
+      case "jpeg": return "image/jpeg";
+      case "xml": return "application/xml";
+      case "txt": return "text/plain";
+      case "zip": return "application/zip";
+      default: return "application/octet-stream";
+    }
+  }
+
+  downloadAttachment(att: AttachmentDetail): void {
+    try {
+      const bytes = this.base64ToUint8Array(att.attachmentBase64);
+      const mime = this.getMimeType(att.nomeAttachment, att.formatoAttachment);
+      this.fileDownload.downloadBinaryFile(bytes, att.nomeAttachment, mime);
+      this.notify.success(`Allegato "${att.nomeAttachment}" scaricato con successo`);
+    } catch {
+      this.notify.error("Errore durante il download dell'allegato");
+    }
+  }
+
+  previewAttachment(att: AttachmentDetail): void {
+    try {
+      const bytes = this.base64ToUint8Array(att.attachmentBase64);
+      const mime = this.getMimeType(att.nomeAttachment, att.formatoAttachment);
+      const blob = new Blob([bytes as any], { type: mime });
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+    } catch {
+      this.notify.error("Impossibile aprire l'anteprima dell'allegato");
+    }
+  }
+
+  printInvoice(): void {
+    window.print();
+  }
+
+  async signP7m(): Promise<void> {
+    const inv = this.invoice();
+    if (!inv) return;
+    this.signingP7m.set(true);
+    try {
+      const p7mBytes = await this.invoiceStore.signP7m(inv.id);
+      this.fileDownload.downloadBinaryFile(
+        p7mBytes,
+        `Fattura_${inv.numero.replace(/\//g, "-")}.xml.p7m`,
+        "application/pkcs7-mime"
+      );
+      const updated = await this.invoiceStore.getInvoice(inv.id);
+      this.invoice.set(updated);
+      this.notify.success("Fattura firmata digitalmente in formato CAdES (.xml.p7m)");
+    } catch (e) {
+      this.notify.error(typeof e === "string" ? e : "Errore durante la firma digitale");
+    } finally {
+      this.signingP7m.set(false);
+    }
+  }
+
+  async createAutofattura(tipo?: string): Promise<void> {
+    const inv = this.invoice();
+    if (!inv) return;
+    this.generatingAutofattura.set(true);
+    try {
+      const draft = await this.invoiceStore.generateAutofatturaDraft(inv.id, tipo);
+      this.notify.success(`Bozza di autofattura (${draft.tipoDocumento}) generata con successo!`);
+      this.router.navigate(["/invoices/new"], { state: { autofatturaDraft: draft } });
+    } catch (e) {
+      this.notify.error(
+        typeof e === "string" ? e : "Errore durante la generazione dell'autofattura"
+      );
+    } finally {
+      this.generatingAutofattura.set(false);
+    }
+  }
+
+  toggleAdeView(): void {
+    this.showAdeView.update((v) => !v);
+  }
+
+  /** Rectify a rejected invoice, returning it to draft state for correction within 5 days. */
+  async rectifyRejected(): Promise<void> {
+    const inv = this.invoice();
+    if (!inv) return;
+    this.rectifying.set(true);
+    try {
+      const updated = await this.invoiceStore.rectifyRejectedInvoice(inv.id);
+      this.invoice.set(updated);
+      this.notify.success(
+        "Fattura sbloccata e riportata in bozza. Correggi gli errori segnalati e re-invia entro 5 giorni."
+      );
+      this.router.navigate(["/invoices", inv.id, "edit"]);
+    } catch (e) {
+      this.notify.error(
+        typeof e === "string" ? e : "Errore durante la rettifica della fattura scartata"
+      );
+    } finally {
+      this.rectifying.set(false);
+    }
+  }
+
+  /** Import an SDI receipt XML file manually into this invoice dossier. */
+  async onReceiptFileSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
+    const file = input.files[0];
+    const reader = new FileReader();
+
+    reader.onload = async () => {
+      try {
+        const xml = reader.result as string;
+        await this.invoiceStore.importSdiReceipt(xml);
+        const inv = this.invoice();
+        if (inv) {
+          const reloaded = await this.invoiceStore.getInvoice(inv.id);
+          this.invoice.set(reloaded);
+        }
+        this.notify.success("Ricevuta SDI importata con successo nel fascicolo!");
+      } catch (err) {
+        this.notify.error(
+          typeof err === "string" ? err : "Errore nell'importazione della ricevuta SDI"
+        );
+      } finally {
+        input.value = "";
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  downloadReceipt(notif: SdiNotificationDetail): void {
+    const filename = notif.nomeFile || `Ricevuta_${notif.tipo}_${notif.id.slice(0, 5)}.xml`;
+    this.fileDownload.downloadTextFile(notif.rawXml, filename, "application/xml");
+  }
+
+  viewReceipt(notif: SdiNotificationDetail): void {
+    this.selectedReceipt.set(notif);
+  }
+
+  closeReceiptModal(): void {
+    this.selectedReceipt.set(null);
   }
 
   edit(): void {
@@ -122,33 +382,5 @@ export class InvoiceDetailComponent implements OnInit {
 
   goBack(): void {
     this.router.navigate(["/invoices"]);
-  }
-
-  tipoLabel(code: string): string {
-    return TIPO_DOCUMENTO[code] ?? code;
-  }
-
-  modalitaLabel(code: string): string {
-    return MODALITA_PAGAMENTO[code] ?? code;
-  }
-
-  statusLabel(status: InvoiceStatus): string {
-    const labels: Record<InvoiceStatus, string> = {
-      draft: "Bozza",
-      validated: "Validata",
-      sent: "Inviata",
-      accepted: "Accettata",
-      rejected: "Rifiutata",
-    };
-    return labels[status] ?? status;
-  }
-
-  badgeClass(status: InvoiceStatus): string {
-    return `badge badge-${status}`;
-  }
-
-  formatCurrency(value: number | null): string {
-    if (value == null) return "-";
-    return new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" }).format(value);
   }
 }

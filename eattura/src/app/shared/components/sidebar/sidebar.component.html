@@ -1,19 +1,14 @@
 <nav class="sidebar">
-  <div class="sidebar-header">
-    <h2>Eattura</h2>
-  </div>
+  <div class="nav-caption">WORKSPACE</div>
   <ul class="sidebar-nav">
     <li>
-      <a routerLink="/dashboard" routerLinkActive="active">Dashboard</a>
+      <a routerLink="/dashboard" routerLinkActive="active"><lucide-icon [img]="icons.LayoutDashboard" [size]="19" />Dashboard</a>
     </li>
     <li>
-      <a routerLink="/clients" routerLinkActive="active">Clienti</a>
+      <a routerLink="/clients" routerLinkActive="active"><lucide-icon [img]="icons.UsersRound" [size]="19" />Clienti</a>
     </li>
     <li>
-      <a routerLink="/invoices" routerLinkActive="active">Fatture</a>
-    </li>
-    <li>
-      <a routerLink="/settings" routerLinkActive="active">Impostazioni</a>
+      <a routerLink="/invoices" routerLinkActive="active"><lucide-icon [img]="icons.FileText" [size]="19" />Fatture</a>
     </li>
   </ul>
 </nav>

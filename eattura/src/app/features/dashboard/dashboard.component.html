@@ -47,11 +47,11 @@
         <div class="year-totals">
           <div class="total-item income">
             <span class="total-label">Fatturato</span>
-            <span class="total-value">{{ formatCurrency(yearIncome()) }}</span>
+            <span class="total-value">{{ yearIncome() | appCurrency }}</span>
           </div>
           <div class="total-item cost">
             <span class="total-label">Speso</span>
-            <span class="total-value">{{ formatCurrency(yearCost()) }}</span>
+            <span class="total-value">{{ yearCost() | appCurrency }}</span>
           </div>
           <button class="btn-primary btn-sm" (click)="viewYearInvoices()">
             Vedi fatture

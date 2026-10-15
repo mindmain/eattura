@@ -57,11 +57,35 @@
           <label for="idPaese">Paese *</label>
           <input id="idPaese" type="text" formControlName="idPaese" maxlength="2" />
         </div>
-        <div class="form-group">
+        <div class="form-group" style="flex: 2;">
           <label for="idCodice">Partita IVA *</label>
-          <input id="idCodice" type="text" formControlName="idCodice" />
+          <div class="input-with-button">
+            <input id="idCodice" type="text" formControlName="idCodice" placeholder="es. 01234567890" />
+            <button
+              type="button"
+              class="btn-vies"
+              [disabled]="isViesLoading() || !form.get('idCodice')?.value"
+              (click)="lookupVies()"
+              title="Interroga il registro VIES ed autocompila l'anagrafica aziendale"
+            >
+              @if (isViesLoading()) {
+                <span class="spinner-small"></span> Verifica...
+              } @else {
+                🔍 Verifica & Autocompila VIES
+              }
+            </button>
+          </div>
           @if (form.get("idCodice")?.invalid && form.get("idCodice")?.touched) {
-            <span class="form-error">Inserire una partita IVA valida (11 cifre)</span>
+            <span class="form-error">Inserire una partita IVA valida</span>
+          }
+          @if (viesStatus(); as status) {
+            <div class="vies-badge mt-1" [class.vies-valid]="status.valid" [class.vies-invalid]="!status.valid">
+              @if (status.valid) {
+                <span>🟢 <strong>Partita IVA attiva e verificata</strong> (Registro VIES UE)</span>
+              } @else {
+                <span>🔴 <strong>Partita IVA non valida o non presente su VIES</strong>: {{ status.message }}</span>
+              }
+            </div>
           }
         </div>
       </div>
@@ -136,12 +160,35 @@
       </div>
     </div>
 
-    <!-- SDI -->
+    <!-- SDI & PA -->
     <div class="form-section">
-      <h3>SDI</h3>
+      <h3>SDI e Pubblica Amministrazione</h3>
+      <div class="form-group mb-2">
+        <label class="checkbox-label" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+          <input type="checkbox" formControlName="isPa" (change)="onPaChange()" />
+          <strong>Ente Pubblico / Pubblica Amministrazione (PA)</strong>
+        </label>
+        <p class="text-xs text-muted" style="margin-left: 1.5rem; margin-top: 0.2rem;">
+          Se attivato, le fatture emesse verso questo committente utilizzeranno il tracciato B2G FPA12 e la scissione dei pagamenti (Split Payment).
+        </p>
+      </div>
+
       <div class="form-group">
-        <label for="codiceDestinatario">Codice Destinatario</label>
-        <input id="codiceDestinatario" type="text" formControlName="codiceDestinatario" maxlength="7" />
+        <label for="codiceDestinatario">
+          {{ form.get('isPa')?.value ? 'Codice Univoco Ufficio IPA (esattamente 6 caratteri) *' : 'Codice Destinatario SDI (7 caratteri)' }}
+        </label>
+        <input
+          id="codiceDestinatario"
+          type="text"
+          formControlName="codiceDestinatario"
+          [attr.maxlength]="form.get('isPa')?.value ? 6 : 7"
+          [placeholder]="form.get('isPa')?.value ? 'es. UF12AB' : '0000000'"
+        />
+        @if (form.get('codiceDestinatario')?.invalid && form.get('codiceDestinatario')?.touched) {
+          <span class="form-error">
+            {{ form.get('isPa')?.value ? 'Il codice IPA della PA deve contenere esattamente 6 caratteri alfanumerici.' : 'Il codice destinatario deve contenere 7 caratteri.' }}
+          </span>
+        }
       </div>
     </div>
 
