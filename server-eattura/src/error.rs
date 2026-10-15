@@ -2,14 +2,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use thiserror::Error;
 
-/// Application-wide error type that converts to HTTP responses.
-///
-/// Each variant maps to an appropriate HTTP status code:
-/// - NotFound -> 404
-/// - Validation -> 422
-/// - Database -> 500
-/// - Xml -> 422
-/// - Internal -> 500
+/// Application-wide error type that converts to HTTP responses for the stateless server.
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("Not found: {0}")]
@@ -22,14 +15,19 @@ pub enum AppError {
     Conflict(String),
 
     #[error("Validation failed")]
-    #[allow(dead_code)] // reserved for endpoints that surface SDI validation errors as 422
     Validation(common::validation::ValidationResult),
-
-    #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
 
     #[error("XML error: {0}")]
     Xml(#[from] common::xml::XmlError),
+
+    #[error("PDF error: {0}")]
+    Pdf(#[from] common::pdf::PdfError),
+
+    #[error("PEC error: {0}")]
+    Pec(String),
+
+    #[error("Bad gateway: {0}")]
+    BadGateway(String),
 
     #[error("Internal error: {0}")]
     Internal(String),
@@ -67,16 +65,21 @@ impl IntoResponse for AppError {
                     serde_json::json!({ "error": "Validation failed", "errors": errors }),
                 )
             }
-            AppError::Database(err) => {
-                tracing::error!("Database error: {err}");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    serde_json::json!({ "error": "Internal server error" }),
-                )
-            }
             AppError::Xml(err) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 serde_json::json!({ "error": err.to_string() }),
+            ),
+            AppError::Pdf(err) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                serde_json::json!({ "error": err.to_string() }),
+            ),
+            AppError::Pec(msg) => (
+                StatusCode::BAD_GATEWAY,
+                serde_json::json!({ "error": msg }),
+            ),
+            AppError::BadGateway(msg) => (
+                StatusCode::BAD_GATEWAY,
+                serde_json::json!({ "error": msg }),
             ),
             AppError::Internal(msg) => (
                 StatusCode::INTERNAL_SERVER_ERROR,

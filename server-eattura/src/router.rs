@@ -3,55 +3,47 @@ use axum::Router;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::handlers::{clients, health, invoices, pec};
+use crate::handlers::{health, pec, relay, tools, vies};
 use crate::state::AppState;
 
-/// Build the Axum router with all API routes.
+/// Build the Axum router for the stateless "passa-carte" server.
 ///
 /// Route map:
 /// ```text
-/// GET    /api/health                   -> health check
+/// GET    /api/health                       -> health check
 ///
-/// GET    /api/invoices                 -> list invoices (paginated)
-/// GET    /api/invoices/:id             -> get invoice by ID
-/// POST   /api/invoices                 -> create invoice
-/// PUT    /api/invoices/:id             -> update invoice
-/// DELETE /api/invoices/:id             -> delete invoice
-/// POST   /api/invoices/:id/validate    -> validate against SDI rules
-/// GET    /api/invoices/:id/xml         -> export as SDI XML
-/// POST   /api/invoices/xml/import      -> import from SDI XML
+/// POST   /api/proxy/pec/send               -> send invoice via PEC SMTP
+/// POST   /api/proxy/pec/poll               -> poll SDI notifications via PEC IMAP
 ///
-/// GET    /api/clients                  -> list clients
-/// GET    /api/clients/:id              -> get client by ID
-/// POST   /api/clients                  -> create client
-/// PUT    /api/clients/:id              -> update client
-/// DELETE /api/clients/:id              -> delete client
+/// POST   /api/tools/validate               -> validate invoice XML or JSON against SDI rules
+/// POST   /api/tools/convert/xml-to-json     -> decode SDI XML into JSON
+/// POST   /api/tools/convert/json-to-xml     -> encode JSON into SDI XML
+/// POST   /api/tools/render-pdf             -> generate courtesy PDF stream
+/// POST   /api/tools/sign-p7m               -> proxy CAdES-BES PKCS#7 signature
+///
+/// POST   /api/relay/push                   -> push E2EE encrypted blob to ephemeral topic
+/// GET    /api/relay/pull/{topic}           -> pull and consume E2EE encrypted blobs
+/// GET    /api/relay/peek/{topic}           -> peek at E2EE encrypted blobs
 /// ```
 pub fn create_router(state: AppState) -> Router {
     Router::new()
+        // Health route
         .route("/api/health", get(health::health))
-        // Invoice routes
-        .route("/api/invoices", get(invoices::list_invoices).post(invoices::create_invoice))
-        .route(
-            "/api/invoices/{id}",
-            get(invoices::get_invoice)
-                .put(invoices::update_invoice)
-                .delete(invoices::delete_invoice),
-        )
-        .route("/api/invoices/{id}/status", post(invoices::set_status))
-        .route("/api/invoices/{id}/validate", post(invoices::validate_invoice))
-        .route("/api/invoices/{id}/xml", get(invoices::export_xml))
-        .route("/api/invoices/{id}/send", post(pec::send_invoice))
-        .route("/api/invoices/xml/import", post(invoices::import_xml))
-        .route("/api/pec/sync", post(pec::sync))
-        // Client routes
-        .route("/api/clients", get(clients::list_clients).post(clients::create_client))
-        .route(
-            "/api/clients/{id}",
-            get(clients::get_client)
-                .put(clients::update_client)
-                .delete(clients::delete_client),
-        )
+        // VIES VAT lookup proxy route
+        .route("/api/proxy/vat-lookup", get(vies::vat_lookup))
+        // PEC proxy routes
+        .route("/api/proxy/pec/send", post(pec::send_pec))
+        .route("/api/proxy/pec/poll", post(pec::poll_pec))
+        // Tool & transformation routes
+        .route("/api/tools/validate", post(tools::validate))
+        .route("/api/tools/convert/xml-to-json", post(tools::xml_to_json))
+        .route("/api/tools/convert/json-to-xml", post(tools::json_to_xml))
+        .route("/api/tools/render-pdf", post(tools::render_pdf))
+        .route("/api/tools/sign-p7m", post(tools::sign_p7m))
+        // E2EE relay routes (stateless multi-device sync)
+        .route("/api/relay/push", post(relay::push))
+        .route("/api/relay/pull/{topic}", get(relay::pull))
+        .route("/api/relay/peek/{topic}", get(relay::peek))
         .layer(axum::middleware::from_fn(crate::middleware::require_api_key))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())

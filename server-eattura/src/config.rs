@@ -1,32 +1,41 @@
 /// Server configuration loaded from environment variables.
 ///
 /// Expected env vars:
-/// - `DATABASE_URL`: PostgreSQL connection string (required)
 /// - `HOST`: Bind address (default: "0.0.0.0")
 /// - `PORT`: Bind port (default: 3000)
+/// - `API_KEY`: Optional secret key required in `X-Api-Key` header
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
-    pub database_url: String,
     pub host: String,
     pub port: u16,
+    pub api_key: Option<String>,
 }
 
 impl ServerConfig {
     /// Load configuration from environment variables.
-    /// Falls back to defaults for HOST and PORT if not set.
-    /// Returns an error if DATABASE_URL is not set.
+    /// Defaults to 0.0.0.0:3000 if not set.
     pub fn from_env() -> Result<Self, std::env::VarError> {
-        let database_url = std::env::var("DATABASE_URL")?;
         let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
         let port = std::env::var("PORT")
             .ok()
             .and_then(|p| p.parse().ok())
             .unwrap_or(3000);
+        let api_key = std::env::var("API_KEY").ok();
 
         Ok(Self {
-            database_url,
             host,
             port,
+            api_key,
         })
+    }
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            host: "0.0.0.0".to_string(),
+            port: 3000,
+            api_key: None,
+        }
     }
 }

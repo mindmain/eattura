@@ -1,13 +1,23 @@
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::RwLock;
 use crate::config::ServerConfig;
+use crate::services::relay_service::RelayStore;
 
-/// Shared application state passed to all Axum handlers via `State` extractor.
-///
-/// Contains the database pool and server configuration.
-/// Cloneable because PgPool uses an internal Arc.
+/// Shared application state for the stateless "passa-carte" server.
+/// Holds server configuration and an in-memory ephemeral relay store for E2EE sync.
+/// Zero database connections, zero persistent files.
 #[derive(Clone)]
 pub struct AppState {
-    pub db: sqlx::PgPool,
-    #[allow(dead_code)] // available to handlers; not all read it yet
     pub config: Arc<ServerConfig>,
+    pub relay: Arc<RwLock<RelayStore>>,
+}
+
+impl AppState {
+    pub fn new(config: ServerConfig) -> Self {
+        Self {
+            config: Arc::new(config),
+            relay: Arc::new(RwLock::new(RelayStore::new(Duration::from_secs(600)))), // 10 min TTL
+        }
+    }
 }
