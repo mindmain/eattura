@@ -1,7 +1,7 @@
-/// Application state managed by Tauri, accessible in all commands.
-///
-/// Contains the SQLite connection pool for local database operations.
-/// Injected via `tauri::State<'_, TauriState>` in command parameters.
+use std::sync::{Arc, Mutex};
+
+/// Shared desktop state backed by a local JSON snapshot and real-time filesystem watcher.
 pub struct TauriState {
-    pub db: sqlx::SqlitePool,
+    pub store: crate::storage::FileStore,
+    pub watcher: Arc<Mutex<Option<crate::commands::vault::VaultWatcher>>>,
 }

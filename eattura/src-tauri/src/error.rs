@@ -17,10 +17,10 @@ impl std::fmt::Display for CommandError {
     }
 }
 
-impl From<sqlx::Error> for CommandError {
-    fn from(e: sqlx::Error) -> Self {
+impl From<std::io::Error> for CommandError {
+    fn from(e: std::io::Error) -> Self {
         CommandError {
-            code: "DB_ERROR".to_string(),
+            code: "STORAGE_ERROR".to_string(),
             message: e.to_string(),
         }
     }
