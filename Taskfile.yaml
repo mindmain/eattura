@@ -35,7 +35,7 @@ tasks:
     deps: [proto] # Ensure proto files are ready before starting
     dir: "{{.APP_DIR}}"
     cmds:
-      - "{{.BUN}} run tauri dev"
+      - "../scripts/run-tauri-dev.sh"
 
   server:
     desc: "Run the Backend Server (separately from the UI)"
@@ -54,10 +54,10 @@ tasks:
 
   # --- UTILITIES ---
   icons:
-    desc: "Generate icons from a source PNG file"
+    desc: "Generate platform icons from the FE source SVG"
     dir: "{{.APP_DIR}}"
     cmds:
-      - "{{.BUN}} run tauri icon ./src-tauri/icons/icon.png"
+      - "{{.BUN}} run tauri icon ./src/assets/eattura-mark.svg"
 
   clean:
     desc: "Clean build directories"

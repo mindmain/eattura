@@ -12,9 +12,13 @@
   "app": {
     "windows": [
       {
-        "title": "eattura",
-        "width": 800,
-        "height": 600
+        "title": "",
+        "width": 1280,
+        "height": 850,
+        "minWidth": 1024,
+        "minHeight": 700,
+        "decorations": true,
+        "titleBarStyle": "Overlay"
       }
     ],
     "security": {

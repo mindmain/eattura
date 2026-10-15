@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Eattura FE">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#202633"/>
+      <stop offset="1" stop-color="#090c12"/>
+    </linearGradient>
+    <linearGradient id="letter-e" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#42e3e3"/>
+      <stop offset="1" stop-color="#159ad2"/>
+    </linearGradient>
+    <linearGradient id="letter-f" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#ffe59a"/>
+      <stop offset="1" stop-color="#ffad55"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#tile)"/>
+  <path d="M126 132H365M126 132V380H365M126 256H324" fill="none" stroke="url(#letter-e)" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M190 132H365M190 132V256H324" fill="none" stroke="url(#letter-f)" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
