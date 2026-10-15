@@ -8,11 +8,13 @@ api/
 .tmp/
 
 target/
-/dist
 /tmp
-/out-tsc
 /bazel-out
-/node_modules
+**/dist/
+**/out-tsc/
+**/node_modules/
+**/logs/
+/eattura/pnpm-lock.yaml
 **/npm-debug.log
 **/yarn-error.log
 .idea/
@@ -22,7 +24,6 @@ target/
 *.launch
 **/.settings/
 *.sublime-workspace
-**/node_modules/*
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json
@@ -30,7 +31,7 @@ target/
 !.vscode/extensions.json
 .history/*
 
-**/.angular/cache
+**/.angular/
 **/.sass-cache/
 **/connect.lock
 **/coverage
