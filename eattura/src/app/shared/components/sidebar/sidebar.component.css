@@ -26,3 +26,4 @@
 }
 .sidebar-nav a:hover { background: var(--surface-hover); color: var(--text-primary); }
 .sidebar-nav a.active { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.support-nav { margin-top: auto; padding-top: 1rem; border-top: 1px solid var(--border); }

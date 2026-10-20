@@ -1,0 +1,51 @@
+<div class="diagnostics">
+  <header>
+    <div>
+      <h1>Registro attività</h1>
+      <p>Errori, avvisi ed eventi dell’app, dal più recente.</p>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn btn-secondary" (click)="openDirectory()" [disabled]="!snapshot().directory">Apri cartella log</button>
+      <button type="button" class="btn btn-primary" (click)="refresh()" [disabled]="loading()">{{ loading() ? 'Caricamento…' : 'Aggiorna' }}</button>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div>
+      <label for="log-level">Livello</label>
+      <select id="log-level" #levelSelect [value]="level()" (change)="setLevel(levelSelect.value)">
+        <option value="all">Tutti gli eventi</option>
+        <option value="error">Errori</option>
+        <option value="warn">Avvisi</option>
+        <option value="info">Informazioni</option>
+      </select>
+    </div>
+    <span class="text-muted" role="status">{{ entries().length }} eventi visibili · ultimi 500 conservati in memoria</span>
+  </div>
+
+  @if (error()) {
+    <p class="form-error" role="alert">{{ error() }}</p>
+  }
+  @if (!snapshot().directory && !loading()) {
+    <p class="storage-note">Registro su file non disponibile. Nell’app desktop gli eventi vengono salvati localmente quando la cartella dei log è accessibile.</p>
+  }
+  <div class="log-table" [attr.aria-busy]="loading()">
+    <table class="table">
+      <caption class="sr-only">Registro degli eventi recenti di Eattura</caption>
+      <thead><tr><th scope="col">Data e ora</th><th scope="col">Livello</th><th scope="col">Origine</th><th scope="col">Messaggio</th></tr></thead>
+      <tbody>
+        @for (entry of entries(); track $index) {
+          <tr>
+            <td class="timestamp">{{ entry.timestamp | date:'dd/MM/yyyy HH:mm:ss' }}</td>
+            <td><span class="level" [class]="'level level-' + entry.level">{{ labels[entry.level] }}</span></td>
+            <td class="source">{{ entry.source }}</td>
+            <td class="message">{{ entry.message }}</td>
+          </tr>
+        } @empty {
+          <tr><td colspan="4" class="empty-state">{{ loading() ? 'Caricamento del registro…' : 'Nessun evento da mostrare per questo livello.' }}</td></tr>
+        }
+      </tbody>
+    </table>
+  </div>
+  <p class="storage-note">I file del registro ruotano automaticamente: fino a due file da 1 MB. Gli argomenti dei comandi non vengono registrati.</p>
+</div>

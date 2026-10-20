@@ -1,0 +1,17 @@
+.diagnostics { padding: 1.5rem; }
+header, .toolbar, .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0.75rem; }
+header, .toolbar { justify-content: space-between; margin-bottom: 1.5rem; }
+header p, .storage-note { color: var(--text-muted); font-size: 0.9rem; }
+.toolbar select { min-width: 180px; }
+.log-table { overflow-x: auto; }
+.timestamp { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.source { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.message { min-width: 200px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.level { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 8px; background: var(--surface-soft); font-size: 0.8rem; font-weight: 650; }
+.level-info { color: var(--accent); background: var(--accent-soft); }
+.level-warn { color: #855200; background: #fff0cf; }
+.level-error { color: #a81f33; background: #ffe5e9; }
+:host-context([data-theme="dark"]) .level-warn { color: #ffd295; background: #392815; }
+:host-context([data-theme="dark"]) .level-error { color: #ffadb7; background: #3a2025; }
+.storage-note { margin: 1rem 0; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }

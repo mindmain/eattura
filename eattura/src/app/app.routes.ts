@@ -61,6 +61,10 @@ export const routes: Routes = [
   { path: "schedule", redirectTo: "dashboard", pathMatch: "full" },
   { path: "export", redirectTo: "dashboard", pathMatch: "full" },
   {
+    path: "diagnostics",
+    loadComponent: () => import("./features/diagnostics/diagnostics.component").then((m) => m.DiagnosticsComponent),
+  },
+  {
     path: "settings",
     loadComponent: () =>
       import("./features/settings/settings.component").then(

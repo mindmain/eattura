@@ -3,7 +3,7 @@ use std::time::Duration;
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebounceEventResult};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::state::TauriState;
 
@@ -100,7 +100,9 @@ pub fn spawn_vault_watcher(app_handle: AppHandle, vault_dir: PathBuf) -> Result<
                     }
                 }
                 Err(e) => {
-                    eprintln!("[vault-watcher] error: {:?}", e);
+                    if let Some(log) = app.try_state::<crate::app_log::AppLog>() {
+                        log.record(crate::app_log::LogLevel::Error, "vault", &e.to_string());
+                    }
                 }
             }
         },

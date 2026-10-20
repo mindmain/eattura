@@ -1,3 +1,4 @@
+mod app_log;
 mod commands;
 mod error;
 mod pec;
@@ -7,6 +8,7 @@ mod storage;
 use std::path::{Path, PathBuf};
 use tauri::Manager;
 
+use app_log::{AppLog, LogLevel};
 use state::TauriState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -20,13 +22,34 @@ pub fn run() {
             // persists across application uninstalls and updates.
             let data_dir = resolve_data_directory(app)?;
             std::fs::create_dir_all(&data_dir)?;
+            let log = AppLog::open(data_dir.join("logs")).unwrap_or_else(|error| {
+                let log = AppLog::memory();
+                log.record(
+                    LogLevel::Warn,
+                    "app",
+                    &format!("Persistent logging unavailable: {error}"),
+                );
+                log
+            });
+            log.record(
+                LogLevel::Info,
+                "app",
+                &format!("Eattura {} started", app.package_info().version),
+            );
+            app.manage(log.clone());
             std::fs::create_dir_all(data_dir.join("Emesse"))?;
             std::fs::create_dir_all(data_dir.join("Ricevute"))?;
 
-            let store = storage::FileStore::open(data_dir.join("eattura.json"))?;
+            let store =
+                storage::FileStore::open(data_dir.join("eattura.json")).inspect_err(|error| {
+                    log.record(LogLevel::Error, "storage", error);
+                })?;
 
             // Spawn real-time filesystem debounced watcher
-            let watcher = commands::vault::spawn_vault_watcher(app.handle().clone(), data_dir.clone()).ok();
+            let watcher =
+                commands::vault::spawn_vault_watcher(app.handle().clone(), data_dir.clone())
+                    .inspect_err(|error| log.record(LogLevel::Warn, "vault", error))
+                    .ok();
             let watcher_state = std::sync::Arc::new(std::sync::Mutex::new(watcher));
 
             app.manage(TauriState {
@@ -36,11 +59,14 @@ pub fn run() {
 
             // Background PEC cron: periodically poll the inbox for SDI
             // notifications. No-op while PEC is not configured.
-            spawn_pec_cron(store);
+            spawn_pec_cron(store, log);
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            app_log::get_app_logs,
+            app_log::write_app_log,
+            app_log::open_app_log_directory,
             commands::invoices::list_invoices,
             commands::invoices::get_invoice,
             commands::invoices::create_invoice,
@@ -94,7 +120,10 @@ pub fn run() {
             commands::payments::calculate_iva_liquidation,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|error| {
+            eprintln!("Error while running Eattura: {error}");
+            std::process::exit(1);
+        });
 }
 
 /// Interval between automatic PEC inbox polls.
@@ -105,27 +134,35 @@ const PEC_CRON_INTERVAL_SECS: i64 = 300;
 /// Each tick calls the same routine as the `sync_pec` command. When PEC is not
 /// configured (no settings or no keyring password) the run returns an error
 /// that is logged and ignored, so the cron is effectively off until set up.
-fn spawn_pec_cron(store: storage::FileStore) {
+fn spawn_pec_cron(store: storage::FileStore, log: AppLog) {
     tauri::async_runtime::spawn(async move {
         let mut last_failed_at = 0_i64;
         loop {
             let now = chrono::Utc::now().timestamp();
-            let due = commands::pec::sync_status_store(&store).await
+            let due = commands::pec::sync_status_store(&store)
+                .await
                 .map(|status| status.configured && status.next_sync_at <= now * 1000)
                 .unwrap_or(false);
             if due && now - last_failed_at >= PEC_CRON_INTERVAL_SECS {
                 match commands::pec::run_sync(&store).await {
-                Ok(notifications) if !notifications.is_empty() => {
-                    eprintln!(
-                        "[pec-cron] processed {} notification(s)",
-                        notifications.len()
-                    );
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    last_failed_at = chrono::Utc::now().timestamp();
-                    eprintln!("[pec-cron] skipped: {e}");
-                }
+                    Ok(notifications) => {
+                        log.record(
+                            LogLevel::Info,
+                            "pec",
+                            &format!(
+                                "Background sync completed: {} item(s) processed",
+                                notifications.len()
+                            ),
+                        );
+                    }
+                    Err(e) => {
+                        last_failed_at = chrono::Utc::now().timestamp();
+                        log.record(
+                            LogLevel::Error,
+                            "pec",
+                            &format!("Background sync failed: {e}"),
+                        );
+                    }
                 }
             }
             tokio::time::sleep(std::time::Duration::from_secs(15)).await;
