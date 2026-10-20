@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component } from "@angular/core";
 import { RouterLink, RouterLinkActive } from "@angular/router";
-import { LucideAngularModule, FileText, LayoutDashboard, UsersRound, ScrollText } from "lucide-angular";
+import { LucideAngularModule, FileText, LayoutDashboard, UsersRound, ScrollText, Info } from "lucide-angular";
 
 @Component({
   selector: "app-sidebar",
@@ -11,5 +11,5 @@ import { LucideAngularModule, FileText, LayoutDashboard, UsersRound, ScrollText 
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SidebarComponent {
-  protected readonly icons = { LayoutDashboard, UsersRound, FileText, ScrollText };
+  protected readonly icons = { LayoutDashboard, UsersRound, FileText, ScrollText, Info };
 }

@@ -1,0 +1,40 @@
+<div class="about">
+  <h1>Informazioni su Eattura</h1>
+  <section class="card introduction" aria-labelledby="about-title">
+    <div class="brand-line">
+      <img src="assets/eattura-mark.svg" width="64" height="64" alt="" />
+      <div>
+        <h2 id="about-title">Eattura</h2>
+        <p class="version" role="status">{{ version() ? 'Versione ' + version() : versionStatus() }}</p>
+      </div>
+      <span class="open-source">Open source</span>
+    </div>
+    <p class="tagline">La fatturazione elettronica, sul tuo computer.</p>
+    <p class="description">Eattura è un’app desktop open source per gestire le fatture elettroniche italiane.
+      Riunisce anagrafiche, documenti e comunicazioni con il Sistema di Interscambio in un unico archivio locale.</p>
+    <ul class="features">
+      <li><lucide-icon [img]="icons.FileCheck2" [size]="21" /><div><h3>Fatture e anagrafiche</h3><p>Crea e valida fatture, importa documenti XML e P7M e organizza clienti e fornitori.</p></div></li>
+      <li><lucide-icon [img]="icons.Mail" [size]="21" /><div><h3>Invio e ricezione via PEC</h3><p>Invia le fatture allo SdI e sincronizza fatture ricevute, notifiche ed esiti dalla tua casella PEC.</p></div></li>
+      <li><lucide-icon [img]="icons.HardDrive" [size]="21" /><div><h3>Un archivio sul tuo computer</h3><p>Conserva i documenti localmente, consulta lo storico ed esporta XML e PDF di cortesia.</p></div></li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="links-title">
+    <h2 id="links-title">Il progetto e l’autore</h2>
+    <div class="project-links">
+      <a class="card project-link" [href]="app.repositoryUrl" target="_blank" rel="noopener noreferrer" (click)="openLink($event, app.repositoryUrl)">
+        <lucide-icon [img]="icons.Github" [size]="24" />
+        <span><strong>Repository open source</strong><span>github.com/mindmain/eattura</span></span>
+        <lucide-icon [img]="icons.ExternalLink" [size]="18" aria-label="Apri nel browser" />
+      </a>
+      <a class="card project-link" [href]="app.websiteUrl" target="_blank" rel="noopener noreferrer" (click)="openLink($event, app.websiteUrl)">
+        <lucide-icon [img]="icons.Globe" [size]="24" />
+        <span><strong>Il sito dell’autore</strong><span>ocin.sh</span></span>
+        <lucide-icon [img]="icons.ExternalLink" [size]="18" aria-label="Apri nel browser" />
+      </a>
+    </div>
+    @if (error()) { <p class="form-error" role="alert">{{ error() }}</p> }
+    <p class="license">Pubblicato con licenza Apache 2.0. Codice sorgente e contributi sono disponibili su GitHub.</p>
+  </section>
+  <p class="diagnostics-link">Per consultare errori, avvisi e sincronizzazioni, apri il <a routerLink="/diagnostics">registro attività</a>.</p>
+</div>
