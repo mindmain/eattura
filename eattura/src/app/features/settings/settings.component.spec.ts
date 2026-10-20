@@ -3,7 +3,6 @@ import { TestBed } from "@angular/core/testing";
 import { SettingsComponent } from "./settings.component";
 import { SettingsStore } from "../../core/stores/settings.store";
 import { NotificationService } from "../../core/services/notification.service";
-import { SyncService } from "../../core/services/sync.service";
 
 describe("SettingsComponent issuer identity", () => {
   const saveCompany = vi.fn().mockResolvedValue(undefined);
@@ -17,7 +16,6 @@ describe("SettingsComponent issuer identity", () => {
       providers: [
         { provide: SettingsStore, useValue: { load: vi.fn().mockResolvedValue(null), saveCompany, savePec, dataDir: () => "" } },
         { provide: NotificationService, useValue: { success: vi.fn(), error: notifyError } },
-        { provide: SyncService, useValue: { getStoredConfig: () => ({ relayUrl: "", passphrase: "", deviceId: "" }) } },
       ],
     });
     component = TestBed.runInInjectionContext(() => new SettingsComponent());

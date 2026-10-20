@@ -5,8 +5,6 @@ import { toSignal } from "@angular/core/rxjs-interop";
 import { of } from "rxjs";
 import { SettingsStore } from "../../core/stores/settings.store";
 import { NotificationService } from "../../core/services/notification.service";
-import { SyncService } from "../../core/services/sync.service";
-import type { SyncConfig, SyncStatusDto } from "../../core/models/sync.model";
 import { signal } from "@angular/core";
 import { REGIME_FISCALE } from "../../core/models/sdi.model";
 import { ThemeService, type ThemePreference } from "../../core/services/theme.service";
@@ -32,19 +30,7 @@ export class SettingsComponent implements OnInit {
 
   regimiFiscali = Object.entries(REGIME_FISCALE);
   readonly dataDir = this.settingsStore.dataDir;
-  private syncService = inject(SyncService);
-
-  syncStatus = signal<SyncStatusDto | null>(null);
-  syncing = signal<boolean>(false);
-  lastSyncResult = signal<string | null>(null);
   subjectType = signal<"azienda" | "persona">("azienda");
-
-  syncForm = this.fb.group({
-    relayUrl: ["http://localhost:8080", Validators.required],
-    passphrase: ["", Validators.required],
-    deviceId: ["Desktop", Validators.required],
-    apiKey: [""],
-  });
 
   companyForm = this.fb.group({
     denominazione: [""],
@@ -84,13 +70,6 @@ export class SettingsComponent implements OnInit {
   }
 
   async ngOnInit(): Promise<void> {
-    const syncCfg = this.syncService.getStoredConfig();
-    this.syncForm.patchValue({
-      relayUrl: syncCfg.relayUrl,
-      passphrase: syncCfg.passphrase,
-      deviceId: syncCfg.deviceId,
-      apiKey: syncCfg.apiKey ?? "",
-    });
     try {
       const s = await this.settingsStore.load();
       if (s?.company) {
@@ -210,109 +189,6 @@ export class SettingsComponent implements OnInit {
       this.notify.error(
         e instanceof Error ? e.message : "Errore durante il salvataggio della configurazione PEC"
       );
-    }
-  }
-
-  async generatePairingCode(): Promise<void> {
-    try {
-      const code = await this.syncService.generatePairingCode();
-      this.syncForm.patchValue({ passphrase: code });
-      this.notify.success("Nuovo codice di accoppiamento generato");
-    } catch (e) {
-      this.notify.error("Impossibile generare codice");
-    }
-  }
-
-  private getSyncConfig(): SyncConfig {
-    const v = this.syncForm.getRawValue();
-    return {
-      relayUrl: v.relayUrl?.trim() || "http://localhost:8080",
-      passphrase: v.passphrase?.trim() || "",
-      deviceId: v.deviceId?.trim() || "Desktop",
-      apiKey: v.apiKey?.trim() || undefined,
-    };
-  }
-
-  async checkRelay(): Promise<void> {
-    const cfg = this.getSyncConfig();
-    if (!cfg.passphrase) {
-      this.notify.error("Inserisci o genera una passphrase di sincronizzazione");
-      return;
-    }
-    this.syncing.set(true);
-    try {
-      const status = await this.syncService.checkRelay(cfg);
-      this.syncStatus.set(status);
-      if (status.serverHealthy) {
-        this.notify.success(`Relay attivo: ${status.pendingMessages} pacchetti in attesa`);
-      } else {
-        this.notify.error("Relay non raggiungibile");
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      this.notify.error(`Errore verifica relay: ${msg}`);
-    } finally {
-      this.syncing.set(false);
-    }
-  }
-
-  async syncAll(): Promise<void> {
-    const cfg = this.getSyncConfig();
-    if (!cfg.passphrase) {
-      this.notify.error("Inserisci o genera una passphrase di sincronizzazione");
-      return;
-    }
-    this.syncing.set(true);
-    this.lastSyncResult.set("Sincronizzazione E2EE bidirezionale in corso...");
-    try {
-      const res = await this.syncService.syncAll(cfg);
-      const summary = `Inviati: ${res.push.invoicesPushed} fatture, ${res.push.clientsPushed} clienti. Ricevuti: ${res.pull.invoicesProcessed} fatture, ${res.pull.clientsProcessed} clienti (${res.pull.envelopesReceived} buste elaborate).`;
-      this.lastSyncResult.set(summary);
-      this.notify.success("Sincronizzazione completata con successo!");
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      this.lastSyncResult.set(`Errore sincronizzazione: ${msg}`);
-      this.notify.error(`Errore sincronizzazione: ${msg}`);
-    } finally {
-      this.syncing.set(false);
-    }
-  }
-
-  async pushSync(): Promise<void> {
-    const cfg = this.getSyncConfig();
-    if (!cfg.passphrase) {
-      this.notify.error("Inserisci una passphrase di sincronizzazione");
-      return;
-    }
-    this.syncing.set(true);
-    try {
-      const res = await this.syncService.pushChanges(cfg);
-      this.lastSyncResult.set(`Inviati con successo ${res.invoicesPushed} fatture e ${res.clientsPushed} clienti cifrati in E2EE.`);
-      this.notify.success("Modifiche inviate al relay con successo!");
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      this.notify.error(`Errore invio relay: ${msg}`);
-    } finally {
-      this.syncing.set(false);
-    }
-  }
-
-  async pullSync(): Promise<void> {
-    const cfg = this.getSyncConfig();
-    if (!cfg.passphrase) {
-      this.notify.error("Inserisci una passphrase di sincronizzazione");
-      return;
-    }
-    this.syncing.set(true);
-    try {
-      const res = await this.syncService.pullChanges(cfg);
-      this.lastSyncResult.set(`Ricevuti: ${res.invoicesProcessed} fatture, ${res.clientsProcessed} clienti da ${res.envelopesReceived} buste.`);
-      this.notify.success(`Sincronizzazione ricevuta: ${res.invoicesProcessed} fatture, ${res.clientsProcessed} clienti.`);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      this.notify.error(`Errore ricezione relay: ${msg}`);
-    } finally {
-      this.syncing.set(false);
     }
   }
 }

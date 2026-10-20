@@ -195,7 +195,7 @@
   </section>
   }
 
-  <!-- Section 4 - Multi-Device Synchronization (Zero-DB E2EE Relay & Cloud Drive) -->
+  <!-- Section 4 - Cloud Drive Synchronization -->
   @if (section() === 'app') {
   <section class="sync-section">
     <h2>Sincronizzazione Multi-Dispositivo Senza DB</h2>
@@ -203,9 +203,9 @@
       Accedi alle tue fatture su più dispositivi mantenendo l'architettura <strong>senza database</strong> e la sovranità totale sui dati.
     </p>
 
-    <!-- Sub-section: Cloud Drive (Approach A) -->
+    <!-- Cloud Drive -->
     <div class="storage-box mb-4">
-      <h3>Metodo A: Sincronizzazione tramite Cloud Drive (Zero Server)</h3>
+      <h3>Sincronizzazione tramite Cloud Drive</h3>
       <p class="storage-hint">
         Poiché l'archivio locale di Eattura è composto da file canonici XML immutabili con digest univoci SHA-256 e un catalogo locale autorigenerante, puoi posizionare la cartella del Vault su <strong>iCloud Drive, Dropbox, Google Drive, Nextcloud o un NAS Synology</strong>.
       </p>
@@ -214,98 +214,6 @@
         <li><strong>Zero server</strong>: non è necessario alcun server esterno attivo.</li>
         <li><strong>Auto-Reload</strong>: le modifiche esterne vengono rilevate automaticamente dal file watcher in tempo reale.</li>
       </ul>
-    </div>
-
-    <!-- Sub-section: E2EE Relay (Approach B) -->
-    <div class="relay-box">
-      <h3>Metodo B: Relay Server Passa-Carte Effimero (Crittografia End-to-End E2EE)</h3>
-      <p class="storage-hint">
-        Sincronizza direttamente tra i tuoi dispositivi attraverso il server passa-carte. I dati vengono <strong>cifrati con AES-256-GCM sul tuo dispositivo</strong> prima dell'invio. Il server inoltra solo payload cifrati effimeri in memoria (RAM) e <strong>non ha database né capacità di decifrare i dati</strong>.
-      </p>
-
-      <form [formGroup]="syncForm">
-        <div class="form-row">
-          <div class="form-group flex-2">
-            <label for="s-relayUrl">Indirizzo Server Relay Passa-Carte *</label>
-            <input id="s-relayUrl" type="url" formControlName="relayUrl" placeholder="http://localhost:8080" />
-          </div>
-          <div class="form-group flex-1">
-            <label for="s-deviceId">Nome Questo Dispositivo *</label>
-            <input id="s-deviceId" type="text" formControlName="deviceId" placeholder="es. MacBook Portatile" />
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label for="s-passphrase">
-            Codice di Accoppiamento / Passphrase E2EE *
-            <span class="badge-crypto">AES-256-GCM Zero Knowledge</span>
-          </label>
-          <div class="pairing-input-group">
-            <input
-              id="s-passphrase"
-              type="text"
-              formControlName="passphrase"
-              placeholder="es. aquila-torre-fiume-7821"
-              autocomplete="off"
-            />
-            <button type="button" class="btn-secondary btn-sm" (click)="generatePairingCode()">
-              🔑 Genera Nuovo Codice
-            </button>
-          </div>
-          <small class="field-hint">
-            Usa la stessa identica passphrase su tutti i dispositivi che vuoi sincronizzare. Il server vede solo l'hash opaco del canale e non conosce questa chiave.
-          </small>
-        </div>
-
-        <div class="form-group">
-          <label for="s-apiKey">Chiave API Server (Opzionale, se richiesta dal relay)</label>
-          <input id="s-apiKey" type="password" formControlName="apiKey" placeholder="Lascia vuoto se non richiesta" />
-        </div>
-
-        @if (lastSyncResult()) {
-          <div class="sync-status-banner">
-            <span>{{ lastSyncResult() }}</span>
-          </div>
-        }
-
-        <div class="sync-actions-row">
-          <button
-            type="button"
-            class="btn-primary"
-            [disabled]="syncing() || syncForm.invalid"
-            (click)="syncAll()"
-          >
-            ⚡ {{ syncing() ? 'Sincronizzazione...' : 'Sincronizza Ora (Invia e Ricevi)' }}
-          </button>
-
-          <button
-            type="button"
-            class="btn-secondary"
-            [disabled]="syncing() || syncForm.invalid"
-            (click)="pushSync()"
-          >
-            📤 Invia Modifiche (Push)
-          </button>
-
-          <button
-            type="button"
-            class="btn-secondary"
-            [disabled]="syncing() || syncForm.invalid"
-            (click)="pullSync()"
-          >
-            📥 Scarica Aggiornamenti (Pull)
-          </button>
-
-          <button
-            type="button"
-            class="btn-outline"
-            [disabled]="syncing() || syncForm.invalid"
-            (click)="checkRelay()"
-          >
-            🔍 Verifica Relay
-          </button>
-        </div>
-      </form>
     </div>
   </section>
   }
