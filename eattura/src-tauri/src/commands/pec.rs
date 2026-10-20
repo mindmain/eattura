@@ -8,11 +8,12 @@ use common::invoice_status::InvoiceStatus;
 use common::pec::{parse_notification, sdi_filename};
 use std::sync::OnceLock;
 
-use crate::commands::invoices::{build_fattura_from_store, import_xml_content_with_signer};
+use crate::commands::invoices::build_fattura_from_store;
 use crate::commands::settings::AppSettings;
 use crate::pec::{self, PecConfig};
 use crate::state::TauriState;
 use crate::storage::digest;
+use crate::app_log::{AppLog, LogLevel};
 
 const SYNC_INTERVAL_MS: i64 = 300_000;
 static SYNC_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
@@ -20,6 +21,7 @@ static SYNC_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PecSyncStatus {
+    pub in_progress: bool,
     pub configured: bool,
     pub last_attempt_at: Option<i64>,
     pub last_success_at: Option<i64>,
@@ -43,6 +45,7 @@ pub async fn sync_status_store(store: &crate::storage::FileStore) -> Result<PecS
     });
     let last_attempt_at = row.as_ref().filter(|_| same_mailbox).and_then(|r| r.get("last_attempt_at"));
     Ok(PecSyncStatus {
+        in_progress: SYNC_LOCK.get().is_some_and(|lock| lock.try_lock().is_err()),
         configured: mailbox.is_some(),
         last_attempt_at,
         last_success_at: row.as_ref().filter(|_| same_mailbox).and_then(|r| r.get("last_success_at")),
@@ -149,18 +152,27 @@ pub async fn send_invoice_pec(
 #[tauri::command]
 pub async fn sync_pec(
     state: tauri::State<'_, TauriState>,
+    log: tauri::State<'_, AppLog>,
 ) -> Result<Vec<NotificationSummary>, String> {
-    run_sync(&state.store).await
+    run_sync(&state.store, &log).await
 }
 
 /// Core PEC sync routine, usable both from the command and the background cron.
 pub(crate) async fn run_sync(
     store: &crate::storage::FileStore,
+    log: &AppLog,
 ) -> Result<Vec<NotificationSummary>, String> {
     let _guard = SYNC_LOCK.get_or_init(|| tokio::sync::Mutex::new(())).lock().await;
-    let result = run_sync_inner(store).await;
-    if let Err(error) = &result {
-        let _ = record_sync_failure(store, error).await;
+    log.record(LogLevel::Info, "pec", "PEC synchronization started");
+    let result = run_sync_inner(store, log).await;
+    match &result {
+        Ok(items) => log.record(LogLevel::Info, "pec", &format!("PEC synchronization completed: {} item(s) processed", items.len())),
+        Err(error) => {
+            log.record(LogLevel::Error, "pec", &format!("PEC synchronization failed: {error}"));
+            if let Err(record_error) = record_sync_failure(store, error).await {
+                log.record(LogLevel::Error, "pec", &format!("Unable to save synchronization failure: {record_error}"));
+            }
+        }
     }
     result
 }
@@ -194,6 +206,7 @@ async fn record_sync_failure(store: &crate::storage::FileStore, error: &str) -> 
 
 async fn run_sync_inner(
     store: &crate::storage::FileStore,
+    log: &AppLog,
 ) -> Result<Vec<NotificationSummary>, String> {
     let config = build_config(store).await?;
     let previous = sync_record(store).await?;
@@ -205,7 +218,9 @@ async fn run_sync_inner(
             None
         }
     });
+    log.record(LogLevel::Info, "pec", if cursor.is_some() { "Reading new PEC messages" } else { "Reading PEC mailbox history" });
     let inbox = pec::check_inbox(&config, cursor).await?;
+    log.record(LogLevel::Info, "pec", &format!("PEC download completed: {} message(s) to process", inbox.messages.len()));
 
     let mut summaries = Vec::new();
     for message in &inbox.messages {
@@ -224,7 +239,7 @@ async fn run_sync_inner(
             let xml = String::from_utf8(payload)
                 .map_err(|e| format!("Invalid XML attachment {}: {e}", att.filename))?;
             if common::xml::decode::decode(&xml).is_ok() {
-                let detail = import_xml_content_with_signer(store, &xml, signer).await?;
+                let detail = crate::commands::invoices::import_xml_content_for_pec(store, &xml, signer).await?;
                 summaries.push(NotificationSummary {
                     tipo: "FATTURA".into(),
                     identificativo_sdi: None,
@@ -249,6 +264,7 @@ async fn run_sync_inner(
     }
 
     if previous.is_none() || !summaries.is_empty() {
+        log.record(LogLevel::Info, "pec", "Linking SDI receipts to imported invoices");
         reconcile_unlinked_notifications(store).await?;
     }
 
@@ -504,6 +520,11 @@ async fn find_invoice_ids_by_sdi_reference(
             matched.push(id);
             continue;
         }
+        // Known transmission aliases are authoritative; rebuilding every unmatched
+        // invoice clones the archive for every receipt during a historical sync.
+        if !filenames.is_empty() {
+            continue;
+        }
         if let Ok(fattura) = build_fattura_from_store(store, &id).await {
             let fn_sdi = sdi_filename(&fattura);
             if same_sdi_filename(&fn_sdi, reference) {
@@ -522,4 +543,31 @@ fn same_sdi_filename(left: &str, right: &str) -> bool {
             .unwrap_or(name)
     }
     stem(left).eq_ignore_ascii_case(stem(right))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn failed_sync_records_start_and_error_before_returning() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::storage::FileStore::open(dir.path().join("eattura.json")).unwrap();
+        let log_dir = dir.path().join("logs");
+        let log = AppLog::open(log_dir.clone()).unwrap();
+        assert!(run_sync(&store, &log).await.is_err());
+        let entries: Vec<serde_json::Value> = std::fs::read_to_string(log_dir.join("events.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(entries[0]["message"], "PEC synchronization started");
+        assert_eq!(entries.last().unwrap()["level"], "error");
+        assert!(
+            entries.last().unwrap()["message"]
+                .as_str()
+                .unwrap()
+                .contains("not configured")
+        );
+    }
+
 }

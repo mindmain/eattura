@@ -136,34 +136,33 @@ const PEC_CRON_INTERVAL_SECS: i64 = 300;
 /// that is logged and ignored, so the cron is effectively off until set up.
 fn spawn_pec_cron(store: storage::FileStore, log: AppLog) {
     tauri::async_runtime::spawn(async move {
+        log.record(
+            LogLevel::Info,
+            "pec",
+            "PEC scheduler started; checking configuration",
+        );
         let mut last_failed_at = 0_i64;
         loop {
             let now = chrono::Utc::now().timestamp();
-            let due = commands::pec::sync_status_store(&store)
-                .await
-                .map(|status| status.configured && status.next_sync_at <= now * 1000)
-                .unwrap_or(false);
-            if due && now - last_failed_at >= PEC_CRON_INTERVAL_SECS {
-                match commands::pec::run_sync(&store).await {
-                    Ok(notifications) => {
-                        log.record(
-                            LogLevel::Info,
-                            "pec",
-                            &format!(
-                                "Background sync completed: {} item(s) processed",
-                                notifications.len()
-                            ),
-                        );
-                    }
-                    Err(e) => {
-                        last_failed_at = chrono::Utc::now().timestamp();
+            let due = match commands::pec::sync_status_store(&store).await {
+                Ok(status) => status.configured && status.next_sync_at <= now * 1000,
+                Err(error) => {
+                    if now - last_failed_at >= PEC_CRON_INTERVAL_SECS {
                         log.record(
                             LogLevel::Error,
                             "pec",
-                            &format!("Background sync failed: {e}"),
+                            &format!("Unable to read PEC schedule: {error}"),
                         );
+                        last_failed_at = now;
                     }
+                    false
                 }
+            };
+            if due
+                && now - last_failed_at >= PEC_CRON_INTERVAL_SECS
+                && commands::pec::run_sync(&store, &log).await.is_err()
+            {
+                last_failed_at = chrono::Utc::now().timestamp();
             }
             tokio::time::sleep(std::time::Duration::from_secs(15)).await;
         }

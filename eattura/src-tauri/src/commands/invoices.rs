@@ -1081,6 +1081,24 @@ pub(crate) async fn import_xml_content_with_signer(
     xml_content: &str,
     signer_info: Option<common::p7m::SignerInfo>,
 ) -> Result<InvoiceDetail, String> {
+    import_xml_content_inner(store, xml_content, signer_info, true).await
+}
+
+/// PEC batches reconcile receipts once after every invoice has been imported.
+pub(crate) async fn import_xml_content_for_pec(
+    store: &crate::storage::FileStore,
+    xml_content: &str,
+    signer_info: Option<common::p7m::SignerInfo>,
+) -> Result<InvoiceDetail, String> {
+    import_xml_content_inner(store, xml_content, signer_info, false).await
+}
+
+async fn import_xml_content_inner(
+    store: &crate::storage::FileStore,
+    xml_content: &str,
+    signer_info: Option<common::p7m::SignerInfo>,
+    reconcile_receipts: bool,
+) -> Result<InvoiceDetail, String> {
     let fattura = common::xml::decode::decode(xml_content).map_err(|e| e.to_string())?;
 
     // Extract cedente and cessionario info to find or create clients.
@@ -1383,7 +1401,9 @@ pub(crate) async fn import_xml_content_with_signer(
 
     match imported_ids.first() {
         Some(id) => {
-            crate::commands::pec::reconcile_unlinked_notifications(store).await?;
+            if reconcile_receipts {
+                crate::commands::pec::reconcile_unlinked_notifications(store).await?;
+            }
             fetch_invoice_detail(store, id).await
         }
         None => Err("No invoice body found in XML".to_string()),
@@ -2622,6 +2642,43 @@ pub async fn generate_autofattura_draft_store(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn known_transmission_aliases_prevent_matching_rebuilt_invoice_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::storage::FileStore::open(dir.path().join("eattura.json")).unwrap();
+        let (seller_id, buyer_id) = setup_test_parties(&store).await;
+        let created =
+            create_invoice_store(&store, sample_invoice_request(&seller_id, &buyer_id, "1"))
+                .await
+                .unwrap();
+        let rebuilt = common::pec::sdi_filename(
+            &build_fattura_from_store(&store, &created.id).await.unwrap(),
+        );
+        let known = "IT12345678901_TRANSMITTED.xml";
+        assert_ne!(rebuilt, known);
+        store
+            .update(
+                "invoices",
+                &created.id,
+                serde_json::json!({"sdi_filenames": [known]}),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            crate::commands::pec::find_invoice_by_sdi_reference(&store, known)
+                .await
+                .unwrap(),
+            Some(created.id)
+        );
+        assert_eq!(
+            crate::commands::pec::find_invoice_by_sdi_reference(&store, &rebuilt)
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
     use super::*;
     use serde_json::json;
 

@@ -127,6 +127,7 @@ export class InvoiceService {
 }
 
 export interface PecSyncStatus {
+  inProgress?: boolean;
   configured: boolean;
   lastAttemptAt: number | null;
   lastSuccessAt: number | null;

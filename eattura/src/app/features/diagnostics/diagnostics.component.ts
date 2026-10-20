@@ -1,5 +1,5 @@
 import { DatePipe } from "@angular/common";
-import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from "@angular/core";
+import { ChangeDetectionStrategy, Component, DestroyRef, OnInit, computed, inject, signal } from "@angular/core";
 import { AppLogService, LogLevel } from "../../core/services/app-log.service";
 
 @Component({
@@ -12,6 +12,7 @@ import { AppLogService, LogLevel } from "../../core/services/app-log.service";
 })
 export class DiagnosticsComponent implements OnInit {
   private readonly log = inject(AppLogService);
+  private readonly destroyRef = inject(DestroyRef);
   protected readonly snapshot = signal<Awaited<ReturnType<AppLogService["snapshot"]>>>({ entries: [], directory: null });
   protected readonly level = signal<LogLevel | "all">("all");
   protected readonly loading = signal(false);
@@ -23,6 +24,8 @@ export class DiagnosticsComponent implements OnInit {
 
   ngOnInit(): void {
     void this.refresh();
+    const timer = setInterval(() => void this.refresh(), 5000);
+    this.destroyRef.onDestroy(() => clearInterval(timer));
   }
 
   protected setLevel(value: string): void {

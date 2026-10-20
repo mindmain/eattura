@@ -12,7 +12,7 @@ describe("Application diagnostics", () => {
     vi.mocked(isTauri).mockReturnValue(true);
   });
 
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
   it("redacts credentials and omits document payloads and unknown objects", () => {
     expect(diagnosticMessage(new Error("password='secret value'; token=abc")))
@@ -53,11 +53,39 @@ describe("Application diagnostics", () => {
     expect(record).toHaveBeenCalledWith("error", "frontend", error);
   });
 
-  it("does not invoke native commands in the browser preview", async () => {
+  it("keeps browser errors visible instead of returning an empty diagnostic history", async () => {
     vi.mocked(isTauri).mockReturnValue(false);
     const log = new AppLogService();
     await log.record("info", "app", "Started");
-    expect(await log.snapshot()).toEqual({ entries: [], directory: null });
+    expect(await log.snapshot()).toEqual({
+      entries: [expect.objectContaining({ source: "app", message: "Started" })],
+      directory: null,
+      backendError: expect.stringContaining("desktop"),
+    });
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("retains errors when both persistence and the native log reader fail", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(invoke).mockRejectedValue("Native backend unavailable");
+    const log = new AppLogService();
+    await log.record("error", "pec-monitor", "PEC status unavailable");
+    const snapshot = await log.snapshot();
+    expect(snapshot.entries[0].message).toBe("PEC status unavailable");
+    expect(snapshot.backendError).toBe("Native backend unavailable");
+  });
+
+  it("shows local diagnostics when the native log command never settles", async () => {
+    vi.useFakeTimers();
+    vi.mocked(isTauri).mockReturnValue(false);
+    const log = new AppLogService();
+    await log.record("error", "pec-monitor", "Pending request");
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(invoke).mockReturnValue(new Promise(() => {}));
+    const pending = log.snapshot();
+    await vi.advanceTimersByTimeAsync(5000);
+    const snapshot = await pending;
+    expect(snapshot.entries[0].message).toBe("Pending request");
+    expect(snapshot.backendError).toContain("timed out");
   });
 });

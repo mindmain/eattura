@@ -7,15 +7,18 @@
       <button class="btn-secondary" (click)="importFolder()" [disabled]="importing()">
         {{ importing() ? "Importazione..." : "Importa Cartella" }}
       </button>
-      <button class="btn-secondary" (click)="syncPec()" [disabled]="syncing()">
-        {{ syncing() ? "Sincronizzazione..." : "Sincronizza PEC" }}
+      <button class="btn-secondary" (click)="syncPec()" [disabled]="syncing() || pecSyncStatus()?.inProgress">
+        {{ syncing() || pecSyncStatus()?.inProgress ? "Sincronizzazione..." : "Sincronizza PEC" }}
       </button>
     </div>
   </div>
 
+  @if (invoiceStore.pecSyncError()) {
+    <p class="form-error" role="alert">{{ invoiceStore.pecSyncError() }}</p>
+  }
   @if (pecSyncStatus()?.configured) {
     <div class="pec-sync-timer" role="status">
-      @if (syncing()) {
+      @if (syncing() || pecSyncStatus()?.inProgress) {
         Sincronizzazione PEC in corso…
       } @else if (secondsToPecSync() !== null) {
         Prossima sincronizzazione PEC tra {{ pecCountdown() }}

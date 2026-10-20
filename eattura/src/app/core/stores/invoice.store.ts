@@ -2,6 +2,7 @@ import { Injectable, computed, inject, signal } from "@angular/core";
 import { InvoiceService } from "../services/invoice.service";
 import type { PecSyncStatus } from "../services/invoice.service";
 import { ClientStore } from "./client.store";
+import { AppLogService } from "../services/app-log.service";
 import type {
   InvoiceSummary,
   InvoiceDetail,
@@ -22,6 +23,7 @@ import type {
 export class InvoiceStore {
   private invoiceService = inject(InvoiceService);
   private clientStore = inject(ClientStore);
+  private readonly log = inject(AppLogService);
 
   private _invoices = signal<InvoiceSummary[]>([]);
   private _loading = signal<boolean>(false);
@@ -33,16 +35,19 @@ export class InvoiceStore {
   private _pecSyncStatus = signal<PecSyncStatus | null>(null);
   private _clock = signal(Date.now());
   readonly pecSyncStatus = this._pecSyncStatus.asReadonly();
+  readonly pecSyncError = signal<string | null>(null);
   readonly lastPecSuccessAt = computed(() => this._pecSyncStatus()?.lastSuccessAt ?? null);
   readonly secondsToPecSync = computed(() => {
     const status = this._pecSyncStatus();
-    return status?.configured ? Math.max(0, Math.ceil((status.nextSyncAt - this._clock()) / 1000)) : null;
+    return status?.configured && !status.inProgress ? Math.max(0, Math.ceil((status.nextSyncAt - this._clock()) / 1000)) : null;
   });
   private pecTimer?: ReturnType<typeof setInterval>;
   private pecPoll?: ReturnType<typeof setInterval>;
+  private pecStatusPending = false;
 
   startPecMonitor(): void {
     if (this.pecTimer) return;
+    void this.log.record("info", "pec-monitor", "PEC countdown and status monitor started");
     this._clock.set(Date.now());
     void this.refreshPecSyncStatus();
     this.pecTimer = setInterval(() => this._clock.set(Date.now()), 1000);
@@ -57,15 +62,31 @@ export class InvoiceStore {
   }
 
   async refreshPecSyncStatus(): Promise<void> {
+    if (this.pecStatusPending) return;
+    this.pecStatusPending = true;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      const status = await this.invoiceService.pecSyncStatus();
+      const status = await Promise.race([
+        this.invoiceService.pecSyncStatus(),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("PEC status request timed out after 10 seconds")), 10_000);
+        }),
+      ]);
+      if (!status || typeof status.configured !== "boolean" || !Number.isFinite(status.nextSyncAt)) {
+        throw new Error("Invalid PEC status returned by desktop backend");
+      }
+      this.pecSyncError.set(null);
       const previous = this._pecSyncStatus();
       this._pecSyncStatus.set(status);
       if (this.hasLoaded && status.lastSuccessAt && status.lastSuccessAt !== previous?.lastSuccessAt) {
         await this.refresh();
       }
-    } catch {
-      // PEC status is unavailable outside the Tauri runtime.
+    } catch (error) {
+      if (!this.pecSyncError()) void this.log.record("error", "pec-monitor", error);
+      this.pecSyncError.set("Impossibile leggere lo stato della PEC. Controlla il registro attività.");
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+      this.pecStatusPending = false;
     }
   }
 

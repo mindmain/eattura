@@ -26,6 +26,9 @@
   @if (error()) {
     <p class="form-error" role="alert">{{ error() }}</p>
   }
+  @if (snapshot().backendError) {
+    <p class="form-error" role="alert">Registro persistente non disponibile. Gli eventi restano visibili in questa sessione. {{ snapshot().backendError }}</p>
+  }
   @if (!snapshot().directory && !loading()) {
     <p class="storage-note">Registro su file non disponibile. Nell’app desktop gli eventi vengono salvati localmente quando la cartella dei log è accessibile.</p>
   }

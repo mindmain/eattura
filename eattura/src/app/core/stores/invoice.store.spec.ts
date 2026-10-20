@@ -1,8 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Injector } from "@angular/core";
 import { InvoiceStore } from "./invoice.store";
 import { InvoiceService } from "../services/invoice.service";
 import { ClientStore } from "./client.store";
+import { AppLogService } from "../services/app-log.service";
 import type { InvoiceSummary } from "../models/invoice.model";
 
 describe("InvoiceStore", () => {
@@ -94,6 +95,7 @@ describe("InvoiceStore", () => {
     const injector = Injector.create({
       providers: [
         InvoiceStore,
+        { provide: AppLogService, useValue: { record: vi.fn().mockResolvedValue(undefined) } },
         { provide: InvoiceService, useValue: mockInvoiceService },
         { provide: ClientStore, useValue: mockClientStore },
       ],
@@ -186,4 +188,40 @@ describe("InvoiceStore", () => {
     await store.refreshPecSyncStatus();
     expect(mockInvoiceService.listInvoices).toHaveBeenCalledTimes(2);
   });
+  afterEach(() => { store.stopPecMonitor(); vi.useRealTimers(); });
+
+  it("starts the countdown and updates it while polling the native PEC status", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    mockInvoiceService.pecSyncStatus.mockResolvedValue({ configured: true, nextSyncAt: 400_000, lastSuccessAt: null });
+    store.startPecMonitor();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.secondsToPecSync()).toBe(300);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(store.secondsToPecSync()).toBe(299);
+    store.stopPecMonitor();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("reports a failed status request and recovers on the next successful poll", async () => {
+    mockInvoiceService.pecSyncStatus.mockRejectedValueOnce(new Error("Native command unavailable"));
+    await store.refreshPecSyncStatus();
+    expect(store.pecSyncError()).toContain("registro attività");
+    mockInvoiceService.pecSyncStatus.mockResolvedValueOnce({ configured: true, inProgress: true, nextSyncAt: 0 });
+    await store.refreshPecSyncStatus();
+    expect(store.pecSyncError()).toBeNull();
+    expect(store.pecSyncStatus()?.inProgress).toBe(true);
+    expect(store.secondsToPecSync()).toBeNull();
+  });
+
+  it("reports an unresponsive PEC backend rather than silently hiding the timer", async () => {
+    vi.useFakeTimers();
+    mockInvoiceService.pecSyncStatus.mockReturnValueOnce(new Promise(() => {}));
+    const pending = store.refreshPecSyncStatus();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await pending;
+    expect(store.pecSyncError()).toContain("registro attività");
+  });
+
+
 });
