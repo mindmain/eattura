@@ -1,0 +1,168 @@
+name: Desktop release
+
+on:
+  push:
+    tags: ['v[0-9]*.[0-9]*.[0-9]*']
+  workflow_call:
+    inputs:
+      tag:
+        description: Stable app tag created by Release Please on main
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.guard.outputs.tag }}
+      commit: ${{ steps.guard.outputs.commit }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Validate tag, main ancestry and app versions
+        id: guard
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: node scripts/release.mjs validate "$RELEASE_TAG"
+
+  build:
+    needs: validate
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+            bundles: dmg
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            bundles: dmg
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            bundles: deb,appimage
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            bundles: nsis,msi
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      CI: 'true'
+      CARGO_INCREMENTAL: '0'
+      APPIMAGE_EXTRACT_AND_RUN: '1'
+      BUILD_TARGET: ${{ matrix.target }}
+      BUILD_BUNDLES: ${{ matrix.bundles }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.4.2'
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: '1.92.0'
+          targets: ${{ matrix.target }}
+          components: clippy, rustfmt
+      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+        with:
+          version: '1.65.0'
+          github_token: ${{ github.token }}
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential pkg-config libwebkit2gtk-4.1-dev libssl-dev \
+            libdbus-1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - name: Install locked app dependencies and protobuf definitions
+        run: |
+          node scripts/release.mjs proto
+          cd eattura
+          bun install --frozen-lockfile
+      - name: Check app versions
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        run: node scripts/release.mjs check "$RELEASE_TAG"
+      - name: Run release checks
+        if: runner.os == 'Linux'
+        run: |
+          node --test scripts/release.test.mjs
+          cargo clippy --locked -p common -p eattura --all-targets -- -D warnings
+          cargo test --locked -p common -p eattura
+          cd eattura
+          bunx tsc -p tsconfig.spec.json --noEmit
+          bun run test
+      - name: Build desktop installers
+        working-directory: eattura
+        run: bun run tauri build --ci --target "$BUILD_TARGET" --bundles "$BUILD_BUNDLES" -- --locked
+      - name: Stage platform installers
+        run: node scripts/release.mjs stage "$BUILD_TARGET"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-${{ matrix.target }}
+          path: release-artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: desktop-*
+          path: release-artifacts
+          merge-multiple: true
+      - name: Recheck tag and produce installer checksums
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+        run: |
+          node scripts/release.mjs validate "$RELEASE_TAG" "$RELEASE_COMMIT"
+          node scripts/release.mjs collect
+      - name: Publish complete GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" --json isDraft > release-state.json; then
+            gh release create "$RELEASE_TAG" --verify-tag --draft --generate-notes --title "Eattura $RELEASE_TAG"
+            gh release view "$RELEASE_TAG" --json isDraft > release-state.json
+          fi
+          node -e "if (!JSON.parse(require('fs').readFileSync('release-state.json')).isDraft) throw new Error('Refusing to overwrite a published release')"
+          gh release upload "$RELEASE_TAG" release-artifacts/* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --latest

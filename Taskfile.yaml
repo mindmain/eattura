@@ -25,7 +25,7 @@ tasks:
     desc: "Download and prepare protobuf dependencies"
     cmds:
       - echo "📜 Exporting proto dependencies..."
-      - buf export buf.build/bufbuild/protovalidate --output proto/vendor
+      - "{{.BUN}} scripts/release.mjs proto"
     status:
       - test -d proto/vendor
 

@@ -8,6 +8,7 @@ api/
 .tmp/
 
 target/
+/release-artifacts/
 /tmp
 /bazel-out
 **/dist/
