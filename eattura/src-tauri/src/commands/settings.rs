@@ -140,60 +140,59 @@ pub async fn update_settings_store(
 
     // Maintain the company profile in the clients directory so it is directly
     // selectable and referentiable as a cedente in invoices.
-    if let Some(company) = &settings.company {
-        if !company.id_codice.trim().is_empty() {
-            let client_id =
-                crate::storage::digest::client_id(&company.id_paese, &company.id_codice)?;
-            if let Some(row) = existing {
-                let id: String = row.get("id");
-                tx.update(
-                    "clients",
-                    &id,
-                    serde_json::json!({
-                        "denominazione": &company.denominazione,
-                        "nome": &company.nome,
-                        "cognome": &company.cognome,
-                        "codice_fiscale": &company.codice_fiscale,
-                        "regime_fiscale": &company.regime_fiscale,
-                        "indirizzo": &company.indirizzo,
-                        "numero_civico": &company.numero_civico,
-                        "cap": &company.cap,
-                        "comune": &company.comune,
-                        "provincia": &company.provincia,
-                        "nazione": &company.nazione,
-                        "telefono": &company.telefono,
-                        "email": &company.email,
-                        "pec": &company.pec,
-                    }),
-                )
-                .await
-                .map_err(|e| e.to_string())?;
-            } else {
-                tx.insert(
-                    "clients",
-                    serde_json::json!({
-                        "id": &client_id,
-                        "id_paese": &company.id_paese,
-                        "id_codice": &company.id_codice,
-                        "denominazione": &company.denominazione,
-                        "nome": &company.nome,
-                        "cognome": &company.cognome,
-                        "codice_fiscale": &company.codice_fiscale,
-                        "regime_fiscale": &company.regime_fiscale,
-                        "indirizzo": &company.indirizzo,
-                        "numero_civico": &company.numero_civico,
-                        "cap": &company.cap,
-                        "comune": &company.comune,
-                        "provincia": &company.provincia,
-                        "nazione": &company.nazione,
-                        "telefono": &company.telefono,
-                        "email": &company.email,
-                        "pec": &company.pec,
-                    }),
-                )
-                .await
-                .map_err(|e| e.to_string())?;
-            }
+    if let Some(company) = &settings.company
+        && !company.id_codice.trim().is_empty()
+    {
+        let client_id = crate::storage::digest::client_id(&company.id_paese, &company.id_codice)?;
+        if let Some(row) = existing {
+            let id: String = row.get("id");
+            tx.update(
+                "clients",
+                &id,
+                serde_json::json!({
+                    "denominazione": &company.denominazione,
+                    "nome": &company.nome,
+                    "cognome": &company.cognome,
+                    "codice_fiscale": &company.codice_fiscale,
+                    "regime_fiscale": &company.regime_fiscale,
+                    "indirizzo": &company.indirizzo,
+                    "numero_civico": &company.numero_civico,
+                    "cap": &company.cap,
+                    "comune": &company.comune,
+                    "provincia": &company.provincia,
+                    "nazione": &company.nazione,
+                    "telefono": &company.telefono,
+                    "email": &company.email,
+                    "pec": &company.pec,
+                }),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        } else {
+            tx.insert(
+                "clients",
+                serde_json::json!({
+                    "id": &client_id,
+                    "id_paese": &company.id_paese,
+                    "id_codice": &company.id_codice,
+                    "denominazione": &company.denominazione,
+                    "nome": &company.nome,
+                    "cognome": &company.cognome,
+                    "codice_fiscale": &company.codice_fiscale,
+                    "regime_fiscale": &company.regime_fiscale,
+                    "indirizzo": &company.indirizzo,
+                    "numero_civico": &company.numero_civico,
+                    "cap": &company.cap,
+                    "comune": &company.comune,
+                    "provincia": &company.provincia,
+                    "nazione": &company.nazione,
+                    "telefono": &company.telefono,
+                    "email": &company.email,
+                    "pec": &company.pec,
+                }),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
         }
     }
 

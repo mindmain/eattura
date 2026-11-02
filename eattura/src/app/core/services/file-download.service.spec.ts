@@ -15,14 +15,17 @@ describe("FileDownloadService", () => {
 
     const createObjectURLSpy = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:mock-url");
     const revokeObjectURLSpy = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
 
     service.downloadTextFile("<xml>content</xml>", "fattura.xml");
 
     expect(createObjectURLSpy).toHaveBeenCalled();
     expect(revokeObjectURLSpy).toHaveBeenCalledWith("blob:mock-url");
+    expect(clickSpy).toHaveBeenCalledOnce();
 
     createObjectURLSpy.mockRestore();
     revokeObjectURLSpy.mockRestore();
+    clickSpy.mockRestore();
   });
 
   it("non solleva errori ed esce anticipatamente se non in browser (es. server)", () => {

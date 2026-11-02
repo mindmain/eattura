@@ -104,6 +104,7 @@ export class InvoiceListComponent implements OnInit {
     { label: "Inviate", value: "sent" },
     { label: "Accettate", value: "accepted" },
     { label: "Rifiutate", value: "rejected" },
+    { label: "Importate", value: "imported" },
   ];
 
   async ngOnInit(): Promise<void> {
@@ -218,10 +219,12 @@ export class InvoiceListComponent implements OnInit {
     }
   }
 
-  /** Signed amount: negative for purchases (costs), positive for sales. */
+  /** Signed amount: negative for purchases (costs), positive for sales; inverted for credit notes (TD04, TD08). */
   calcSignedAmount(inv: InvoiceSummary): number | null {
     const value = inv.importoTotale;
     if (value == null) return null;
-    return inv.direction === "purchase" ? -value : value;
+    const isCreditNote = inv.tipoDocumento === "TD04" || inv.tipoDocumento === "TD08";
+    const signed = inv.direction === "purchase" ? -value : value;
+    return isCreditNote ? -signed : signed;
   }
 }

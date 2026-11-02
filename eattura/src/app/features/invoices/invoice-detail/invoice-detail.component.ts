@@ -7,7 +7,7 @@ import {
   input,
   signal,
 } from "@angular/core";
-import { Router } from "@angular/router";
+import { Router, RouterLink } from "@angular/router";
 import { InvoiceStore } from "../../../core/stores/invoice.store";
 import { NotificationService } from "../../../core/services/notification.service";
 import { FileDownloadService } from "../../../core/services/file-download.service";
@@ -20,13 +20,13 @@ import type {
   InvoiceStatus,
   SdiNotificationDetail,
   AttachmentDetail,
-  DatiDdtDetail,
 } from "../../../core/models/invoice.model";
 
 @Component({
   selector: "app-invoice-detail",
   standalone: true,
   imports: [
+    RouterLink,
     TipoDocumentoPipe,
     InvoiceStatusPipe,
     AppCurrencyPipe,
@@ -50,7 +50,6 @@ export class InvoiceDetailComponent {
   sending = signal(false);
   downloadingPdf = signal(false);
   showAdeView = signal(false);
-  signingP7m = signal(false);
   rectifying = signal(false);
   selectedReceipt = signal<SdiNotificationDetail | null>(null);
   generatingAutofattura = signal(false);
@@ -103,6 +102,7 @@ export class InvoiceDetailComponent {
 
   hasDdt = computed(() => (this.invoice()?.datiDdt?.length ?? 0) > 0);
   hasAllegati = computed(() => (this.invoice()?.allegati?.length ?? 0) > 0);
+  readonly pecSyncStatus = this.invoiceStore.pecSyncStatus;
 
   constructor() {
     effect(async () => {
@@ -137,7 +137,7 @@ export class InvoiceDetailComponent {
     }
   }
 
-  /** Promote a draft invoice to `validated` (the backend blocks it if SDI validation fails). */
+  /** Promote a draft or imported invoice to `validated` (the backend blocks it if SDI validation fails). */
   async promoteToValidated(): Promise<void> {
     await this.changeStatus("validated", "Fattura validata");
   }
@@ -267,27 +267,6 @@ export class InvoiceDetailComponent {
 
   printInvoice(): void {
     window.print();
-  }
-
-  async signP7m(): Promise<void> {
-    const inv = this.invoice();
-    if (!inv) return;
-    this.signingP7m.set(true);
-    try {
-      const p7mBytes = await this.invoiceStore.signP7m(inv.id);
-      this.fileDownload.downloadBinaryFile(
-        p7mBytes,
-        `Fattura_${inv.numero.replace(/\//g, "-")}.xml.p7m`,
-        "application/pkcs7-mime"
-      );
-      const updated = await this.invoiceStore.getInvoice(inv.id);
-      this.invoice.set(updated);
-      this.notify.success("Fattura firmata digitalmente in formato CAdES (.xml.p7m)");
-    } catch (e) {
-      this.notify.error(typeof e === "string" ? e : "Errore durante la firma digitale");
-    } finally {
-      this.signingP7m.set(false);
-    }
   }
 
   async createAutofattura(tipo?: string): Promise<void> {

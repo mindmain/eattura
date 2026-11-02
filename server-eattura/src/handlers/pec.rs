@@ -1,10 +1,10 @@
 use axum::Json;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use common::pec::SDI_PEC_ADDRESS;
 use crate::error::AppError;
 use crate::services::pec_service::{PecConfig, PecService};
+use common::pec::SDI_PEC_ADDRESS;
 
 #[derive(Debug, Deserialize)]
 pub struct PecCredentialsPayload {
@@ -51,9 +51,13 @@ fn resolve_pec_config(creds: Option<PecCredentialsPayload>) -> Result<PecConfig,
         Ok(PecConfig {
             email: c.email,
             password: c.password,
-            imap_host: c.imap_host.unwrap_or_else(|| "imaps.pec.aruba.it".to_string()),
+            imap_host: c
+                .imap_host
+                .unwrap_or_else(|| "imaps.pec.aruba.it".to_string()),
             imap_port: c.imap_port.unwrap_or(993),
-            smtp_host: c.smtp_host.unwrap_or_else(|| "smtps.pec.aruba.it".to_string()),
+            smtp_host: c
+                .smtp_host
+                .unwrap_or_else(|| "smtps.pec.aruba.it".to_string()),
             smtp_port: c.smtp_port.unwrap_or(465),
         })
     } else {
@@ -66,10 +70,20 @@ pub async fn send_pec(Json(req): Json<PecSendRequest>) -> Result<Json<Value>, Ap
     let config = resolve_pec_config(req.pec)?;
     let pec = PecService::new(config);
 
-    let recipient = req.recipient.unwrap_or_else(|| SDI_PEC_ADDRESS.to_string());
-    tracing::info!("Stateless PEC send: file '{}' to '{}'", req.filename, recipient);
+    let recipient = req
+        .recipient
+        .map(|r| r.trim().to_string())
+        .filter(|r| !r.is_empty())
+        .unwrap_or_else(|| SDI_PEC_ADDRESS.to_string());
+    tracing::info!(
+        "Stateless PEC send: file '{}' to '{}'",
+        req.filename,
+        recipient
+    );
 
-    let smtp_response = pec.send_invoice(&req.xml_content, &req.filename).await?;
+    let smtp_response = pec
+        .send_invoice(&recipient, &req.xml_content, &req.filename)
+        .await?;
 
     Ok(Json(json!({
         "sent": true,
@@ -87,9 +101,9 @@ pub async fn poll_pec(Json(req): Json<PecPollRequest>) -> Result<Json<Value>, Ap
     tracing::info!("Stateless PEC poll starting for inbox {}", pec.config.email);
     let messages = pec.check_inbox().await?;
 
-    let filter_set: Option<std::collections::HashSet<String>> = req.filter_filenames.map(|v| {
-        v.into_iter().map(|f| f.to_lowercase()).collect()
-    });
+    let filter_set: Option<std::collections::HashSet<String>> = req
+        .filter_filenames
+        .map(|v| v.into_iter().map(|f| f.to_lowercase()).collect());
 
     let mut notifications = Vec::new();
     for message in &messages {
@@ -102,12 +116,11 @@ pub async fn poll_pec(Json(req): Json<PecPollRequest>) -> Result<Json<Value>, Ap
                 continue;
             };
 
-            if let Some(ref set) = filter_set {
-                if let Some(ref fname) = parsed.nome_file {
-                    if !set.contains(&fname.to_lowercase()) {
-                        continue;
-                    }
-                }
+            if let Some(ref set) = filter_set
+                && let Some(ref fname) = parsed.nome_file
+                && !set.contains(&fname.to_lowercase())
+            {
+                continue;
             }
 
             notifications.push(NotificationResponse {

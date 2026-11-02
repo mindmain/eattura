@@ -23,10 +23,29 @@
       } @else if (secondsToPecSync() !== null) {
         Prossima sincronizzazione PEC tra {{ pecCountdown() }}
       }
+      @if (pecSyncStatus()?.sdiAddressDetected) {
+        <span class="pec-sdi-detected" title="Indirizzo PEC dello SdI rilevato automaticamente dalle notifiche ricevute">
+          · PEC SdI rilevata: <strong>{{ pecSyncStatus()?.sdiAddressDetected }}</strong>
+        </span>
+      }
       @if (pecSyncStatus()?.lastError) {
         <span class="pec-sync-error" [title]="pecSyncStatus()?.lastError ?? ''">Ultimo tentativo non riuscito</span>
       }
     </div>
+
+    @if (pecSyncStatus()?.sdiAddressVerified === false) {
+      <div class="sdi-pec-warning mb-2" role="alert">
+        <div class="sdi-pec-warning-text">
+          <strong>Indirizzo PEC SdI non rilevabile dalle notifiche PEC:</strong>
+          nessuna ricevuta SdI ancora intercettata nella casella PEC. In assenza di indirizzo rilevato, l'invio utilizzerà automaticamente
+          <code>{{ pecSyncStatus()?.sdiAddress || "sdi01@pec.fatturapa.it" }}</code>
+          e al primo riscontro dello SdI l'indirizzo assegnato verrà riconosciuto e salvato in automatico.
+        </div>
+        <a routerLink="/settings" [queryParams]="{ section: 'app' }" class="sdi-pec-warning-link">
+          Vai alle Impostazioni PEC →
+        </a>
+      </div>
+    }
   }
 
   @if (periodLabel()) {

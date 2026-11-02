@@ -289,12 +289,7 @@ impl FileStore {
         data.loaded.insert(id.into());
         Ok(())
     }
-    /// Return the active database file path.
-    pub fn path(&self) -> PathBuf {
-        self.path.read().unwrap().clone()
-    }
-
-    /// Return the active vault directory.
+    /// Return the active data directory.
     pub fn data_dir(&self) -> PathBuf {
         self.path
             .read()
@@ -302,17 +297,6 @@ impl FileStore {
             .parent()
             .unwrap_or_else(|| std::path::Path::new("."))
             .to_path_buf()
-    }
-
-    /// Dynamically switch active vault storage path and reload index atomically.
-    pub async fn switch_vault(&self, new_dir: PathBuf) -> Result<(), String> {
-        let new_file = new_dir.join("eattura.json");
-        let new_store = Self::open(new_file.clone())?;
-        let mut guard = self.data.lock().await;
-        let new_data = new_store.data.lock().await.clone();
-        *guard = new_data;
-        *self.path.write().map_err(|e| e.to_string())? = new_file;
-        Ok(())
     }
 
     /// Freeze a consistent view for multi-record reads.
@@ -509,8 +493,17 @@ impl Transaction {
             merged[k] = v.clone();
         }
         let same_invoice_key = domain == "invoices"
-            && ["cedente_id", "cessionario_id", "numero", "data", "tipo_documento", "art73", "soggetto_emittente"]
-                .iter().all(|key| old.0[*key] == merged[*key])
+            && [
+                "cedente_id",
+                "cessionario_id",
+                "numero",
+                "data",
+                "tipo_documento",
+                "art73",
+                "soggetto_emittente",
+            ]
+            .iter()
+            .all(|key| old.0[*key] == merged[*key])
             && (old.0["stato"] == "rejected") == (merged["stato"] == "rejected");
         if same_invoice_key {
             validate_shape(domain, &merged)?;
@@ -589,8 +582,7 @@ pub(crate) fn same_invoice_key(existing: &Record, candidate: &Value) -> bool {
             existing.0["data"].as_str().and_then(|date| date.get(..4))
                 == candidate["data"].as_str().and_then(|date| date.get(..4))
         })
-        && (existing.0["tipo_documento"] == "TD04")
-            == (candidate["tipo_documento"] == "TD04")
+        && (existing.0["tipo_documento"] == "TD04") == (candidate["tipo_documento"] == "TD04")
 }
 fn validate(
     data: &Data,
@@ -609,9 +601,11 @@ fn validate(
                     row.0["id_paese"] == value["id_paese"]
                         && row.0["id_codice"] == value["id_codice"]
                 }
-                "invoices" => row.0["stato"] != "rejected"
-                    && value["stato"] != "rejected"
-                    && same_invoice_key(row, value),
+                "invoices" => {
+                    row.0["stato"] != "rejected"
+                        && value["stato"] != "rejected"
+                        && same_invoice_key(row, value)
+                }
                 _ => false,
             };
         if duplicate {
@@ -802,6 +796,31 @@ fn validate_shape(domain: &str, value: &Value) -> Result<(), String> {
     Ok(())
 }
 
+fn resolve_file(base: &std::path::Path, relative: &str) -> Result<PathBuf, String> {
+    let path = std::path::Path::new(relative);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err("Invalid indexed file path".into());
+    }
+    Ok(base
+        .parent()
+        .ok_or("Missing app data directory")?
+        .join(path))
+}
+fn atomic_json(path: &std::path::Path, value: &impl Serialize) -> Result<(), String> {
+    use std::io::Write;
+    let bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
+    let temporary = path.with_extension("json.tmp");
+    let mut file = std::fs::File::create(&temporary).map_err(|e| e.to_string())?;
+    file.write_all(&bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|e| e.to_string())?;
+    std::fs::rename(&temporary, path).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -888,7 +907,10 @@ mod tests {
         assert!(f.store.remove("clients", "id", "client").await.is_err());
         f.store.insert("invoice_payments",json!({"id":"payment","invoice_id":"invoice","modalita_pagamento":"MP05","importo_pagamento":12.5})).await.unwrap();
         f.store.remove("invoices", "id", "invoice").await.unwrap();
-        f.store.remove("invoices", "id", "credit-note").await.unwrap();
+        f.store
+            .remove("invoices", "id", "credit-note")
+            .await
+            .unwrap();
         assert!(
             f.store
                 .read("invoice_payments", "all", vec![], "")
@@ -1188,29 +1210,4 @@ mod tests {
         assert!(FileStore::open(path.clone()).is_err());
         assert_eq!(std::fs::read(path).unwrap(), bytes);
     }
-}
-
-fn resolve_file(base: &std::path::Path, relative: &str) -> Result<PathBuf, String> {
-    let path = std::path::Path::new(relative);
-    if path.is_absolute()
-        || path
-            .components()
-            .any(|c| !matches!(c, std::path::Component::Normal(_)))
-    {
-        return Err("Invalid indexed file path".into());
-    }
-    Ok(base
-        .parent()
-        .ok_or("Missing app data directory")?
-        .join(path))
-}
-fn atomic_json(path: &std::path::Path, value: &impl Serialize) -> Result<(), String> {
-    use std::io::Write;
-    let bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
-    let temporary = path.with_extension("json.tmp");
-    let mut file = std::fs::File::create(&temporary).map_err(|e| e.to_string())?;
-    file.write_all(&bytes)
-        .and_then(|_| file.sync_all())
-        .map_err(|e| e.to_string())?;
-    std::fs::rename(&temporary, path).map_err(|e| e.to_string())
 }

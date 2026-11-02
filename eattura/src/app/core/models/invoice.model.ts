@@ -157,7 +157,7 @@ export interface PaymentDetail {
   iban: string | null;
 }
 
-export type InvoiceStatus = "draft" | "validated" | "sent" | "accepted" | "rejected";
+export type InvoiceStatus = "draft" | "validated" | "sent" | "accepted" | "rejected" | "imported";
 
 export interface DirImportSummary {
   totalFiles: number;

@@ -22,6 +22,11 @@ pub(crate) fn content_id(value: &impl Serialize) -> Result<String, String> {
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
+/// Stable client identity based on the fiscal fields, which are immutable once referenced.
+pub(crate) fn client_id(country: &str, tax_code: &str) -> Result<String, String> {
+    content_id(&serde_json::json!({"kind": "client", "country": country, "taxCode": tax_code}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -37,9 +42,4 @@ mod tests {
             content_id(&json!({"name":"A B D","count":1})).unwrap()
         );
     }
-}
-
-/// Stable client identity based on the fiscal fields, which are immutable once referenced.
-pub(crate) fn client_id(country: &str, tax_code: &str) -> Result<String, String> {
-    content_id(&serde_json::json!({"kind": "client", "country": country, "taxCode": tax_code}))
 }

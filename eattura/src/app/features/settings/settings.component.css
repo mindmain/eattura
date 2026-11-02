@@ -75,25 +75,6 @@ section > p {
 }
 
 
-.mb-4 {
-  margin-bottom: 1.5rem;
-}
-
-.sync-benefits {
-  margin: 0.5rem 0 0 1.25rem;
-  padding: 0;
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-  line-height: 1.5;
-}
-
-.storage-box h3 {
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 0.5rem 0;
-}
-
 .field-hint {
   display: block;
   font-size: 0.8rem;

@@ -11,6 +11,7 @@
       <button type="button" [class.selected]="theme.preference() === 'dark'" [attr.aria-pressed]="theme.preference() === 'dark'" (click)="setTheme('dark')"><lucide-icon [img]="themeIcons.Moon" [size]="19" />Scuro</button>
     </div>
   </section>
+  <app-mcp-settings />
   }
 
   <!-- Section 1 - Company data -->
@@ -135,9 +136,17 @@
         <input id="p-pecEmail" type="email" formControlName="pecEmail" placeholder="pec@esempio.it" />
       </div>
       <div class="form-group">
-        <label for="p-sdiAddress">PEC SdI per l'invio delle fatture *</label>
-        <input id="p-sdiAddress" type="email" formControlName="sdiAddress" />
-        <small class="field-hint">Per il primo invio usa sdi01@pec.fatturapa.it. Dopo la prima risposta dello SdI, inserisci qui l'indirizzo PEC che ti ha assegnato per gli invii successivi.</small>
+        <label for="p-sdiAddress">PEC SdI per l'invio delle fatture (auto-gestita)</label>
+        <input id="p-sdiAddress" type="email" formControlName="sdiAddress" placeholder="sdi01@pec.fatturapa.it" />
+        @if (pecSyncStatus()?.sdiAddressDetected; as detected) {
+          <small class="field-hint" style="color: #15803d; font-weight: 500;">
+            ✓ Rilevato automaticamente dalle notifiche PEC dello SdI: <strong>{{ detected }}</strong>
+          </small>
+        } @else {
+          <small class="field-hint">
+            Gestito automaticamente: se non impostato o prima della prima notifica ricevuta, il sistema invia a <strong>sdi01@pec.fatturapa.it</strong> e alla prima risposta dello SdI riconosce e salva in automatico l'indirizzo PEC assegnato.
+          </small>
+        }
       </div>
       <div class="form-row">
         <div class="form-group">
@@ -195,26 +204,10 @@
   </section>
   }
 
-  <!-- Section 4 - Cloud Drive Synchronization -->
+  <!-- Section 4 - Google Drive -->
   @if (section() === 'app') {
-  <section class="sync-section">
-    <h2>Sincronizzazione Multi-Dispositivo Senza DB</h2>
-    <p>
-      Accedi alle tue fatture su più dispositivi mantenendo l'architettura <strong>senza database</strong> e la sovranità totale sui dati.
-    </p>
-
-    <!-- Cloud Drive -->
-    <div class="storage-box mb-4">
-      <h3>Sincronizzazione tramite Cloud Drive</h3>
-      <p class="storage-hint">
-        Poiché l'archivio locale di Eattura è composto da file canonici XML immutabili con digest univoci SHA-256 e un catalogo locale autorigenerante, puoi posizionare la cartella del Vault su <strong>iCloud Drive, Dropbox, Google Drive, Nextcloud o un NAS Synology</strong>.
-      </p>
-      <ul class="sync-benefits">
-        <li><strong>Nessun conflitto</strong>: due dispositivi che emettono o importano la stessa fattura generano lo stesso identico ID deterministico.</li>
-        <li><strong>Zero server</strong>: non è necessario alcun server esterno attivo.</li>
-        <li><strong>Auto-Reload</strong>: le modifiche esterne vengono rilevate automaticamente dal file watcher in tempo reale.</li>
-      </ul>
-    </div>
+  <section>
+    <h2>Google Drive</h2>
   </section>
   }
 </div>

@@ -23,27 +23,16 @@ pub enum P7mError {
     XmlExtraction(String),
 }
 
-/// Standard OIDs used in PKCS#7 / CMS / CAdES
-pub const OID_PKCS7_SIGNED_DATA: &str = "1.2.840.113549.1.7.2";
-pub const OID_PKCS7_DATA: &str = "1.2.840.113549.1.7.1";
-pub const OID_SHA256: &str = "2.16.840.1.101.3.4.2.1";
-pub const OID_RSA_ENCRYPTION: &str = "1.2.840.113549.1.1.1";
-pub const OID_SIGNING_TIME: &str = "1.2.840.113549.1.9.5";
-pub const OID_MESSAGE_DIGEST: &str = "1.2.840.113549.1.9.4";
-pub const OID_CONTENT_TYPE: &str = "1.2.840.113549.1.9.3";
-
 /// Check whether the given byte buffer represents a P7M file or raw XML.
 pub fn is_p7m(data: &[u8]) -> bool {
     let trimmed = data.trim_ascii_start();
-    if trimmed.starts_with(b"<?xml") || trimmed.starts_with(b"<p:FatturaElettronica") || trimmed.starts_with(b"<FatturaElettronica") {
+    if trimmed.starts_with(b"<?xml")
+        || trimmed.starts_with(b"<p:FatturaElettronica")
+        || trimmed.starts_with(b"<FatturaElettronica")
+    {
         return false;
     }
-    // Check for ASN.1 SEQUENCE header (0x30)
-    if trimmed.first() == Some(&0x30) {
-        return true;
-    }
-    // Also check for legacy or mock header
-    trimmed.starts_with(b"PKCS7_CADES_BES_ENVELOPE:")
+    trimmed.first() == Some(&0x30)
 }
 
 /// Extract the raw XML invoice payload from a `.xml.p7m` byte slice or raw `.xml`.
@@ -52,12 +41,15 @@ pub fn extract_payload(data: &[u8]) -> Result<Vec<u8>, P7mError> {
     Ok(payload)
 }
 
-/// Inspect a `.p7m` file: extracts the XML payload and metadata about the signature.
+/// Inspect a `.p7m` file: extracts the XML payload and metadata from the PKCS#7 envelope.
 pub fn inspect_p7m(data: &[u8]) -> Result<(Vec<u8>, SignerInfo), P7mError> {
     let trimmed = data.trim_ascii();
 
     // 1. If it's already plain XML
-    if trimmed.starts_with(b"<?xml") || trimmed.starts_with(b"<p:FatturaElettronica") || trimmed.starts_with(b"<FatturaElettronica") {
+    if trimmed.starts_with(b"<?xml")
+        || trimmed.starts_with(b"<p:FatturaElettronica")
+        || trimmed.starts_with(b"<FatturaElettronica")
+    {
         let digest = format!("{:x}", Sha256::digest(trimmed));
         return Ok((
             trimmed.to_vec(),
@@ -73,32 +65,13 @@ pub fn inspect_p7m(data: &[u8]) -> Result<(Vec<u8>, SignerInfo), P7mError> {
         ));
     }
 
-    // 2. Legacy mock wrapper check
-    if trimmed.starts_with(b"PKCS7_CADES_BES_ENVELOPE:") {
-        let payload = &trimmed[b"PKCS7_CADES_BES_ENVELOPE:".len()..];
-        let digest = format!("{:x}", Sha256::digest(payload));
-        return Ok((
-            payload.to_vec(),
-            SignerInfo {
-                is_signed: true,
-                signer_name: Some("Firma Digitale (Simulata)".to_string()),
-                signer_fiscal_code: None,
-                issuer: Some("CA Eattura".to_string()),
-                signing_time: None,
-                algorithm: Some("SHA256withRSA".to_string()),
-                digest_hex: Some(digest),
-            },
-        ));
-    }
-
-    // 3. Robust ASN.1 DER extraction
+    // 2. ASN.1 DER/BER extraction
     let mut extracted_xml: Option<Vec<u8>> = None;
     let mut signer_name: Option<String> = None;
     let mut signer_cf: Option<String> = None;
     let mut issuer: Option<String> = None;
     let mut signing_time: Option<String> = None;
 
-    // First attempt: traverse ASN.1 TLVs looking for OCTET STRING containing XML
     if let Ok((_tag, val, _)) = decode_tlv(trimmed) {
         find_asn1_payload_and_metadata(
             val,
@@ -122,11 +95,11 @@ pub fn inspect_p7m(data: &[u8]) -> Result<(Vec<u8>, SignerInfo), P7mError> {
         final_payload,
         SignerInfo {
             is_signed: true,
-            signer_name: signer_name.or_else(|| Some("Firmatario Verificato".to_string())),
+            signer_name,
             signer_fiscal_code: signer_cf,
-            issuer: issuer.or_else(|| Some("CA Qualificata AgID".to_string())),
+            issuer,
             signing_time,
-            algorithm: Some("sha256WithRSAEncryption".to_string()),
+            algorithm: Some("PKCS#7 / CAdES-BES".to_string()),
             digest_hex: Some(digest),
         },
     ))
@@ -134,8 +107,15 @@ pub fn inspect_p7m(data: &[u8]) -> Result<(Vec<u8>, SignerInfo), P7mError> {
 
 /// Fallback extractor that locates XML boundary in binary streams
 fn extract_xml_boundary_fallback(bytes: &[u8]) -> Option<Vec<u8>> {
-    let start_candidates = [b"<?xml".as_slice(), b"<p:FatturaElettronica".as_slice(), b"<FatturaElettronica".as_slice()];
-    let end_candidates = [b"</p:FatturaElettronica>".as_slice(), b"</FatturaElettronica>".as_slice()];
+    let start_candidates = [
+        b"<?xml".as_slice(),
+        b"<p:FatturaElettronica".as_slice(),
+        b"<FatturaElettronica".as_slice(),
+    ];
+    let end_candidates = [
+        b"</p:FatturaElettronica>".as_slice(),
+        b"</FatturaElettronica>".as_slice(),
+    ];
 
     let mut start_pos = None;
     for cand in &start_candidates {
@@ -169,11 +149,15 @@ fn extract_xml_boundary_fallback(bytes: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn rfind_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).rposition(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .rposition(|window| window == needle)
 }
 
 /// Recursive helper to walk ASN.1 nodes looking for eContent OCTET STRING and signer metadata
@@ -193,17 +177,20 @@ fn find_asn1_payload_and_metadata(
             if tag == 0x04 {
                 if extracted_xml.is_none() {
                     let trimmed = val.trim_ascii();
-                    if trimmed.starts_with(b"<?xml") || trimmed.starts_with(b"<p:FatturaElettronica") || trimmed.starts_with(b"<FatturaElettronica") {
+                    if trimmed.starts_with(b"<?xml")
+                        || trimmed.starts_with(b"<p:FatturaElettronica")
+                        || trimmed.starts_with(b"<FatturaElettronica")
+                    {
                         *extracted_xml = Some(trimmed.to_vec());
                     }
                 }
             }
             // UTCTime (0x17) or GeneralizedTime (0x18)
             else if tag == 0x17 || tag == 0x18 {
-                if signing_time.is_none() {
-                    if let Ok(s) = std::str::from_utf8(val) {
-                        *signing_time = Some(s.to_string());
-                    }
+                if signing_time.is_none()
+                    && let Ok(s) = std::str::from_utf8(val)
+                {
+                    *signing_time = Some(s.to_string());
                 }
             }
             // PrintableString (0x13), UTF8String (0x0C)
@@ -213,7 +200,11 @@ fn find_asn1_payload_and_metadata(
                         if signer_cf.is_none() {
                             *signer_cf = Some(s.to_string());
                         }
-                    } else if s.to_lowercase().contains("ca") || s.to_lowercase().contains("poste") || s.to_lowercase().contains("aruba") || s.to_lowercase().contains("infocert") {
+                    } else if s.to_lowercase().contains("ca")
+                        || s.to_lowercase().contains("poste")
+                        || s.to_lowercase().contains("aruba")
+                        || s.to_lowercase().contains("infocert")
+                    {
                         if issuer.is_none() {
                             *issuer = Some(s.to_string());
                         }
@@ -249,7 +240,9 @@ pub fn decode_tlv(input: &[u8]) -> Result<(u8, &[u8], &[u8]), P7mError> {
     let mut cursor = 1;
 
     if cursor >= input.len() {
-        return Err(P7mError::InvalidAsn1("Unexpected EOF reading length".into()));
+        return Err(P7mError::InvalidAsn1(
+            "Unexpected EOF reading length".into(),
+        ));
     }
 
     let first_len = input[cursor];
@@ -284,177 +277,6 @@ pub fn decode_tlv(input: &[u8]) -> Result<(u8, &[u8], &[u8]), P7mError> {
     Ok((tag, val, rem))
 }
 
-// ---------------------------------------------------------------------------
-// ASN.1 DER Encoders for CAdES-BES P7M generation
-// ---------------------------------------------------------------------------
-
-pub fn encode_tlv(tag: u8, value: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(value.len() + 4);
-    out.push(tag);
-
-    let len = value.len();
-    if len < 128 {
-        out.push(len as u8);
-    } else if len <= 0xFF {
-        out.push(0x81);
-        out.push(len as u8);
-    } else if len <= 0xFFFF {
-        out.push(0x82);
-        out.push((len >> 8) as u8);
-        out.push((len & 0xFF) as u8);
-    } else if len <= 0xFFFFFF {
-        out.push(0x83);
-        out.push((len >> 16) as u8);
-        out.push(((len >> 8) & 0xFF) as u8);
-        out.push((len & 0xFF) as u8);
-    } else {
-        out.push(0x84);
-        out.push((len >> 24) as u8);
-        out.push(((len >> 16) & 0xFF) as u8);
-        out.push(((len >> 8) & 0xFF) as u8);
-        out.push((len & 0xFF) as u8);
-    }
-
-    out.extend_from_slice(value);
-    out
-}
-
-pub fn encode_sequence(content: &[u8]) -> Vec<u8> {
-    encode_tlv(0x30, content)
-}
-
-pub fn encode_set(content: &[u8]) -> Vec<u8> {
-    encode_tlv(0x31, content)
-}
-
-pub fn encode_context_constructed(tag_num: u8, content: &[u8]) -> Vec<u8> {
-    encode_tlv(0xA0 | (tag_num & 0x1F), content)
-}
-
-pub fn encode_octet_string(data: &[u8]) -> Vec<u8> {
-    encode_tlv(0x04, data)
-}
-
-pub fn encode_integer(val: &[u8]) -> Vec<u8> {
-    encode_tlv(0x02, val)
-}
-
-pub fn encode_printable_string(s: &str) -> Vec<u8> {
-    encode_tlv(0x13, s.as_bytes())
-}
-
-pub fn encode_utf8_string(s: &str) -> Vec<u8> {
-    encode_tlv(0x0C, s.as_bytes())
-}
-
-pub fn encode_utc_time(s: &str) -> Vec<u8> {
-    encode_tlv(0x17, s.as_bytes())
-}
-
-/// Encode standard dot-separated OID string into DER bytes (tag 0x06)
-pub fn encode_oid(oid_str: &str) -> Vec<u8> {
-    let parts: Vec<u64> = oid_str
-        .split('.')
-        .filter_map(|s| s.parse::<u64>().ok())
-        .collect();
-
-    if parts.len() < 2 {
-        return encode_tlv(0x06, &[]);
-    }
-
-    let mut body = Vec::new();
-    body.push((parts[0] * 40 + parts[1]) as u8);
-
-    for &p in &parts[2..] {
-        let mut val = p;
-        let mut buf = Vec::new();
-        buf.push((val & 0x7F) as u8);
-        val >>= 7;
-        while val > 0 {
-            buf.push(((val & 0x7F) | 0x80) as u8);
-            val >>= 7;
-        }
-        buf.reverse();
-        body.extend_from_slice(&buf);
-    }
-
-    encode_tlv(0x06, &body)
-}
-
-/// Create a valid CAdES-BES PKCS#7 SignedData envelope wrapping the invoice XML.
-///
-/// Encapsulates:
-/// - ContentInfo (OID 1.2.840.113549.1.7.2 - signedData)
-///   - SignedData v1
-///     - DigestAlgorithms: SHA-256
-///     - EncapsulatedContentInfo: OID 1.2.840.113549.1.7.1 (data) [0] EXPLICIT OCTET STRING (xml)
-///     - SignerInfo with SHA-256 digest and signer metadata
-pub fn create_cades_bes_p7m(
-    xml: &[u8],
-    signer_name: Option<&str>,
-    signer_cf: Option<&str>,
-) -> Result<Vec<u8>, P7mError> {
-    // 1. Digest the XML
-    let digest = Sha256::digest(xml);
-
-    // 2. Digest Algorithm Identifier: SHA-256 (2.16.840.1.101.3.4.2.1)
-    let sha256_oid = encode_oid(OID_SHA256);
-    let digest_alg_seq = encode_sequence(&[sha256_oid.as_slice(), &[0x05, 0x00]].concat()); // NULL param
-    let digest_algorithms_set = encode_set(&digest_alg_seq);
-
-    // 3. EncapsulatedContentInfo:
-    // contentType: 1.2.840.113549.1.7.1 (data)
-    // content: [0] EXPLICIT OCTET STRING
-    let data_oid = encode_oid(OID_PKCS7_DATA);
-    let e_content_octets = encode_octet_string(xml);
-    let e_content_tagged = encode_context_constructed(0, &e_content_octets);
-    let encap_content_info = encode_sequence(&[data_oid, e_content_tagged].concat());
-
-    // 4. Signer metadata / Simulated signature
-    let version = encode_integer(&[0x01]);
-    let name = signer_name.unwrap_or("Eattura CAdES Signer");
-    let cf = signer_cf.unwrap_or("00000000000");
-
-    let signer_id = encode_sequence(&[
-        encode_printable_string(name),
-        encode_printable_string(cf),
-    ].concat());
-
-    let rsa_oid = encode_oid(OID_RSA_ENCRYPTION);
-    let sig_alg_seq = encode_sequence(&[rsa_oid.as_slice(), &[0x05, 0x00]].concat());
-
-    // Signature value: simulated RSA-256 signature bytes over the digest
-    let signature_value = encode_octet_string(digest.as_slice());
-
-    let signer_info_seq = encode_sequence(&[
-        version.as_slice(),
-        signer_id.as_slice(),
-        digest_alg_seq.as_slice(),
-        sig_alg_seq.as_slice(),
-        signature_value.as_slice(),
-    ].concat());
-
-    let signer_infos_set = encode_set(&signer_info_seq);
-
-    // 5. SignedData SEQUENCE
-    let signed_data_version = encode_integer(&[0x01]);
-    let signed_data_body = [
-        signed_data_version,
-        digest_algorithms_set,
-        encap_content_info,
-        signer_infos_set,
-    ].concat();
-
-    let signed_data_seq = encode_sequence(&signed_data_body);
-
-    // 6. Outer ContentInfo SEQUENCE
-    let signed_data_oid = encode_oid(OID_PKCS7_SIGNED_DATA);
-    let signed_data_tagged = encode_context_constructed(0, &signed_data_seq);
-    let outer_content_info = encode_sequence(&[signed_data_oid, signed_data_tagged].concat());
-
-    Ok(outer_content_info)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -469,20 +291,39 @@ mod tests {
   </FatturaElettronicaBody>
 </p:FatturaElettronica>"#;
 
+    fn encode_test_tlv(tag: u8, value: &[u8]) -> Vec<u8> {
+        let mut out = vec![tag];
+        let len = value.len();
+        if len < 128 {
+            out.push(len as u8);
+        } else {
+            out.push(0x82);
+            out.push((len >> 8) as u8);
+            out.push((len & 0xFF) as u8);
+        }
+        out.extend_from_slice(value);
+        out
+    }
+
+    fn build_sample_p7m_fixture(xml: &[u8]) -> Vec<u8> {
+        let mut inner = Vec::new();
+        inner.extend_from_slice(&encode_test_tlv(0x13, b"Mario Rossi"));
+        inner.extend_from_slice(&encode_test_tlv(0x13, b"RSSMRA80A01H501U"));
+        inner.extend_from_slice(&encode_test_tlv(0x04, xml));
+        encode_test_tlv(0x30, &inner)
+    }
+
     #[test]
     fn test_is_p7m_detection() {
         assert!(!is_p7m(SAMPLE_XML));
 
-        let p7m = create_cades_bes_p7m(SAMPLE_XML, Some("Mario Rossi"), Some("RSSMRA80A01H501U")).unwrap();
+        let p7m = build_sample_p7m_fixture(SAMPLE_XML);
         assert!(is_p7m(&p7m));
     }
 
     #[test]
-    fn test_cades_bes_roundtrip() {
-        let p7m = create_cades_bes_p7m(SAMPLE_XML, Some("Mario Rossi"), Some("RSSMRA80A01H501U")).unwrap();
-        assert!(!p7m.is_empty());
-        assert_eq!(p7m[0], 0x30); // Valid ASN.1 SEQUENCE
-
+    fn test_p7m_extraction_and_metadata() {
+        let p7m = build_sample_p7m_fixture(SAMPLE_XML);
         let (extracted, info) = inspect_p7m(&p7m).unwrap();
         assert_eq!(extracted, SAMPLE_XML);
         assert!(info.is_signed);

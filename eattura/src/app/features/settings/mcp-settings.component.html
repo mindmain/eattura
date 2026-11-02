@@ -1,0 +1,28 @@
+<section aria-labelledby="mcp-title">
+  <h2 id="mcp-title">Assistenti AI · MCP locale</h2>
+  <p><strong>Apri Eattura e lasciala aperta per usare MCP.</strong> Il server parte con l'app e si arresta alla sua chiusura.</p>
+  <p>Gli assistenti autorizzati possono leggere fatture e clienti, controllare la validazione e creare nuove bozze. Non possono inviare fatture, cambiarne lo stato, modificarle o eliminarle: revisione e invio restano a te, nell'app.</p>
+  @if (status(); as current) {
+    <p role="status">Stato: <strong>{{ current.running ? 'Attivo, solo su questo computer' : 'Non disponibile' }}</strong></p>
+    <dl>
+      <dt>Endpoint Streamable HTTP</dt><dd><code>{{ current.endpoint }}</code></dd>
+      <dt>Configurazione locale</dt><dd><code>{{ current.configPath }}</code></dd>
+    </dl>
+    @if (current.error) { <p class="error" role="alert">{{ current.error }}</p> }
+    @if (current.running) {
+      <button type="button" (click)="toggleConfig()" [disabled]="loading()" [attr.aria-expanded]="!!config()" aria-controls="mcp-client-config">{{ config() ? 'Nascondi configurazione' : 'Mostra configurazione client' }}</button>
+    }
+  } @else if (!loading() && !error()) {
+    <p>Disponibile solo nell'app desktop Eattura. Apri l'applicazione per collegare il tuo client MCP.</p>
+  }
+  <button type="button" (click)="refresh()" [disabled]="loading()">{{ loading() ? 'Caricamento…' : 'Aggiorna stato' }}</button>
+  @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
+  @if (config(); as clientConfig) {
+    <div id="mcp-client-config">
+      <p><strong>Contiene un token privato.</strong> Copialo soltanto nel client MCP locale che autorizzi ad accedere al tuo archivio. Non condividerlo e non incollarlo in chat.</p>
+      <label for="mcp-config">Configurazione JSON da adattare al tuo client</label>
+      <textarea id="mcp-config" readonly spellcheck="false" [value]="clientConfig"></textarea>
+    </div>
+  }
+  <p>I client devono supportare MCP Streamable HTTP con header Authorization. L'endpoint non è raggiungibile da servizi cloud o da altri dispositivi. Se il collegamento fallisce, apri Eattura e riprova.</p>
+</section>

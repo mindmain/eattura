@@ -35,6 +35,7 @@ describe("PaymentService", () => {
         dataScadenza: "2026-01-31",
         direction: "outbound",
         controparteNome: "Acme",
+        controparteId: "client-1",
         importoTotale: 100,
         importoPagato: 0,
         saldoResiduo: 100,

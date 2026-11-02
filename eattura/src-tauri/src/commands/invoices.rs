@@ -51,6 +51,7 @@ pub struct SdiNotificationDetail {
 /// Withholding tax detail (DatiRitenuta)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(schemars::JsonSchema)]
 pub struct DatiRitenutaDetail {
     pub tipo_ritenuta: String,
     pub importo_ritenuta: f64,
@@ -61,6 +62,7 @@ pub struct DatiRitenutaDetail {
 /// Virtual stamp duty detail (DatiBollo)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(schemars::JsonSchema)]
 pub struct DatiBolloDetail {
     pub bollo_virtuale: String,
     pub importo_bollo: Option<f64>,
@@ -69,6 +71,7 @@ pub struct DatiBolloDetail {
 /// Linked invoice reference for autofatture / reverse charge integration (DatiFattureCollegate)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(schemars::JsonSchema)]
 pub struct DatiFatturaCollegataDetail {
     pub id_documento: String,
     pub data: Option<String>,
@@ -80,6 +83,7 @@ pub struct DatiFatturaCollegataDetail {
 /// Procurement / financial traceability detail for PA and contracts (DatiOrdineAcquisto, DatiContratto, DatiConvenzione)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(schemars::JsonSchema)]
 pub struct DatiDocumentoTracciabilitaDetail {
     #[serde(default)]
     pub tipo_documento_rif: Option<String>,
@@ -94,6 +98,7 @@ pub struct DatiDocumentoTracciabilitaDetail {
 /// Social security / professional fund contribution detail (DatiCassaPrevidenziale)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(schemars::JsonSchema)]
 pub struct DatiCassaDetail {
     pub tipo_cassa: String,
     pub al_cassa: f64,
@@ -119,6 +124,7 @@ pub struct AttachmentDetail {
 /// Request to attach a file to an invoice (2.5 <Allegati>)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(schemars::JsonSchema)]
 pub struct CreateAttachmentRequest {
     pub nome_attachment: String,
     #[serde(default)]
@@ -133,6 +139,7 @@ pub struct CreateAttachmentRequest {
 /// Transport document detail (2.1.8 <DatiDDT>) for deferred invoices (TD24)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(schemars::JsonSchema)]
 pub struct DatiDdtDetail {
     pub numero_ddt: String,
     pub data_ddt: String,
@@ -226,6 +233,7 @@ pub struct PaymentDetail {
 /// Request to create a new invoice.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(schemars::JsonSchema)]
 pub struct CreateInvoiceRequest {
     pub numero: String,
     pub data: String,
@@ -268,6 +276,7 @@ pub struct CreateInvoiceRequest {
 /// Request to create a single invoice line item.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(schemars::JsonSchema)]
 pub struct CreateLineRequest {
     pub descrizione: String,
     pub quantita: Option<f64>,
@@ -280,6 +289,7 @@ pub struct CreateLineRequest {
 /// Request to create a single payment entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(schemars::JsonSchema)]
 pub struct CreatePaymentRequest {
     pub modalita_pagamento: String,
     pub importo_pagamento: f64,
@@ -354,8 +364,12 @@ pub async fn list_invoices_store(
     if !backfilled.is_empty() {
         let mut tx = store.begin().await?;
         for (id, total) in &backfilled {
-            tx.update("invoices", id, serde_json::json!({"importo_totale_calcolato": total}))
-                .await?;
+            tx.update(
+                "invoices",
+                id,
+                serde_json::json!({"importo_totale_calcolato": total}),
+            )
+            .await?;
         }
         tx.commit().await?;
     }
@@ -371,7 +385,7 @@ pub async fn list_invoices_store(
             );
             let direction = classify_direction(owner.as_ref(), &cedente_id, &cessionario_id);
             let tipo_doc_val: String = row.get("tipo_documento");
-            let is_autofattura = row.get::<Option<bool>>("is_autofattura").unwrap_or_else(|| {
+            let is_autofattura = row.get::<Option<bool>>("is_autofattura").unwrap_or({
                 matches!(
                     tipo_doc_val.as_str(),
                     "TD16" | "TD17" | "TD18" | "TD19" | "TD20" | "TD21" | "TD27"
@@ -514,7 +528,8 @@ fn compute_invoice_financials(
         for c in casse {
             tot_cassa += c.importo_contributo_cassa;
             if c.aliquota_iva > 0.0 {
-                let imp = ((c.aliquota_iva * c.importo_contributo_cassa / 100.0) * 100.0).round() / 100.0;
+                let imp =
+                    ((c.aliquota_iva * c.importo_contributo_cassa / 100.0) * 100.0).round() / 100.0;
                 cassa_iva += imp;
             }
         }
@@ -529,14 +544,18 @@ fn compute_invoice_financials(
 
     // Virtual stamp duty (2.00)
     let mut bollo_amt = 0.0;
-    let has_bollo_line = linee.iter().any(|l| l.descrizione.to_lowercase().contains("bollo"));
-    if let Some(b) = bollo {
-        if b.bollo_virtuale == "SI" && !has_bollo_line {
-            bollo_amt = b.importo_bollo.unwrap_or(2.00);
-        }
+    let has_bollo_line = linee
+        .iter()
+        .any(|l| l.descrizione.to_lowercase().contains("bollo"));
+    if let Some(b) = bollo
+        && b.bollo_virtuale == "SI"
+        && !has_bollo_line
+    {
+        bollo_amt = b.importo_bollo.unwrap_or(2.00);
     }
 
-    let importo_totale = ((imponibile_linee + tot_cassa + tot_iva + bollo_amt) * 100.0).round() / 100.0;
+    let importo_totale =
+        ((imponibile_linee + tot_cassa + tot_iva + bollo_amt) * 100.0).round() / 100.0;
 
     let mut tot_ritenuta = 0.0;
     if let Some(ritenute) = ritenute {
@@ -547,7 +566,8 @@ fn compute_invoice_financials(
 
     // In Split Payment, VAT is remitted directly to the State by PA, so it is deducted from Netto a pagare
     let split_deduction = if is_split_payment { tot_iva } else { 0.0 };
-    let netto_a_pagare = ((importo_totale - tot_ritenuta - split_deduction).max(0.0) * 100.0).round() / 100.0;
+    let netto_a_pagare =
+        ((importo_totale - tot_ritenuta - split_deduction).max(0.0) * 100.0).round() / 100.0;
     (importo_totale, netto_a_pagare)
 }
 
@@ -577,7 +597,10 @@ pub async fn create_invoice_store(
         "TD16" | "TD17" | "TD18" | "TD19" | "TD20" | "TD21" | "TD27"
     );
     let soggetto_emittente = if is_autofattura {
-        invoice.soggetto_emittente.clone().or_else(|| Some("CC".to_string()))
+        invoice
+            .soggetto_emittente
+            .clone()
+            .or_else(|| Some("CC".to_string()))
     } else {
         invoice.soggetto_emittente.clone()
     };
@@ -616,33 +639,37 @@ pub async fn create_invoice_store(
         })
         .collect();
 
-    tx.insert("invoices", serde_json::json!({
-        "id": &invoice_id,
-        "numero": &invoice.numero,
-        "data": &invoice.data,
-        "tipo_documento": &invoice.tipo_documento,
-        "divisa": &invoice.divisa,
-        "importo_totale": importo_totale,
-        "netto_a_pagare": netto_a_pagare,
-        "stato": "draft",
-        "cedente_id": &invoice.cedente_id,
-        "cessionario_id": &invoice.cessionario_id,
-        "causale": &invoice.causale,
-        "dati_ritenuta": &invoice.dati_ritenuta,
-        "dati_bollo": &invoice.dati_bollo,
-        "dati_cassa_previdenziale": &invoice.dati_cassa_previdenziale,
-        "dati_fatture_collegate": &invoice.dati_fatture_collegate,
-        "soggetto_emittente": &soggetto_emittente,
-        "is_autofattura": is_autofattura,
-        "is_pa": is_pa,
-        "is_split_payment": is_split_payment,
-        "esigibilita_iva": &esigibilita_iva,
-        "dati_ordine_acquisto": &invoice.dati_ordine_acquisto,
-        "dati_contratto": &invoice.dati_contratto,
-        "dati_convenzione": &invoice.dati_convenzione,
-        "dati_ddt": &processed_ddt,
-        "allegati": &processed_allegati,
-    })).await
+    tx.insert(
+        "invoices",
+        serde_json::json!({
+            "id": &invoice_id,
+            "numero": &invoice.numero,
+            "data": &invoice.data,
+            "tipo_documento": &invoice.tipo_documento,
+            "divisa": &invoice.divisa,
+            "importo_totale": importo_totale,
+            "netto_a_pagare": netto_a_pagare,
+            "stato": "draft",
+            "cedente_id": &invoice.cedente_id,
+            "cessionario_id": &invoice.cessionario_id,
+            "causale": &invoice.causale,
+            "dati_ritenuta": &invoice.dati_ritenuta,
+            "dati_bollo": &invoice.dati_bollo,
+            "dati_cassa_previdenziale": &invoice.dati_cassa_previdenziale,
+            "dati_fatture_collegate": &invoice.dati_fatture_collegate,
+            "soggetto_emittente": &soggetto_emittente,
+            "is_autofattura": is_autofattura,
+            "is_pa": is_pa,
+            "is_split_payment": is_split_payment,
+            "esigibilita_iva": &esigibilita_iva,
+            "dati_ordine_acquisto": &invoice.dati_ordine_acquisto,
+            "dati_contratto": &invoice.dati_contratto,
+            "dati_convenzione": &invoice.dati_convenzione,
+            "dati_ddt": &processed_ddt,
+            "allegati": &processed_allegati,
+        }),
+    )
+    .await
     .map_err(|e| e.to_string())?;
 
     // Insert line items.
@@ -736,6 +763,18 @@ pub async fn update_invoice_store(
         is_split_payment,
     );
 
+    let is_autofattura = matches!(
+        invoice.tipo_documento.as_str(),
+        "TD16" | "TD17" | "TD18" | "TD19" | "TD20" | "TD21" | "TD27"
+    );
+    let soggetto_emittente = if is_autofattura {
+        invoice
+            .soggetto_emittente
+            .clone()
+            .or_else(|| Some("CC".to_string()))
+    } else {
+        invoice.soggetto_emittente.clone()
+    };
     let esigibilita_iva = if is_split_payment {
         Some("S".to_string())
     } else {
@@ -771,28 +810,36 @@ pub async fn update_invoice_store(
         .collect();
 
     // Update the invoice header.
-    tx.update("invoices", &id, serde_json::json!({
-        "numero": &invoice.numero,
-        "data": &invoice.data,
-        "tipo_documento": &invoice.tipo_documento,
-        "divisa": &invoice.divisa,
-        "cedente_id": &invoice.cedente_id,
-        "cessionario_id": &invoice.cessionario_id,
-        "causale": &invoice.causale,
-        "dati_ritenuta": &invoice.dati_ritenuta,
-        "dati_bollo": &invoice.dati_bollo,
-        "dati_cassa_previdenziale": &invoice.dati_cassa_previdenziale,
-        "importo_totale": importo_totale,
-        "netto_a_pagare": netto_a_pagare,
-        "is_pa": is_pa,
-        "is_split_payment": is_split_payment,
-        "esigibilita_iva": &esigibilita_iva,
-        "dati_ordine_acquisto": &invoice.dati_ordine_acquisto,
-        "dati_contratto": &invoice.dati_contratto,
-        "dati_convenzione": &invoice.dati_convenzione,
-        "dati_ddt": &processed_ddt,
-        "allegati": &processed_allegati,
-    })).await
+    tx.update(
+        "invoices",
+        &id,
+        serde_json::json!({
+            "numero": &invoice.numero,
+            "data": &invoice.data,
+            "tipo_documento": &invoice.tipo_documento,
+            "divisa": &invoice.divisa,
+            "cedente_id": &invoice.cedente_id,
+            "cessionario_id": &invoice.cessionario_id,
+            "causale": &invoice.causale,
+            "dati_ritenuta": &invoice.dati_ritenuta,
+            "dati_bollo": &invoice.dati_bollo,
+            "dati_cassa_previdenziale": &invoice.dati_cassa_previdenziale,
+            "dati_fatture_collegate": &invoice.dati_fatture_collegate,
+            "soggetto_emittente": &soggetto_emittente,
+            "is_autofattura": is_autofattura,
+            "importo_totale": importo_totale,
+            "netto_a_pagare": netto_a_pagare,
+            "is_pa": is_pa,
+            "is_split_payment": is_split_payment,
+            "esigibilita_iva": &esigibilita_iva,
+            "dati_ordine_acquisto": &invoice.dati_ordine_acquisto,
+            "dati_contratto": &invoice.dati_contratto,
+            "dati_convenzione": &invoice.dati_convenzione,
+            "dati_ddt": &processed_ddt,
+            "allegati": &processed_allegati,
+        }),
+    )
+    .await
     .map_err(|e| e.to_string())?;
 
     // Replace lines and payments.
@@ -836,7 +883,10 @@ pub async fn delete_invoice(state: tauri::State<'_, TauriState>, id: String) -> 
     delete_invoice_store(&state.store, &id).await
 }
 
-pub async fn delete_invoice_store(store: &crate::storage::FileStore, id: &str) -> Result<(), String> {
+pub async fn delete_invoice_store(
+    store: &crate::storage::FileStore,
+    id: &str,
+) -> Result<(), String> {
     let mut tx = store.begin().await?;
     let stato: Option<String> = tx
         .read("invoices", "id", vec![serde_json::json!(id)], "")
@@ -873,12 +923,19 @@ pub async fn next_invoice_number(
     cedente_id: String,
     year: String,
 ) -> Result<String, String> {
-    let row = state
-        .store
+    next_invoice_number_store(&state.store, &cedente_id, &year).await
+}
+
+pub async fn next_invoice_number_store(
+    store: &crate::storage::FileStore,
+    cedente_id: &str,
+    year: &str,
+) -> Result<String, String> {
+    let row = store
         .read(
             "invoices",
             "number_count",
-            vec![serde_json::json!(&cedente_id), serde_json::json!(&year)],
+            vec![serde_json::json!(cedente_id), serde_json::json!(year)],
             "",
         )
         .await
@@ -887,7 +944,34 @@ pub async fn next_invoice_number(
         .map_err(|e| e.to_string())?;
 
     let count: i64 = row.get("cnt");
-    Ok((count + 1).to_string())
+    let rows = store
+        .read("invoices", "invoice_views", vec![], "")
+        .await
+        .fetch_all()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let max_existing = rows
+        .iter()
+        .filter(|r| {
+            r.get::<String>("cedente_id") == cedente_id
+                && r.get::<String>("data").starts_with(year)
+                && !r.get::<Option<bool>>("imported_from_xml").unwrap_or(false)
+        })
+        .filter_map(|r| {
+            let num = r.get::<String>("numero");
+            let trimmed = num.trim();
+            trimmed.parse::<i64>().ok().or_else(|| {
+                trimmed
+                    .split(['/', '-'])
+                    .next()
+                    .and_then(|part| part.trim().parse::<i64>().ok())
+            })
+        })
+        .max()
+        .unwrap_or(0);
+
+    Ok((count + 1).max(max_existing + 1).to_string())
 }
 
 /// Change the lifecycle status of an invoice, enforcing the shared state machine.
@@ -1034,7 +1118,9 @@ pub async fn import_invoice_xml(
     let (payload, signer_info) = if common::p7m::is_p7m(bytes) {
         let (xml, info) = common::p7m::inspect_p7m(bytes).map_err(|e| e.to_string())?;
         (xml, if info.is_signed { Some(info) } else { None })
-    } else if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(xml_content.trim().as_bytes()) {
+    } else if let Ok(decoded) =
+        base64::engine::general_purpose::STANDARD.decode(xml_content.trim().as_bytes())
+    {
         if common::p7m::is_p7m(&decoded) {
             let (xml, info) = common::p7m::inspect_p7m(&decoded).map_err(|e| e.to_string())?;
             (xml, if info.is_signed { Some(info) } else { None })
@@ -1048,27 +1134,21 @@ pub async fn import_invoice_xml(
     let xml_str = std::str::from_utf8(&payload).map_err(|e| format!("Invalid UTF-8 XML: {e}"))?;
 
     // Check if the payload is an SDI notification rather than an invoice
-    if let Ok(notif) = common::pec::parse_notification(xml_str) {
-        if !matches!(notif.message_type, common::pec::SdiMessageType::Unknown(_)) {
-            let (linked_id, _) = crate::commands::pec::attach_sdi_notification(
-                &state.store,
-                &notif,
-                xml_str,
-                None,
-            )
-            .await?;
-            if let Some(id) = linked_id {
-                return fetch_invoice_detail(&state.store, &id).await;
-            }
+    if let Ok(notif) = common::pec::parse_notification(xml_str)
+        && !matches!(notif.message_type, common::pec::SdiMessageType::Unknown(_))
+    {
+        let (linked_id, _) =
+            crate::commands::pec::attach_sdi_notification(&state.store, &notif, xml_str, None)
+                .await?;
+        if let Some(id) = linked_id {
+            return fetch_invoice_detail(&state.store, &id).await;
         }
     }
 
     import_xml_content_with_signer(&state.store, xml_str, signer_info).await
 }
 
-/// Core XML import routine: decode, ensure cedente/cessionario clients exist,
-/// and persist the invoice with its lines and payments. Reused by the
-/// single-file command and the recursive folder import.
+#[cfg(test)]
 pub(crate) async fn import_xml_content(
     store: &crate::storage::FileStore,
     xml_content: &str,
@@ -1140,7 +1220,9 @@ async fn import_xml_content_inner(
         // Reuse the fiscal document instead of creating a second record.
         let existing_invoice = store
             .read("invoices", "invoice_views", vec![], "")
-            .await.fetch_all().await?
+            .await
+            .fetch_all()
+            .await?
             .into_iter()
             .find(|row| {
                 !matches!(row.get::<String>("stato").as_str(), "draft" | "rejected")
@@ -1149,10 +1231,18 @@ async fn import_xml_content_inner(
         if let Some(existing) = existing_invoice {
             let id: String = existing.get("id");
             let filename = common::pec::sdi_filename(&fattura);
-            let mut filenames = existing.get::<Option<Vec<String>>>("sdi_filenames").unwrap_or_default();
+            let mut filenames = existing
+                .get::<Option<Vec<String>>>("sdi_filenames")
+                .unwrap_or_default();
             if !filenames.contains(&filename) {
                 filenames.push(filename);
-                store.update("invoices", &id, serde_json::json!({"sdi_filenames": filenames})).await?;
+                store
+                    .update(
+                        "invoices",
+                        &id,
+                        serde_json::json!({"sdi_filenames": filenames}),
+                    )
+                    .await?;
             }
             imported_ids.push(id);
             continue;
@@ -1170,39 +1260,61 @@ async fn import_xml_content_inner(
         }
 
         let imported_causale = dgd.causale.clone();
-        let imported_ritenute: Vec<DatiRitenutaDetail> = dgd.dati_ritenuta.iter().map(|r| {
-            let tr_str = common::xml::enum_map::tipo_ritenuta_to_sdi(r.tipo_ritenuta).unwrap_or("RT01").to_string();
-            let cp_str = common::xml::enum_map::causale_pagamento_to_sdi(r.causale_pagamento).unwrap_or("A").to_string();
-            DatiRitenutaDetail {
-                tipo_ritenuta: tr_str,
-                importo_ritenuta: r.importo_ritenuta,
-                aliquota_ritenuta: r.aliquota_ritenuta,
-                causale_pagamento: cp_str,
-            }
-        }).collect();
+        let imported_ritenute: Vec<DatiRitenutaDetail> = dgd
+            .dati_ritenuta
+            .iter()
+            .map(|r| {
+                let tr_str = common::xml::enum_map::tipo_ritenuta_to_sdi(r.tipo_ritenuta)
+                    .unwrap_or("RT01")
+                    .to_string();
+                let cp_str = common::xml::enum_map::causale_pagamento_to_sdi(r.causale_pagamento)
+                    .unwrap_or("A")
+                    .to_string();
+                DatiRitenutaDetail {
+                    tipo_ritenuta: tr_str,
+                    importo_ritenuta: r.importo_ritenuta,
+                    aliquota_ritenuta: r.aliquota_ritenuta,
+                    causale_pagamento: cp_str,
+                }
+            })
+            .collect();
 
         let imported_bollo: Option<DatiBolloDetail> = dgd.dati_bollo.as_ref().map(|b| {
-            let bv_str = common::xml::enum_map::bollo_virtuale_to_sdi(b.bollo_virtuale).unwrap_or("SI").to_string();
+            let bv_str = common::xml::enum_map::bollo_virtuale_to_sdi(b.bollo_virtuale)
+                .unwrap_or("SI")
+                .to_string();
             DatiBolloDetail {
                 bollo_virtuale: bv_str,
                 importo_bollo: b.importo_bollo,
             }
         });
 
-        let imported_casse: Vec<DatiCassaDetail> = dgd.dati_cassa_previdenziale.iter().map(|c| {
-            let tc_str = common::xml::enum_map::tipo_cassa_to_sdi(c.tipo_cassa).unwrap_or("TC01").to_string();
-            let rit_str = c.ritenuta.and_then(common::xml::enum_map::ritenuta_to_sdi).map(String::from);
-            let nat_str = c.natura.and_then(common::xml::enum_map::natura_to_sdi).map(String::from);
-            DatiCassaDetail {
-                tipo_cassa: tc_str,
-                al_cassa: c.al_cassa,
-                importo_contributo_cassa: c.importo_contributo_cassa,
-                imponibile_cassa: c.imponibile_cassa,
-                aliquota_iva: c.aliquota_iva,
-                ritenuta: rit_str,
-                natura: nat_str,
-            }
-        }).collect();
+        let imported_casse: Vec<DatiCassaDetail> = dgd
+            .dati_cassa_previdenziale
+            .iter()
+            .map(|c| {
+                let tc_str = common::xml::enum_map::tipo_cassa_to_sdi(c.tipo_cassa)
+                    .unwrap_or("TC01")
+                    .to_string();
+                let rit_str = c
+                    .ritenuta
+                    .and_then(common::xml::enum_map::ritenuta_to_sdi)
+                    .map(String::from);
+                let nat_str = c
+                    .natura
+                    .and_then(common::xml::enum_map::natura_to_sdi)
+                    .map(String::from);
+                DatiCassaDetail {
+                    tipo_cassa: tc_str,
+                    al_cassa: c.al_cassa,
+                    importo_contributo_cassa: c.importo_contributo_cassa,
+                    imponibile_cassa: c.imponibile_cassa,
+                    aliquota_iva: c.aliquota_iva,
+                    ritenuta: rit_str,
+                    natura: nat_str,
+                }
+            })
+            .collect();
 
         let mut tot_rit = 0.0;
         for r in &imported_ritenute {
@@ -1219,12 +1331,19 @@ async fn import_xml_content_inner(
                     tot_split_iva += riep.imposta;
                     extracted_esigibilita = Some("S".to_string());
                 } else if extracted_esigibilita.is_none() {
-                    extracted_esigibilita = riep.esigibilita_iva.and_then(common::xml::enum_map::esigibilita_iva_to_sdi).map(String::from);
+                    extracted_esigibilita = riep
+                        .esigibilita_iva
+                        .and_then(common::xml::enum_map::esigibilita_iva_to_sdi)
+                        .map(String::from);
                 }
             }
         }
 
-        let is_pa_invoice = header.dati_trasmissione.as_ref().map(|dt| dt.formato_trasmissione == 10).unwrap_or(false);
+        let is_pa_invoice = header
+            .dati_trasmissione
+            .as_ref()
+            .map(|dt| dt.formato_trasmissione == 10)
+            .unwrap_or(false);
 
         let inferred_total = if dgd.importo_totale_documento.is_none() {
             common::invoice_total::inferred_gross_total(body)
@@ -1328,40 +1447,44 @@ async fn import_xml_content_inner(
         );
 
         // Insert invoice header.
-        tx.insert("invoices", serde_json::json!({
-            "id": &invoice_id,
-            "numero": &dgd.numero,
-            "data": &dgd.data,
-            "tipo_documento": &tipo_doc_str,
-            "divisa": &dgd.divisa,
-            "importo_totale": dgd.importo_totale_documento,
-            "importo_totale_calcolato": inferred_total,
-            "netto_a_pagare": imported_netto,
-            "stato": "imported",
-            "imported_from_xml": true,
-            "cedente_id": &cedente_id,
-            "cessionario_id": &cessionario_id,
-            "xml_content": xml_content,
-            "is_signed": is_signed,
-            "signer_info": &signer_info,
-            "causale": &imported_causale,
-            "dati_ritenuta": &imported_ritenute,
-            "dati_bollo": &imported_bollo,
-            "dati_cassa_previdenziale": &imported_casse,
-            "dati_fatture_collegate": &imported_collegate,
-            "soggetto_emittente": &imported_soggetto_emittente,
-            "art73": art73,
-            "sdi_filenames": [common::pec::sdi_filename(&fattura)],
-            "is_autofattura": is_autofattura,
-            "is_pa": is_pa_invoice,
-            "is_split_payment": has_split_payment,
-            "esigibilita_iva": &extracted_esigibilita,
-            "dati_ordine_acquisto": &imported_ordini,
-            "dati_contratto": &imported_contratti,
-            "dati_convenzione": &imported_convenzioni,
-            "dati_ddt": &imported_ddt,
-            "allegati": &imported_allegati,
-        })).await
+        tx.insert(
+            "invoices",
+            serde_json::json!({
+                "id": &invoice_id,
+                "numero": &dgd.numero,
+                "data": &dgd.data,
+                "tipo_documento": &tipo_doc_str,
+                "divisa": &dgd.divisa,
+                "importo_totale": dgd.importo_totale_documento,
+                "importo_totale_calcolato": inferred_total,
+                "netto_a_pagare": imported_netto,
+                "stato": "imported",
+                "imported_from_xml": true,
+                "cedente_id": &cedente_id,
+                "cessionario_id": &cessionario_id,
+                "xml_content": xml_content,
+                "is_signed": is_signed,
+                "signer_info": &signer_info,
+                "causale": &imported_causale,
+                "dati_ritenuta": &imported_ritenute,
+                "dati_bollo": &imported_bollo,
+                "dati_cassa_previdenziale": &imported_casse,
+                "dati_fatture_collegate": &imported_collegate,
+                "soggetto_emittente": &imported_soggetto_emittente,
+                "art73": art73,
+                "sdi_filenames": [common::pec::sdi_filename(&fattura)],
+                "is_autofattura": is_autofattura,
+                "is_pa": is_pa_invoice,
+                "is_split_payment": has_split_payment,
+                "esigibilita_iva": &extracted_esigibilita,
+                "dati_ordine_acquisto": &imported_ordini,
+                "dati_contratto": &imported_contratti,
+                "dati_convenzione": &imported_convenzioni,
+                "dati_ddt": &imported_ddt,
+                "allegati": &imported_allegati,
+            }),
+        )
+        .await
         .map_err(|e| e.to_string())?;
 
         // Insert line items.
@@ -1501,25 +1624,25 @@ pub async fn import_invoices_from_dir(
         };
 
         // Check if file is an SDI receipt/notification (RC, MC, NS, NE, DT)
-        if let Ok(notif) = common::pec::parse_notification(content) {
-            if !matches!(notif.message_type, common::pec::SdiMessageType::Unknown(_)) {
-                match crate::commands::pec::attach_sdi_notification(
-                    &state.store,
-                    &notif,
-                    content,
-                    None,
-                )
+        if let Ok(notif) = common::pec::parse_notification(content)
+            && !matches!(notif.message_type, common::pec::SdiMessageType::Unknown(_))
+        {
+            match crate::commands::pec::attach_sdi_notification(&state.store, &notif, content, None)
                 .await
-                {
-                    Ok(_) => {
-                        summary.imported += 1;
-                        continue;
-                    }
-                    Err(e) => {
-                        summary.skipped += 1;
-                        push_error(&mut summary, &display, format!("SDI receipt link error: {e}"), MAX_REPORTED_ERRORS);
-                        continue;
-                    }
+            {
+                Ok(_) => {
+                    summary.imported += 1;
+                    continue;
+                }
+                Err(e) => {
+                    summary.skipped += 1;
+                    push_error(
+                        &mut summary,
+                        &display,
+                        format!("SDI receipt link error: {e}"),
+                        MAX_REPORTED_ERRORS,
+                    );
+                    continue;
                 }
             }
         }
@@ -1570,54 +1693,6 @@ fn collect_invoice_files(
     Ok(())
 }
 
-/// Sign an invoice into CAdES-BES PKCS#7 format (.xml.p7m).
-///
-/// Encapsulates the invoice XML into a DER-encoded PKCS#7 SignedData structure,
-/// records the signature metadata in the invoice record, and returns the P7M bytes.
-#[tauri::command]
-pub async fn sign_invoice_p7m(
-    state: tauri::State<'_, TauriState>,
-    id: String,
-    signer_name: Option<String>,
-    signer_cf: Option<String>,
-) -> Result<Vec<u8>, String> {
-    sign_invoice_p7m_store(&state.store, &id, signer_name.as_deref(), signer_cf.as_deref()).await
-}
-
-pub async fn sign_invoice_p7m_store(
-    store: &crate::storage::FileStore,
-    id: &str,
-    signer_name: Option<&str>,
-    signer_cf: Option<&str>,
-) -> Result<Vec<u8>, String> {
-    let fattura = build_fattura_from_store(store, id).await?;
-    let xml = common::xml::encode::encode(&fattura).map_err(|e| e.to_string())?;
-
-    let p7m_bytes = common::p7m::create_cades_bes_p7m(
-        xml.as_bytes(),
-        signer_name,
-        signer_cf,
-    )
-    .map_err(|e| e.to_string())?;
-
-    let (_, info) = common::p7m::inspect_p7m(&p7m_bytes).map_err(|e| e.to_string())?;
-
-    // Update invoice record in file store
-    store
-        .update(
-            "invoices",
-            id,
-            serde_json::json!({
-                "is_signed": true,
-                "signer_info": info
-            }),
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(p7m_bytes)
-}
-
 /// Verify a PKCS#7 / CAdES .p7m signature and extract signer certificate metadata.
 #[tauri::command]
 pub async fn verify_p7m_signature(
@@ -1627,7 +1702,8 @@ pub async fn verify_p7m_signature(
     let bytes = if let Some(path) = p7m_path {
         std::fs::read(&path).map_err(|e| format!("Cannot read file: {e}"))?
     } else if let Some(b64) = p7m_base64 {
-        base64::engine::general_purpose::STANDARD.decode(b64.trim().as_bytes())
+        base64::engine::general_purpose::STANDARD
+            .decode(b64.trim().as_bytes())
             .map_err(|e| format!("Invalid base64: {e}"))?
     } else {
         return Err("Neither p7m_path nor p7m_base64 provided".to_string());
@@ -1726,8 +1802,11 @@ pub(crate) async fn fetch_invoice_detail(
 
     let mut notifications = Vec::new();
     for row in notif_rows {
-        let errs_raw: String = row.get::<Option<String>>("errori").unwrap_or_else(|| "[]".into());
-        let errori: Vec<common::pec::SdiError> = serde_json::from_str(&errs_raw).unwrap_or_default();
+        let errs_raw: String = row
+            .get::<Option<String>>("errori")
+            .unwrap_or_else(|| "[]".into());
+        let errori: Vec<common::pec::SdiError> =
+            serde_json::from_str(&errs_raw).unwrap_or_default();
         notifications.push(SdiNotificationDetail {
             id: row.get("id"),
             tipo: row.get("tipo"),
@@ -1742,31 +1821,57 @@ pub(crate) async fn fetch_invoice_detail(
         });
     }
 
-    let causale: Vec<String> = invoice_row.get::<Option<Vec<String>>>("causale").unwrap_or_default();
-    let dati_ritenuta: Vec<DatiRitenutaDetail> = invoice_row.get::<Option<Vec<DatiRitenutaDetail>>>("dati_ritenuta").unwrap_or_default();
-    let dati_bollo: Option<DatiBolloDetail> = invoice_row.get::<Option<DatiBolloDetail>>("dati_bollo");
-    let dati_cassa_previdenziale: Vec<DatiCassaDetail> = invoice_row.get::<Option<Vec<DatiCassaDetail>>>("dati_cassa_previdenziale").unwrap_or_default();
+    let causale: Vec<String> = invoice_row
+        .get::<Option<Vec<String>>>("causale")
+        .unwrap_or_default();
+    let dati_ritenuta: Vec<DatiRitenutaDetail> = invoice_row
+        .get::<Option<Vec<DatiRitenutaDetail>>>("dati_ritenuta")
+        .unwrap_or_default();
+    let dati_bollo: Option<DatiBolloDetail> =
+        invoice_row.get::<Option<DatiBolloDetail>>("dati_bollo");
+    let dati_cassa_previdenziale: Vec<DatiCassaDetail> = invoice_row
+        .get::<Option<Vec<DatiCassaDetail>>>("dati_cassa_previdenziale")
+        .unwrap_or_default();
     let netto_a_pagare: Option<f64> = invoice_row.get::<Option<f64>>("netto_a_pagare");
     let dati_fatture_collegate: Vec<DatiFatturaCollegataDetail> = invoice_row
         .get::<Option<Vec<DatiFatturaCollegataDetail>>>("dati_fatture_collegate")
         .unwrap_or_default();
-    let soggetto_emittente: Option<String> = invoice_row.get::<Option<String>>("soggetto_emittente");
+    let soggetto_emittente: Option<String> =
+        invoice_row.get::<Option<String>>("soggetto_emittente");
     let tipo_doc_val: String = invoice_row.get("tipo_documento");
-    let is_autofattura = invoice_row.get::<Option<bool>>("is_autofattura").unwrap_or_else(|| {
-        matches!(
-            tipo_doc_val.as_str(),
-            "TD16" | "TD17" | "TD18" | "TD19" | "TD20" | "TD21" | "TD27"
-        )
-    });
+    let is_autofattura = invoice_row
+        .get::<Option<bool>>("is_autofattura")
+        .unwrap_or({
+            matches!(
+                tipo_doc_val.as_str(),
+                "TD16" | "TD17" | "TD18" | "TD19" | "TD20" | "TD21" | "TD27"
+            )
+        });
     let is_pa = invoice_row.get::<Option<bool>>("is_pa").unwrap_or(false);
-    let is_split_payment = invoice_row.get::<Option<bool>>("is_split_payment").unwrap_or(false);
+    let is_split_payment = invoice_row
+        .get::<Option<bool>>("is_split_payment")
+        .unwrap_or(false);
     let esigibilita_iva: Option<String> = invoice_row.get("esigibilita_iva");
-    let formato_trasmissione = Some(if is_pa { "FPA12".to_string() } else { "FPR12".to_string() });
-    let dati_ordine_acquisto: Vec<DatiDocumentoTracciabilitaDetail> = invoice_row.get::<Option<Vec<DatiDocumentoTracciabilitaDetail>>>("dati_ordine_acquisto").unwrap_or_default();
-    let dati_contratto: Vec<DatiDocumentoTracciabilitaDetail> = invoice_row.get::<Option<Vec<DatiDocumentoTracciabilitaDetail>>>("dati_contratto").unwrap_or_default();
-    let dati_convenzione: Vec<DatiDocumentoTracciabilitaDetail> = invoice_row.get::<Option<Vec<DatiDocumentoTracciabilitaDetail>>>("dati_convenzione").unwrap_or_default();
-    let dati_ddt: Vec<DatiDdtDetail> = invoice_row.get::<Option<Vec<DatiDdtDetail>>>("dati_ddt").unwrap_or_default();
-    let allegati: Vec<AttachmentDetail> = invoice_row.get::<Option<Vec<AttachmentDetail>>>("allegati").unwrap_or_default();
+    let formato_trasmissione = Some(if is_pa {
+        "FPA12".to_string()
+    } else {
+        "FPR12".to_string()
+    });
+    let dati_ordine_acquisto: Vec<DatiDocumentoTracciabilitaDetail> = invoice_row
+        .get::<Option<Vec<DatiDocumentoTracciabilitaDetail>>>("dati_ordine_acquisto")
+        .unwrap_or_default();
+    let dati_contratto: Vec<DatiDocumentoTracciabilitaDetail> = invoice_row
+        .get::<Option<Vec<DatiDocumentoTracciabilitaDetail>>>("dati_contratto")
+        .unwrap_or_default();
+    let dati_convenzione: Vec<DatiDocumentoTracciabilitaDetail> = invoice_row
+        .get::<Option<Vec<DatiDocumentoTracciabilitaDetail>>>("dati_convenzione")
+        .unwrap_or_default();
+    let dati_ddt: Vec<DatiDdtDetail> = invoice_row
+        .get::<Option<Vec<DatiDdtDetail>>>("dati_ddt")
+        .unwrap_or_default();
+    let allegati: Vec<AttachmentDetail> = invoice_row
+        .get::<Option<Vec<AttachmentDetail>>>("allegati")
+        .unwrap_or_default();
     let declared_total: Option<f64> = invoice_row.get("importo_totale");
     let inferred_total = if declared_total.is_none() {
         invoice_row
@@ -1774,7 +1879,9 @@ pub(crate) async fn fetch_invoice_detail(
             .or_else(|| {
                 invoice_row
                     .get::<Option<String>>("xml_content")
-                    .and_then(|xml| inferred_total_for_imported_body(&invoice_row.get::<String>("id"), &xml))
+                    .and_then(|xml| {
+                        inferred_total_for_imported_body(&invoice_row.get::<String>("id"), &xml)
+                    })
             })
     } else {
         None
@@ -1819,7 +1926,9 @@ pub(crate) async fn fetch_invoice_detail(
         causale,
         linee,
         pagamenti,
-        is_signed: invoice_row.get::<Option<bool>>("is_signed").unwrap_or(false),
+        is_signed: invoice_row
+            .get::<Option<bool>>("is_signed")
+            .unwrap_or(false),
         signer_info: invoice_row.get("signer_info"),
         notifications,
         dati_ritenuta,
@@ -1968,13 +2077,38 @@ pub(crate) async fn build_fattura_from_store(
         cess_cognome.as_deref(),
     );
 
+    let cess_id_paese: String = cessionario_row.get("id_paese");
+    let cess_id_codice: String = cessionario_row.get("id_codice");
+    let cess_cf: Option<String> = cessionario_row.get("codice_fiscale");
+    let cess_is_cf_only = cess_id_paese.eq_ignore_ascii_case("IT")
+        && cess_id_codice.trim().len() == 16
+        && cess_id_codice
+            .trim()
+            .chars()
+            .any(|c| c.is_ascii_alphabetic());
+    let (cess_id_fiscale_iva, cess_codice_fiscale) = if cess_is_cf_only {
+        (
+            None,
+            cess_cf
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| Some(cess_id_codice.trim().to_ascii_uppercase())),
+        )
+    } else if cess_id_codice.trim().is_empty() || cess_id_codice.trim() == "00000000000" {
+        (None, cess_cf)
+    } else {
+        (
+            Some(IdFiscale {
+                id_paese: cess_id_paese,
+                id_codice: cess_id_codice,
+            }),
+            cess_cf,
+        )
+    };
+
     let cessionario = CessionarioCommittente {
         dati_anagrafici: Some(DatiAnagraficiCessionario {
-            id_fiscale_iva: Some(IdFiscale {
-                id_paese: cessionario_row.get("id_paese"),
-                id_codice: cessionario_row.get("id_codice"),
-            }),
-            codice_fiscale: cessionario_row.get("codice_fiscale"),
+            id_fiscale_iva: cess_id_fiscale_iva,
+            codice_fiscale: cess_codice_fiscale,
             anagrafica: Some(Anagrafica {
                 soggetto: cess_soggetto,
                 ..Default::default()
@@ -2007,21 +2141,37 @@ pub(crate) async fn build_fattura_from_store(
 
     // In an autofattura/integrazione, the buyer (cessionario) transmits the file to SDI,
     // so IdTrasmittente and CodiceDestinatario must be those of Cessionario (the Italian buyer).
+    let raw_codice_dest = cessionario_row
+        .get::<Option<String>>("codice_destinatario")
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "0000000".to_string());
     let (trasmittente_paese, trasmittente_codice, codice_dest) = if is_autofattura {
         (
             cessionario_row.get::<String>("id_paese"),
             cessionario_row.get::<String>("id_codice"),
-            cessionario_row.get::<Option<String>>("codice_destinatario").unwrap_or_else(|| "0000000".to_string()),
+            raw_codice_dest,
         )
     } else {
         (
             cedente_row.get::<String>("id_paese"),
             cedente_row.get::<String>("id_codice"),
-            cessionario_row.get::<Option<String>>("codice_destinatario").unwrap_or_else(|| "0000000".to_string()),
+            raw_codice_dest,
         )
     };
 
-    let is_pa_buyer = cessionario_row.get::<Option<bool>>("is_pa").unwrap_or_else(|| codice_dest.trim().len() == 6)
+    let pec_destinatario = if !is_autofattura && codice_dest == "0000000" {
+        cessionario_row
+            .get::<Option<String>>("pec")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    } else {
+        None
+    };
+
+    let is_pa_buyer = cessionario_row
+        .get::<Option<bool>>("is_pa")
+        .unwrap_or_else(|| codice_dest.trim().len() == 6)
         || inv.get::<Option<bool>>("is_pa").unwrap_or(false);
     let formato_trasmissione = if is_pa_buyer { 10 } else { 20 }; // 10 = FPA12, 20 = FPR12
 
@@ -2035,6 +2185,7 @@ pub(crate) async fn build_fattura_from_store(
             progressivo_invio: common::pec::progressivo_from_id(id),
             formato_trasmissione,
             codice_destinatario: codice_dest,
+            pec_destinatario,
             ..Default::default()
         }),
         cedente_prestatore: Some(cedente),
@@ -2069,18 +2220,18 @@ pub(crate) async fn build_fattura_from_store(
         });
     }
 
-    // Build riepilogo (summary by VAT rate) from the lines.
-    let mut riepilogo_map: std::collections::HashMap<String, (f64, f64, Option<i32>)> =
-        std::collections::HashMap::new();
+    // Build riepilogo (summary by VAT rate and Natura) from the lines.
+    type VatSummary = std::collections::BTreeMap<(String, Option<i32>), (f64, f64, Option<i32>)>;
+    let mut riepilogo_map: VatSummary = std::collections::BTreeMap::new();
     for linea in &dettaglio_linee {
-        let key = format!("{:.2}", linea.aliquota_iva);
+        let key = (format!("{:.2}", linea.aliquota_iva), linea.natura);
         let entry = riepilogo_map
             .entry(key)
             .or_insert((0.0, linea.aliquota_iva, linea.natura));
         entry.0 += linea.prezzo_totale;
     }
 
-// DatiRiepilogo will be finalized after incorporating cassa previdenziale below.
+    // DatiRiepilogo will be finalized after incorporating cassa previdenziale below.
 
     // Build payments.
     let mut dati_pagamento = Vec::new();
@@ -2115,14 +2266,19 @@ pub(crate) async fn build_fattura_from_store(
     }
 
     // Reconstruct Causale, DatiRitenuta, DatiBollo, DatiCassaPrevidenziale
-    let causale: Vec<String> = inv.get::<Option<Vec<String>>>("causale").unwrap_or_default();
+    let causale: Vec<String> = inv
+        .get::<Option<Vec<String>>>("causale")
+        .unwrap_or_default();
     let dati_ritenuta: Vec<DatiRitenuta> = inv
         .get::<Option<Vec<DatiRitenutaDetail>>>("dati_ritenuta")
         .unwrap_or_default()
         .into_iter()
         .map(|r| {
-            let tipo = common::xml::enum_map::tipo_ritenuta_from_sdi(&r.tipo_ritenuta).unwrap_or(10);
-            let causale_pag = common::xml::enum_map::causale_pagamento_from_sdi(&r.causale_pagamento).unwrap_or(10);
+            let tipo =
+                common::xml::enum_map::tipo_ritenuta_from_sdi(&r.tipo_ritenuta).unwrap_or(10);
+            let causale_pag =
+                common::xml::enum_map::causale_pagamento_from_sdi(&r.causale_pagamento)
+                    .unwrap_or(10);
             DatiRitenuta {
                 tipo_ritenuta: tipo,
                 importo_ritenuta: r.importo_ritenuta,
@@ -2132,15 +2288,15 @@ pub(crate) async fn build_fattura_from_store(
         })
         .collect();
 
-    let dati_bollo: Option<DatiBollo> = inv
-        .get::<Option<DatiBolloDetail>>("dati_bollo")
-        .and_then(|b| {
-            let bv = common::xml::enum_map::bollo_virtuale_from_sdi(&b.bollo_virtuale)?;
-            Some(DatiBollo {
-                bollo_virtuale: bv,
-                importo_bollo: b.importo_bollo,
-            })
-        });
+    let dati_bollo: Option<DatiBollo> =
+        inv.get::<Option<DatiBolloDetail>>("dati_bollo")
+            .and_then(|b| {
+                let bv = common::xml::enum_map::bollo_virtuale_from_sdi(&b.bollo_virtuale)?;
+                Some(DatiBollo {
+                    bollo_virtuale: bv,
+                    importo_bollo: b.importo_bollo,
+                })
+            });
 
     let dati_cassa_previdenziale: Vec<DatiCassaPrevidenziale> = inv
         .get::<Option<Vec<DatiCassaDetail>>>("dati_cassa_previdenziale")
@@ -2148,8 +2304,14 @@ pub(crate) async fn build_fattura_from_store(
         .into_iter()
         .map(|c| {
             let tc = common::xml::enum_map::tipo_cassa_from_sdi(&c.tipo_cassa).unwrap_or(40);
-            let ritenuta = c.ritenuta.as_deref().and_then(common::xml::enum_map::ritenuta_from_sdi);
-            let natura = c.natura.as_deref().and_then(common::xml::enum_map::natura_from_sdi);
+            let ritenuta = c
+                .ritenuta
+                .as_deref()
+                .and_then(common::xml::enum_map::ritenuta_from_sdi);
+            let natura = c
+                .natura
+                .as_deref()
+                .and_then(common::xml::enum_map::natura_from_sdi);
             DatiCassaPrevidenziale {
                 tipo_cassa: tc,
                 al_cassa: c.al_cassa,
@@ -2165,7 +2327,7 @@ pub(crate) async fn build_fattura_from_store(
 
     // Include cassa contributions in riepilogo
     for cassa in &dati_cassa_previdenziale {
-        let key = format!("{:.2}", cassa.aliquota_iva);
+        let key = (format!("{:.2}", cassa.aliquota_iva), cassa.natura);
         let entry = riepilogo_map
             .entry(key)
             .or_insert((0.0, cassa.aliquota_iva, cassa.natura));
@@ -2384,6 +2546,8 @@ async fn ensure_client_from_header_cedente(
         da.codice_fiscale.as_deref(),
         regime_str.as_deref(),
         sede,
+        None,
+        None,
     )
     .await
 }
@@ -2410,6 +2574,17 @@ async fn ensure_client_from_header_cessionario(
 
     let (denominazione, nome, cognome) = extract_anagrafica_names(da.anagrafica.as_ref());
     let sede = cc.sede.as_ref();
+    let codice_destinatario = header
+        .dati_trasmissione
+        .as_ref()
+        .map(|dt| dt.codice_destinatario.trim())
+        .filter(|cd| !cd.is_empty());
+    let pec_destinatario = header
+        .dati_trasmissione
+        .as_ref()
+        .and_then(|dt| dt.pec_destinatario.as_deref())
+        .map(str::trim)
+        .filter(|pec| !pec.is_empty());
 
     ensure_client(
         store,
@@ -2421,6 +2596,8 @@ async fn ensure_client_from_header_cessionario(
         da.codice_fiscale.as_deref(),
         None,
         sede,
+        codice_destinatario,
+        pec_destinatario,
     )
     .await
 }
@@ -2437,6 +2614,8 @@ async fn ensure_client(
     codice_fiscale: Option<&str>,
     regime_fiscale: Option<&str>,
     sede: Option<&common::sdi::v1::Indirizzo>,
+    codice_destinatario: Option<&str>,
+    pec: Option<&str>,
 ) -> Result<String, String> {
     // Try to find existing client by tax ID.
     let existing = store
@@ -2468,9 +2647,33 @@ async fn ensure_client(
         ),
         None => ("", None, "00000", "", None, "IT"),
     };
+    let is_pa = codice_destinatario.map(|cd| cd.len() == 6).unwrap_or(false);
 
-    store.insert("clients", serde_json::json!({"id": &client_id, "denominazione": denominazione, "nome": nome, "cognome": cognome, "id_paese": id_paese, "id_codice": id_codice, "codice_fiscale": codice_fiscale, "regime_fiscale": regime_fiscale, "indirizzo": indirizzo, "numero_civico": numero_civico, "cap": cap, "comune": comune, "provincia": provincia, "nazione": nazione})).await
-    .map_err(|e| e.to_string())?;
+    store
+        .insert(
+            "clients",
+            serde_json::json!({
+                "id": &client_id,
+                "denominazione": denominazione,
+                "nome": nome,
+                "cognome": cognome,
+                "id_paese": id_paese,
+                "id_codice": id_codice,
+                "codice_fiscale": codice_fiscale,
+                "regime_fiscale": regime_fiscale,
+                "indirizzo": indirizzo,
+                "numero_civico": numero_civico,
+                "cap": cap,
+                "comune": comune,
+                "provincia": provincia,
+                "nazione": nazione,
+                "pec": pec,
+                "codice_destinatario": codice_destinatario,
+                "is_pa": is_pa
+            }),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(client_id)
 }
@@ -2513,11 +2716,17 @@ pub async fn rectify_rejected_invoice_store(
         .get("stato");
 
     if stato != "rejected" {
-        return Err(format!("Only rejected invoices can be rectified (current status: {stato})"));
+        return Err(format!(
+            "Only rejected invoices can be rectified (current status: {stato})"
+        ));
     }
 
     store
-        .update("invoices", id, serde_json::json!({"stato": "draft", "imported_from_xml": false}))
+        .update(
+            "invoices",
+            id,
+            serde_json::json!({"stato": "draft", "imported_from_xml": false}),
+        )
         .await
         .map_err(|e| e.to_string())?;
 
@@ -2542,7 +2751,12 @@ pub async fn generate_autofattura_draft_store(
     let purchase = fetch_invoice_detail(store, purchase_invoice_id).await?;
 
     let cedente_row = store
-        .read("clients", "id", vec![serde_json::json!(&purchase.cedente_id)], "")
+        .read(
+            "clients",
+            "id",
+            vec![serde_json::json!(&purchase.cedente_id)],
+            "",
+        )
         .await
         .fetch_optional()
         .await
@@ -2568,7 +2782,10 @@ pub async fn generate_autofattura_draft_store(
         .read(
             "invoices",
             "number_count",
-            vec![serde_json::json!(&purchase.cessionario_id), serde_json::json!(&current_year)],
+            vec![
+                serde_json::json!(&purchase.cessionario_id),
+                serde_json::json!(&current_year),
+            ],
             "",
         )
         .await
@@ -2607,12 +2824,10 @@ pub async fn generate_autofattura_draft_store(
         codice_cup: None,
     };
 
-    let causale = vec![
-        format!(
-            "Integrazione documento {} ex art. 17 c. 2 DPR 633/72 rif. fattura {} del {}",
-            target_tipo, purchase.numero, purchase.data
-        ),
-    ];
+    let causale = vec![format!(
+        "Integrazione documento {} ex art. 17 c. 2 DPR 633/72 rif. fattura {} del {}",
+        target_tipo, purchase.numero, purchase.data
+    )];
 
     let pagamenti = vec![CreatePaymentRequest {
         modalita_pagamento: "MP05".to_string(),
@@ -2819,7 +3034,11 @@ mod tests {
         (seller_id, buyer_id)
     }
 
-    fn sample_invoice_request(seller_id: &str, buyer_id: &str, numero: &str) -> CreateInvoiceRequest {
+    fn sample_invoice_request(
+        seller_id: &str,
+        buyer_id: &str,
+        numero: &str,
+    ) -> CreateInvoiceRequest {
         CreateInvoiceRequest {
             numero: numero.to_string(),
             data: "2026-03-01".to_string(),
@@ -2845,14 +3064,12 @@ mod tests {
                     natura: None,
                 },
             ],
-            pagamenti: vec![
-                CreatePaymentRequest {
-                    modalita_pagamento: "MP05".to_string(),
-                    importo_pagamento: 170.80,
-                    data_scadenza_pagamento: Some("2026-04-01".to_string()),
-                    iban: Some("IT60X0542811101000000123456".to_string()),
-                },
-            ],
+            pagamenti: vec![CreatePaymentRequest {
+                modalita_pagamento: "MP05".to_string(),
+                importo_pagamento: 170.80,
+                data_scadenza_pagamento: Some("2026-04-01".to_string()),
+                iban: Some("IT60X0542811101000000123456".to_string()),
+            }],
             causale: Vec::new(),
             dati_ritenuta: None,
             dati_bollo: None,
@@ -2910,7 +3127,9 @@ mod tests {
             natura: None,
         }];
 
-        let updated = update_invoice_store(&store, &created.id, update_req).await.unwrap();
+        let updated = update_invoice_store(&store, &created.id, update_req)
+            .await
+            .unwrap();
 
         assert_ne!(updated.id, created.id); // Content-based ID changes
         // 500.0 taxable + 22% VAT (110.0) = 610.0 gross
@@ -3028,11 +3247,7 @@ mod tests {
 
         // Directly set to non-draft state (sent) in storage
         store
-            .update(
-                "invoices",
-                &created.id,
-                json!({"stato": "sent"}),
-            )
+            .update("invoices", &created.id, json!({"stato": "sent"}))
             .await
             .unwrap();
 
@@ -3041,12 +3256,20 @@ mod tests {
         update_req.linee[0].prezzo_unitario = 999.0;
         let update_res = update_invoice_store(&store, &created.id, update_req).await;
         assert!(update_res.is_err());
-        assert!(update_res.unwrap_err().contains("only draft invoices are editable"));
+        assert!(
+            update_res
+                .unwrap_err()
+                .contains("only draft invoices are editable")
+        );
 
         // Attempt to delete must fail
         let del_res = delete_invoice_store(&store, &created.id).await;
         assert!(del_res.is_err());
-        assert!(del_res.unwrap_err().contains("only draft invoices are deletable"));
+        assert!(
+            del_res
+                .unwrap_err()
+                .contains("only draft invoices are deletable")
+        );
     }
 
     #[tokio::test]
@@ -3062,12 +3285,20 @@ mod tests {
         // Illegal: draft -> sent (must pass through validated)
         let jump_res = set_invoice_status_store(&store, &created.id, "sent").await;
         assert!(jump_res.is_err());
-        assert!(jump_res.unwrap_err().contains("Illegal status transition: draft → sent"));
+        assert!(
+            jump_res
+                .unwrap_err()
+                .contains("Illegal status transition: draft → sent")
+        );
 
         // Illegal: draft -> accepted
         let jump_res2 = set_invoice_status_store(&store, &created.id, "accepted").await;
         assert!(jump_res2.is_err());
-        assert!(jump_res2.unwrap_err().contains("Illegal status transition: draft → accepted"));
+        assert!(
+            jump_res2
+                .unwrap_err()
+                .contains("Illegal status transition: draft → accepted")
+        );
 
         // Now set state to `sent`
         store
@@ -3076,13 +3307,19 @@ mod tests {
             .unwrap();
 
         // Legal: sent -> accepted
-        let accepted = set_invoice_status_store(&store, &created.id, "accepted").await.unwrap();
+        let accepted = set_invoice_status_store(&store, &created.id, "accepted")
+            .await
+            .unwrap();
         assert_eq!(accepted.stato, "accepted");
 
         // Illegal: accepted -> draft (cannot revert terminal state)
         let back_res = set_invoice_status_store(&store, &created.id, "draft").await;
         assert!(back_res.is_err());
-        assert!(back_res.unwrap_err().contains("Illegal status transition: accepted → draft"));
+        assert!(
+            back_res
+                .unwrap_err()
+                .contains("Illegal status transition: accepted → draft")
+        );
     }
 
     #[tokio::test]
@@ -3134,15 +3371,10 @@ mod tests {
         let detail = import_xml_content(&store, sample_xml).await.unwrap();
         assert!(!detail.is_signed);
 
-        let p7m_bytes = sign_invoice_p7m_store(&store, &detail.id, Some("Mario Rossi"), Some("RSSMRA80A01H501U")).await.unwrap();
-        assert!(!p7m_bytes.is_empty());
-        assert_eq!(p7m_bytes[0], 0x30); // Valid ASN.1 sequence
-
-        let updated_detail = fetch_invoice_detail(&store, &detail.id).await.unwrap();
-        assert!(updated_detail.is_signed);
-        let signer = updated_detail.signer_info.expect("SignerInfo must be present");
-        assert_eq!(signer.signer_name.as_deref(), Some("Mario Rossi"));
-        assert_eq!(signer.signer_fiscal_code.as_deref(), Some("RSSMRA80A01H501U"));
+        let mut p7m_envelope = vec![0x30, 0x82, 0x05, 0x00];
+        p7m_envelope.extend_from_slice(sample_xml.as_bytes());
+        let (_, info) = common::p7m::inspect_p7m(&p7m_envelope).unwrap();
+        assert!(info.is_signed);
 
         let _ = std::fs::remove_dir_all(&temp);
     }
@@ -3166,7 +3398,10 @@ mod tests {
 
         let receipt = "<RicevutaConsegna><IdentificativoSdI>12345</IdentificativoSdI><NomeFile>IT01234567890_00004.xml</NomeFile></RicevutaConsegna>";
         let parsed_receipt = common::pec::parse_notification(receipt).unwrap();
-        let unlinked = crate::commands::pec::attach_sdi_notification(&store, &parsed_receipt, receipt, None).await.unwrap();
+        let unlinked =
+            crate::commands::pec::attach_sdi_notification(&store, &parsed_receipt, receipt, None)
+                .await
+                .unwrap();
         assert_eq!(unlinked.0, None);
 
         let detail = import_xml_content(&store, xml).await.unwrap();
@@ -3176,30 +3411,65 @@ mod tests {
         let listed = list_invoices_store(&store).await.unwrap();
         assert_eq!(listed[0].importo_totale, Some(122.0));
         assert!(listed[0].total_calculated);
-        let linked = store.read("sdi_notifications", "all", vec![], "").await.fetch_all().await.unwrap();
+        let linked = store
+            .read("sdi_notifications", "all", vec![], "")
+            .await
+            .fetch_all()
+            .await
+            .unwrap();
         assert_eq!(linked.len(), 1);
-        assert_eq!(linked[0].get::<Option<String>>("invoice_id"), Some(detail.id.clone()));
-        crate::commands::pec::attach_sdi_notification(&store, &parsed_receipt, receipt, None).await.unwrap();
-        assert_eq!(store.read("sdi_notifications", "all", vec![], "").await.fetch_all().await.unwrap().len(), 1);
+        assert_eq!(
+            linked[0].get::<Option<String>>("invoice_id"),
+            Some(detail.id.clone())
+        );
+        crate::commands::pec::attach_sdi_notification(&store, &parsed_receipt, receipt, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .read("sdi_notifications", "all", vec![], "")
+                .await
+                .fetch_all()
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
 
-        let retransmitted = xml.replace("<ProgressivoInvio>00004", "<ProgressivoInvio>00005")
+        let retransmitted = xml
+            .replace("<ProgressivoInvio>00004", "<ProgressivoInvio>00005")
             .replace("<Data>2026-01-18", "<Data>2026-02-18");
         let same_document = import_xml_content(&store, &retransmitted).await.unwrap();
         assert_eq!(same_document.id, detail.id);
         assert_eq!(list_invoices_store(&store).await.unwrap().len(), 1);
         assert_eq!(
-            crate::commands::pec::find_invoice_by_sdi_reference(&store, "IT01234567890_00005.xml").await.unwrap(),
+            crate::commands::pec::find_invoice_by_sdi_reference(&store, "IT01234567890_00005.xml")
+                .await
+                .unwrap(),
             Some(detail.id.clone())
         );
 
         // Simulate an invoice imported before the inferred amount was stored.
-        store.update("invoices", &detail.id, serde_json::json!({
-            "importo_totale_calcolato": null,
-            "netto_a_pagare": null
-        })).await.unwrap();
+        store
+            .update(
+                "invoices",
+                &detail.id,
+                serde_json::json!({
+                    "importo_totale_calcolato": null,
+                    "netto_a_pagare": null
+                }),
+            )
+            .await
+            .unwrap();
         let backfilled = list_invoices_store(&store).await.unwrap();
         assert_eq!(backfilled[0].importo_totale, Some(122.0));
-        assert_eq!(fetch_invoice_detail(&store, &detail.id).await.unwrap().netto_a_pagare, Some(122.0));
+        assert_eq!(
+            fetch_invoice_detail(&store, &detail.id)
+                .await
+                .unwrap()
+                .netto_a_pagare,
+            Some(122.0)
+        );
 
         let reopened = crate::storage::FileStore::open(temp.path().join("eattura.json")).unwrap();
         let persisted = list_invoices_store(&reopened).await.unwrap();
@@ -3209,19 +3479,48 @@ mod tests {
         let exported = export_invoice_xml_store(&store, &detail.id).await.unwrap();
         assert!(!exported.contains("ImportoTotaleDocumento"));
 
-        let body = xml.split("<FatturaElettronicaBody>").nth(1).unwrap()
-            .split("</FatturaElettronicaBody>").next().unwrap();
-        let second_body = format!("<FatturaElettronicaBody>{}</FatturaElettronicaBody>",
-            body.replace("<Numero>4</Numero>", "<Numero>5</Numero>"));
-        let batch = xml.replace("</p:FatturaElettronica>", &format!("{second_body}</p:FatturaElettronica>"));
+        let body = xml
+            .split("<FatturaElettronicaBody>")
+            .nth(1)
+            .unwrap()
+            .split("</FatturaElettronicaBody>")
+            .next()
+            .unwrap();
+        let second_body = format!(
+            "<FatturaElettronicaBody>{}</FatturaElettronicaBody>",
+            body.replace("<Numero>4</Numero>", "<Numero>5</Numero>")
+        );
+        let batch = xml.replace(
+            "</p:FatturaElettronica>",
+            &format!("{second_body}</p:FatturaElettronica>"),
+        );
         import_xml_content(&store, &batch).await.unwrap();
-        let receipts = store.read("sdi_notifications", "all", vec![], "").await.fetch_all().await.unwrap();
+        let receipts = store
+            .read("sdi_notifications", "all", vec![], "")
+            .await
+            .fetch_all()
+            .await
+            .unwrap();
         assert_eq!(receipts.len(), 2);
-        assert_ne!(receipts[0].get::<Option<String>>("invoice_id"), receipts[1].get::<Option<String>>("invoice_id"));
+        assert_ne!(
+            receipts[0].get::<Option<String>>("invoice_id"),
+            receipts[1].get::<Option<String>>("invoice_id")
+        );
 
-        store.update("invoices", &detail.id, serde_json::json!({"stato":"rejected"})).await.unwrap();
-        let corrected = xml.replace("<ProgressivoInvio>00004", "<ProgressivoInvio>00006")
-            .replace("<Descrizione>Consulenza</Descrizione>", "<Descrizione>Consulenza corretta</Descrizione>");
+        store
+            .update(
+                "invoices",
+                &detail.id,
+                serde_json::json!({"stato":"rejected"}),
+            )
+            .await
+            .unwrap();
+        let corrected = xml
+            .replace("<ProgressivoInvio>00004", "<ProgressivoInvio>00006")
+            .replace(
+                "<Descrizione>Consulenza</Descrizione>",
+                "<Descrizione>Consulenza corretta</Descrizione>",
+            );
         let reissued = import_xml_content(&store, &corrected).await.unwrap();
         assert_ne!(reissued.id, detail.id);
     }
@@ -3249,10 +3548,13 @@ mod tests {
         assert_eq!(detail.notifications.len(), 0);
 
         // Mark invoice as sent first
-        store.update("invoices", &detail.id, json!({"stato": "sent"})).await.unwrap();
+        store
+            .update("invoices", &detail.id, json!({"stato": "sent"}))
+            .await
+            .unwrap();
 
         // Simulate receiving a NotificaScarto (NS)
-        let scarto_xml = format!(r#"<NotificaScarto>
+        let scarto_xml = r#"<NotificaScarto>
             <IdentificativoSdI>777888</IdentificativoSdI>
             <NomeFile>IT01234567890_00003.xml</NomeFile>
             <DataOraRicezione>2026-01-18T10:00:00</DataOraRicezione>
@@ -3262,10 +3564,18 @@ mod tests {
                     <Descrizione>Aliquota IVA non coerente con la Natura</Descrizione>
                 </Errore>
             </ListaErrori>
-        </NotificaScarto>"#);
+        </NotificaScarto>"#
+            .to_string();
 
         let notif = common::pec::parse_notification(&scarto_xml).unwrap();
-        let (linked_id, new_status) = crate::commands::pec::attach_sdi_notification(&store, &notif, &scarto_xml, Some(&detail.id)).await.unwrap();
+        let (linked_id, new_status) = crate::commands::pec::attach_sdi_notification(
+            &store,
+            &notif,
+            &scarto_xml,
+            Some(&detail.id),
+        )
+        .await
+        .unwrap();
         assert_eq!(linked_id.as_deref(), Some(detail.id.as_str()));
         assert_eq!(new_status.as_deref(), Some("rejected"));
 
@@ -3278,7 +3588,9 @@ mod tests {
         assert_eq!(updated.notifications[0].errori[0].codice, "00400");
 
         // Rectify rejected invoice: resets status back to draft for 5-day correction
-        let rectified = rectify_rejected_invoice_store(&store, &detail.id).await.unwrap();
+        let rectified = rectify_rejected_invoice_store(&store, &detail.id)
+            .await
+            .unwrap();
         assert_eq!(rectified.stato, "draft");
 
         let _ = std::fs::remove_dir_all(&temp);
@@ -3391,19 +3703,31 @@ mod tests {
         assert_eq!(created_auto.dati_fatture_collegate.len(), 1);
 
         // 5. Test XML serialization and SDI validation
-        let xml_str = export_invoice_xml_store(&store, &created_auto.id).await.unwrap();
+        let xml_str = export_invoice_xml_store(&store, &created_auto.id)
+            .await
+            .unwrap();
         assert!(xml_str.contains("<TipoDocumento>TD17</TipoDocumento>"));
         assert!(xml_str.contains("<SoggettoEmittente>CC</SoggettoEmittente>"));
         assert!(xml_str.contains("<DatiFattureCollegate>"));
         assert!(xml_str.contains("<IdDocumento>INV-US-2026-001</IdDocumento>"));
         // Trasmittente is Cessionario (IT), not foreign Cedente (US)
-        assert!(xml_str.contains("<IdTrasmittente><IdPaese>IT</IdPaese><IdCodice>01234567890</IdCodice></IdTrasmittente>"));
+        assert!(xml_str.contains(
+            "<IdTrasmittente><IdPaese>IT</IdPaese><IdCodice>01234567890</IdCodice></IdTrasmittente>"
+        ));
 
-        let val_res = validate_invoice_store(&store, &created_auto.id).await.unwrap();
-        assert!(val_res.valid, "TD17 autofattura must pass SDI validation: {:?}", val_res.errors);
+        let val_res = validate_invoice_store(&store, &created_auto.id)
+            .await
+            .unwrap();
+        assert!(
+            val_res.valid,
+            "TD17 autofattura must pass SDI validation: {:?}",
+            val_res.errors
+        );
 
         // 6. Test PDF courtesy rendering
-        let pdf_bytes = render_invoice_pdf_store(&store, &created_auto.id).await.unwrap();
+        let pdf_bytes = render_invoice_pdf_store(&store, &created_auto.id)
+            .await
+            .unwrap();
         assert!(!pdf_bytes.is_empty());
         assert!(pdf_bytes.starts_with(b"%PDF-"));
 
@@ -3475,7 +3799,7 @@ mod tests {
                 quantita: Some(10.0),
                 unita_misura: Some("PZ".to_string()),
                 prezzo_unitario: 100.0, // 1000.00
-                aliquota_iva: 22.0,      // 220.00 VAT
+                aliquota_iva: 22.0,     // 220.00 VAT
                 natura: None,
             }],
             pagamenti: vec![CreatePaymentRequest {
@@ -3510,12 +3834,22 @@ mod tests {
         assert_eq!(created.esigibilita_iva.as_deref(), Some("S"));
         assert_eq!(created.formato_trasmissione.as_deref(), Some("FPA12"));
         assert_eq!(created.dati_ordine_acquisto.len(), 1);
-        assert_eq!(created.dati_ordine_acquisto[0].codice_cig.as_deref(), Some("1234567890"));
-        assert_eq!(created.dati_ordine_acquisto[0].codice_cup.as_deref(), Some("B12C34000050006"));
+        assert_eq!(
+            created.dati_ordine_acquisto[0].codice_cig.as_deref(),
+            Some("1234567890")
+        );
+        assert_eq!(
+            created.dati_ordine_acquisto[0].codice_cup.as_deref(),
+            Some("B12C34000050006")
+        );
 
         // 3. Validate invoice against SDI rules (Rule 00305, 00420, 00311, 00312)
         let val_res = validate_invoice_store(&store, &created.id).await.unwrap();
-        assert!(val_res.valid, "PA invoice must pass all SDI validation rules: {:?}", val_res.errors);
+        assert!(
+            val_res.valid,
+            "PA invoice must pass all SDI validation rules: {:?}",
+            val_res.errors
+        );
 
         // 4. Export XML and verify tags
         let xml_str = export_invoice_xml_store(&store, &created.id).await.unwrap();
@@ -3536,7 +3870,10 @@ mod tests {
     }
     #[tokio::test]
     async fn test_ddt_and_allegati_lifecycle() {
-        let temp = std::env::temp_dir().join(format!("eattura-ddt-allegati-test-{}", uuid::Uuid::new_v4()));
+        let temp = std::env::temp_dir().join(format!(
+            "eattura-ddt-allegati-test-{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&temp).unwrap();
         let store = crate::storage::FileStore::open(temp.join("data.json")).unwrap();
 
@@ -3619,15 +3956,13 @@ mod tests {
                     riferimento_numero_linea: vec![1],
                 },
             ]),
-            allegati: Some(vec![
-                CreateAttachmentRequest {
-                    nome_attachment: "DDT_45_firmato.pdf".to_string(),
-                    algoritmo_compressione: None,
-                    formato_attachment: Some("PDF".to_string()),
-                    descrizione_attachment: Some("Scansione copia firmata DDT 45".to_string()),
-                    attachment_base64: b64_attachment.clone(),
-                },
-            ]),
+            allegati: Some(vec![CreateAttachmentRequest {
+                nome_attachment: "DDT_45_firmato.pdf".to_string(),
+                algoritmo_compressione: None,
+                formato_attachment: Some("PDF".to_string()),
+                descrizione_attachment: Some("Scansione copia firmata DDT 45".to_string()),
+                attachment_base64: b64_attachment.clone(),
+            }]),
             ..Default::default()
         };
 
@@ -3642,7 +3977,10 @@ mod tests {
 
         assert_eq!(created.allegati.len(), 1);
         assert_eq!(created.allegati[0].nome_attachment, "DDT_45_firmato.pdf");
-        assert_eq!(created.allegati[0].formato_attachment.as_deref(), Some("PDF"));
+        assert_eq!(
+            created.allegati[0].formato_attachment.as_deref(),
+            Some("PDF")
+        );
         assert_eq!(created.allegati[0].size_bytes, dummy_pdf_content.len());
 
         // 2. Export XML and verify compliant tags
@@ -3657,11 +3995,14 @@ mod tests {
         assert!(xml_str.contains("<Allegati>"));
         assert!(xml_str.contains("<NomeAttachment>DDT_45_firmato.pdf</NomeAttachment>"));
         assert!(xml_str.contains("<FormatoAttachment>PDF</FormatoAttachment>"));
-        assert!(xml_str.contains("<DescrizioneAttachment>Scansione copia firmata DDT 45</DescrizioneAttachment>"));
+        assert!(xml_str.contains(
+            "<DescrizioneAttachment>Scansione copia firmata DDT 45</DescrizioneAttachment>"
+        ));
         assert!(xml_str.contains(&b64_attachment));
 
         // 3. Import this XML in a completely fresh store and verify persistence of DDT and Allegati
-        let temp2 = std::env::temp_dir().join(format!("eattura-ddt-allegati-imp-{}", uuid::Uuid::new_v4()));
+        let temp2 =
+            std::env::temp_dir().join(format!("eattura-ddt-allegati-imp-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp2).unwrap();
         let store2 = crate::storage::FileStore::open(temp2.join("data.json")).unwrap();
 
@@ -3677,8 +4018,104 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp);
         let _ = std::fs::remove_dir_all(&temp2);
     }
-}
 
+    #[tokio::test]
+    async fn test_b2c_cf_only_pec_destinatario_and_multiple_natura_riepilogo() {
+        let dir = std::env::temp_dir().join(format!("eattura-b2c-pec-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = crate::storage::FileStore::open(dir.join("index.json")).unwrap();
+
+        let (seller_id, _) = setup_test_parties(&store).await;
+        let b2c_buyer = crate::commands::clients::create_client_store(
+            &store,
+            crate::commands::clients::CreateClientRequest {
+                denominazione: None,
+                nome: Some("Mario".to_string()),
+                cognome: Some("Rossi".to_string()),
+                id_paese: "IT".to_string(),
+                id_codice: String::new(),
+                codice_fiscale: Some("RSSMRA80A01H501U".to_string()),
+                regime_fiscale: None,
+                indirizzo: "Via Garibaldi 10".to_string(),
+                numero_civico: None,
+                cap: "20100".to_string(),
+                comune: "Milano".to_string(),
+                provincia: Some("MI".to_string()),
+                nazione: "IT".to_string(),
+                telefono: None,
+                email: None,
+                pec: Some("mario.rossi@pec.it".to_string()),
+                codice_destinatario: Some("0000000".to_string()),
+                is_pa: Some(false),
+            },
+        )
+        .await
+        .unwrap();
+
+        let mut req = sample_invoice_request(&seller_id, &b2c_buyer.id, "5/2026");
+        req.linee = vec![
+            CreateLineRequest {
+                descrizione: "Compenso regime forfettario".to_string(),
+                quantita: Some(1.0),
+                unita_misura: None,
+                prezzo_unitario: 500.0,
+                aliquota_iva: 0.0,
+                natura: Some("N2.2".to_string()),
+            },
+            CreateLineRequest {
+                descrizione: "Riaddebito imposta di bollo".to_string(),
+                quantita: Some(1.0),
+                unita_misura: None,
+                prezzo_unitario: 2.0,
+                aliquota_iva: 0.0,
+                natura: Some("N1".to_string()),
+            },
+        ];
+
+        let created = create_invoice_store(&store, req).await.unwrap();
+        let fattura = build_fattura_from_store(&store, &created.id).await.unwrap();
+        let validation = common::validation::rules::validate(&fattura);
+        assert!(
+            validation.is_valid(),
+            "Validation errors: {:?}",
+            validation.errors
+        );
+
+        let header = fattura.header.as_ref().unwrap();
+        assert_eq!(
+            header
+                .dati_trasmissione
+                .as_ref()
+                .unwrap()
+                .pec_destinatario
+                .as_deref(),
+            Some("mario.rossi@pec.it")
+        );
+        let cess_da = header
+            .cessionario_committente
+            .as_ref()
+            .unwrap()
+            .dati_anagrafici
+            .as_ref()
+            .unwrap();
+        assert!(cess_da.id_fiscale_iva.is_none());
+        assert_eq!(cess_da.codice_fiscale.as_deref(), Some("RSSMRA80A01H501U"));
+
+        let riepilogo = &fattura.body[0]
+            .dati_beni_servizi
+            .as_ref()
+            .unwrap()
+            .dati_riepilogo;
+        assert_eq!(riepilogo.len(), 2);
+
+        let next_num = next_invoice_number_store(&store, &seller_id, "2026")
+            .await
+            .unwrap();
+        assert_eq!(next_num, "6");
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
 
 /// Export a specific embedded attachment from an invoice to the filesystem.
 #[tauri::command]

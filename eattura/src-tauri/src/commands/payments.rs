@@ -1,11 +1,11 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
 use chrono::{NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
 
+use crate::TauriState;
 use crate::commands::invoices::{fetch_invoice_detail, list_invoices_store};
 use crate::storage::FileStore;
-use crate::TauriState;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -128,12 +128,11 @@ fn ledger_path(store: &FileStore) -> PathBuf {
 
 fn load_ledger(store: &FileStore) -> PaymentsLedger {
     let path = ledger_path(store);
-    if path.exists() {
-        if let Ok(bytes) = std::fs::read(&path) {
-            if let Ok(ledger) = serde_json::from_slice::<PaymentsLedger>(&bytes) {
-                return ledger;
-            }
-        }
+    if path.exists()
+        && let Ok(bytes) = std::fs::read(&path)
+        && let Ok(ledger) = serde_json::from_slice::<PaymentsLedger>(&bytes)
+    {
+        return ledger;
     }
     PaymentsLedger {
         version: 1,
@@ -172,8 +171,8 @@ pub async fn get_payment_schedule_store(
     let mut items = Vec::new();
 
     for s in summaries {
-        // Skip drafts as they are not definitive accounting documents
-        if s.stato == "draft" {
+        // Skip drafts and rejected invoices as they are not valid accounting documents
+        if s.stato == "draft" || s.stato == "rejected" {
             continue;
         }
 
@@ -187,16 +186,23 @@ pub async fn get_payment_schedule_store(
             _ => "outbound",
         };
 
-        if let Some(ref dir) = filter.direction {
-            if dir != "all" && dir != direction_norm {
-                continue;
-            }
+        if let Some(ref dir) = filter.direction
+            && dir != "all"
+            && dir != direction_norm
+        {
+            continue;
         }
 
         let (controparte_nome, controparte_id) = if direction_norm == "outbound" {
-            (detail.cessionario_denominazione.clone(), detail.cessionario_id.clone())
+            (
+                detail.cessionario_denominazione.clone(),
+                detail.cessionario_id.clone(),
+            )
         } else {
-            (detail.cedente_denominazione.clone(), detail.cedente_id.clone())
+            (
+                detail.cedente_denominazione.clone(),
+                detail.cedente_id.clone(),
+            )
         };
 
         let total_amount = detail
@@ -212,7 +218,9 @@ pub async fn get_payment_schedule_store(
             .unwrap_or_else(|| {
                 // Default to invoice date + 30 days
                 if let Ok(inv_date) = NaiveDate::parse_from_str(&detail.data, "%Y-%m-%d") {
-                    (inv_date + chrono::Duration::days(30)).format("%Y-%m-%d").to_string()
+                    (inv_date + chrono::Duration::days(30))
+                        .format("%Y-%m-%d")
+                        .to_string()
                 } else {
                     detail.data.clone()
                 }
@@ -240,8 +248,7 @@ pub async fn get_payment_schedule_store(
         let note = ledger_entry.and_then(|e| e.note.clone());
 
         // Status and delay computation
-        let parsed_due_date = NaiveDate::parse_from_str(&due_date_str, "%Y-%m-%d")
-            .unwrap_or(today);
+        let parsed_due_date = NaiveDate::parse_from_str(&due_date_str, "%Y-%m-%d").unwrap_or(today);
 
         let (stato_scadenza, giorni_ritardo) = if pagata {
             ("saldata".to_string(), 0)
@@ -254,10 +261,11 @@ pub async fn get_payment_schedule_store(
             ("futura".to_string(), 0)
         };
 
-        if let Some(ref st) = filter.stato {
-            if st != "all" && st != &stato_scadenza {
-                continue;
-            }
+        if let Some(ref st) = filter.stato
+            && st != "all"
+            && st != &stato_scadenza
+        {
+            continue;
         }
 
         items.push(PaymentScheduleItem {
@@ -385,6 +393,7 @@ pub async fn get_invoice_payment_history(
 /// Calculate Periodic VAT Liquidation (Liquidazione IVA) based strictly on Italian fiscal law:
 /// - Sales VAT (IVA a debito) minus Split Payment (Esigibilità 'S' non a debito)
 /// - Purchases VAT (IVA a credito detraibile)
+/// - Credit Notes (`TD04`, `TD08`) subtracted from taxable base and VAT
 /// - Deduction of previous period VAT credit
 /// - 1% interest surcharge for quarterly taxpayers (Q1-Q3)
 /// - Minimum payment threshold (100.00 € minimum pursuant to art. 1 comma 4 D.Lgs 127/2015)
@@ -410,7 +419,8 @@ pub async fn calculate_iva_liquidation_store(
                 format!("{}-02-16", request.year),
             ),
             "M02" => {
-                let leap = (request.year % 4 == 0 && request.year % 100 != 0) || (request.year % 400 == 0);
+                let leap =
+                    (request.year % 4 == 0 && request.year % 100 != 0) || (request.year % 400 == 0);
                 let last_feb = if leap { 29 } else { 28 };
                 (
                     format!("{}-02-01", request.year),
@@ -550,21 +560,39 @@ pub async fn calculate_iva_liquidation_store(
             _ => "outbound",
         };
 
+        let sign = if matches!(detail.tipo_documento.as_str(), "TD04" | "TD08") {
+            -1.0
+        } else {
+            1.0
+        };
+
         let is_split = detail.is_split_payment
             || detail.esigibilita_iva.as_deref() == Some("S")
-            || detail.cessionario_denominazione.to_lowercase().contains("comune")
-            || detail.cessionario_denominazione.to_lowercase().contains("ministero")
-            || detail.cessionario_denominazione.to_lowercase().contains("asl");
+            || detail
+                .cessionario_denominazione
+                .to_lowercase()
+                .contains("comune")
+            || detail
+                .cessionario_denominazione
+                .to_lowercase()
+                .contains("ministero")
+            || detail
+                .cessionario_denominazione
+                .to_lowercase()
+                .contains("asl");
 
         if direction_norm == "outbound" {
             for line in &detail.linee {
-                let tax = (line.prezzo_totale * line.aliquota_iva / 100.0 * 100.0).round() / 100.0;
-                imponibile_vendite += line.prezzo_totale;
+                let imp = line.prezzo_totale * sign;
+                let tax = ((line.prezzo_totale * line.aliquota_iva / 100.0 * 100.0).round()
+                    / 100.0)
+                    * sign;
+                imponibile_vendite += imp;
                 iva_vendite_totale += tax;
 
                 let rate_key = (line.aliquota_iva * 100.0).round() as i64;
                 let entry = rate_map.entry(rate_key).or_insert((0.0, 0.0, 0.0, 0.0));
-                entry.0 += line.prezzo_totale;
+                entry.0 += imp;
                 entry.1 += tax;
 
                 if is_split {
@@ -575,13 +603,16 @@ pub async fn calculate_iva_liquidation_store(
             }
         } else {
             for line in &detail.linee {
-                let tax = (line.prezzo_totale * line.aliquota_iva / 100.0 * 100.0).round() / 100.0;
-                imponibile_acquisti += line.prezzo_totale;
+                let imp = line.prezzo_totale * sign;
+                let tax = ((line.prezzo_totale * line.aliquota_iva / 100.0 * 100.0).round()
+                    / 100.0)
+                    * sign;
+                imponibile_acquisti += imp;
                 iva_acquisti_detraibile += tax;
 
                 let rate_key = (line.aliquota_iva * 100.0).round() as i64;
                 let entry = rate_map.entry(rate_key).or_insert((0.0, 0.0, 0.0, 0.0));
-                entry.2 += line.prezzo_totale;
+                entry.2 += imp;
                 entry.3 += tax;
             }
         }
@@ -601,7 +632,10 @@ pub async fn calculate_iva_liquidation_store(
 
     // Basic calculation:
     // Saldo = IVA esigibile vendite - IVA detraibile acquisti - Credito precedente
-    let saldo_iva_periodo = ((iva_vendite_esigibile - iva_acquisti_detraibile - request.credito_precedente) * 100.0).round() / 100.0;
+    let saldo_iva_periodo =
+        ((iva_vendite_esigibile - iva_acquisti_detraibile - request.credito_precedente) * 100.0)
+            .round()
+            / 100.0;
 
     let mut note_fiscali = Vec::new();
 
@@ -612,39 +646,43 @@ pub async fn calculate_iva_liquidation_store(
         ));
     }
 
-    let (interessi_trimestrali_1_perc, totale_da_versare_f24, credito_da_riportare, versamento_sotto_soglia_100_euro) =
-        if saldo_iva_periodo > 0.0 {
-            let int = if request.is_trimestrale && request.period != "Q4" {
-                let interest = (saldo_iva_periodo * 0.01 * 100.0).round() / 100.0;
-                note_fiscali.push(format!(
+    let (
+        interessi_trimestrali_1_perc,
+        totale_da_versare_f24,
+        credito_da_riportare,
+        versamento_sotto_soglia_100_euro,
+    ) = if saldo_iva_periodo > 0.0 {
+        let int = if request.is_trimestrale && request.period != "Q4" {
+            let interest = (saldo_iva_periodo * 0.01 * 100.0).round() / 100.0;
+            note_fiscali.push(format!(
                     "Applicata maggiorazione dell'1% a titolo di interessi per regime trimestrale (+ € {:.2}).",
                     interest
                 ));
-                interest
-            } else {
-                0.0
-            };
+            interest
+        } else {
+            0.0
+        };
 
-            let debito_finale = ((saldo_iva_periodo + int) * 100.0).round() / 100.0;
+        let debito_finale = ((saldo_iva_periodo + int) * 100.0).round() / 100.0;
 
-            if debito_finale <= 100.0 {
-                note_fiscali.push(
+        if debito_finale <= 100.0 {
+            note_fiscali.push(
                     "Importo a debito pari o inferiore a 100,00 €. Ai sensi dell'art. 1 c. 4 D.Lgs 127/2015 il versamento è sospeso e verrà sommato al debito del periodo successivo.".to_string(),
                 );
-                (int, 0.0, 0.0, true)
-            } else {
-                (int, debito_finale, 0.0, false)
-            }
+            (int, 0.0, 0.0, true)
         } else {
-            let credito = (-saldo_iva_periodo * 100.0).round() / 100.0;
-            if credito > 0.0 {
-                note_fiscali.push(format!(
+            (int, debito_finale, 0.0, false)
+        }
+    } else {
+        let credito = (-saldo_iva_periodo * 100.0).round() / 100.0;
+        if credito > 0.0 {
+            note_fiscali.push(format!(
                     "Posizione a credito IVA per € {:.2}. L'importo può essere riportato in detrazione nella liquidazione successiva o compensato.",
                     credito
                 ));
-            }
-            (0.0, 0.0, credito, false)
-        };
+        }
+        (0.0, 0.0, credito, false)
+    };
 
     Ok(IvaLiquidationResult {
         year: request.year,
@@ -673,7 +711,6 @@ pub async fn calculate_iva_liquidation_store(
 mod tests {
     use super::*;
 
-
     #[tokio::test]
     async fn test_payment_schedule_and_iva_liquidation_flow() {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -681,18 +718,23 @@ mod tests {
 
         // 1. Create client
         let mut tx = store.begin().await.unwrap();
-        tx.insert("clients", serde_json::json!({
-            "id": "cli-comune-01",
-            "denominazione": "Comune di Milano",
-            "id_codice": "01199250158",
-            "id_paese": "IT",
-            "indirizzo": "Piazza della Scala 2",
-            "cap": "20121",
-            "comune": "Milano",
-            "nazione": "IT",
-            "codice_destinatario": "M5UXCR1",
-            "pec": "protocollo@postacert.comune.milano.it"
-        })).await.unwrap();
+        tx.insert(
+            "clients",
+            serde_json::json!({
+                "id": "cli-comune-01",
+                "denominazione": "Comune di Milano",
+                "id_codice": "01199250158",
+                "id_paese": "IT",
+                "indirizzo": "Piazza della Scala 2",
+                "cap": "20121",
+                "comune": "Milano",
+                "nazione": "IT",
+                "codice_destinatario": "M5UXCR1",
+                "pec": "protocollo@postacert.comune.milano.it"
+            }),
+        )
+        .await
+        .unwrap();
         tx.commit().await.unwrap();
 
         // 2. Create invoice in May 2026 (Q2) with Split Payment
@@ -724,22 +766,30 @@ mod tests {
             ..Default::default()
         };
 
-        let inv = crate::commands::invoices::create_invoice_store(&store, inv_req).await.unwrap();
+        let inv = crate::commands::invoices::create_invoice_store(&store, inv_req)
+            .await
+            .unwrap();
 
         // Change status to accepted to be part of schedule
         let mut tx2 = store.begin().await.unwrap();
-        tx2.update("invoices", &inv.id, serde_json::json!({
-            "id": inv.id,
-            "numero": inv.numero,
-            "data": inv.data,
-            "tipo_documento": inv.tipo_documento,
-            "divisa": inv.divisa,
-            "stato": "accepted",
-            "cedente_id": inv.cedente_id,
-            "cessionario_id": inv.cessionario_id,
-            "direction": "outbound",
-            "xml_content": ""
-        })).await.unwrap();
+        tx2.update(
+            "invoices",
+            &inv.id,
+            serde_json::json!({
+                "id": inv.id,
+                "numero": inv.numero,
+                "data": inv.data,
+                "tipo_documento": inv.tipo_documento,
+                "divisa": inv.divisa,
+                "stato": "accepted",
+                "cedente_id": inv.cedente_id,
+                "cessionario_id": inv.cessionario_id,
+                "direction": "outbound",
+                "xml_content": ""
+            }),
+        )
+        .await
+        .unwrap();
         tx2.commit().await.unwrap();
 
         // 3. Check schedule
@@ -749,26 +799,36 @@ mod tests {
         assert!(!schedule[0].pagata);
 
         // 4. Register payment
-        let updated = register_invoice_payment_store(&store, RegisterPaymentRequest {
-            invoice_id: inv.id.clone(),
-            importo: 1000.0,
-            data_pagamento: "2026-06-20".to_string(),
-            modalita: Some("MP05".to_string()),
-            note: Some("Saldato con mandato PA".to_string()),
-            salda_tutto: true,
-        }).await.unwrap();
+        let updated = register_invoice_payment_store(
+            &store,
+            RegisterPaymentRequest {
+                invoice_id: inv.id.clone(),
+                importo: 1000.0,
+                data_pagamento: "2026-06-20".to_string(),
+                modalita: Some("MP05".to_string()),
+                note: Some("Saldato con mandato PA".to_string()),
+                salda_tutto: true,
+            },
+        )
+        .await
+        .unwrap();
 
         assert!(updated.pagata);
         assert_eq!(updated.saldo_residuo, 0.0);
         assert_eq!(updated.stato_scadenza, "saldata");
 
         // 5. Test IVA Liquidation for Q2 2026
-        let liq = calculate_iva_liquidation_store(&store, IvaLiquidationRequest {
-            year: 2026,
-            period: "Q2".to_string(),
-            credito_precedente: 0.0,
-            is_trimestrale: true,
-        }).await.unwrap();
+        let liq = calculate_iva_liquidation_store(
+            &store,
+            IvaLiquidationRequest {
+                year: 2026,
+                period: "Q2".to_string(),
+                credito_precedente: 0.0,
+                is_trimestrale: true,
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(liq.year, 2026);
         assert_eq!(liq.period, "Q2");

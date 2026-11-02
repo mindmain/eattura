@@ -1,12 +1,15 @@
+#![forbid(unsafe_code)]
+
 mod app_log;
 mod commands;
 mod error;
+mod mcp;
 mod pec;
 mod state;
 mod storage;
 
 use std::path::{Path, PathBuf};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use app_log::{AppLog, LogLevel};
 use state::TauriState;
@@ -37,25 +40,32 @@ pub fn run() {
                 &format!("Eattura {} started", app.package_info().version),
             );
             app.manage(log.clone());
-            std::fs::create_dir_all(data_dir.join("Emesse"))?;
-            std::fs::create_dir_all(data_dir.join("Ricevute"))?;
 
             let store =
                 storage::FileStore::open(data_dir.join("eattura.json")).inspect_err(|error| {
                     log.record(LogLevel::Error, "storage", error);
                 })?;
 
-            // Spawn real-time filesystem debounced watcher
-            let watcher =
-                commands::vault::spawn_vault_watcher(app.handle().clone(), data_dir.clone())
-                    .inspect_err(|error| log.record(LogLevel::Warn, "vault", error))
-                    .ok();
-            let watcher_state = std::sync::Arc::new(std::sync::Mutex::new(watcher));
-
             app.manage(TauriState {
                 store: store.clone(),
-                watcher: watcher_state,
             });
+
+            let handle = app.handle().clone();
+            let event_log = log.clone();
+            app.manage(mcp::start(
+                store.clone(),
+                log.clone(),
+                &data_dir,
+                std::sync::Arc::new(move || {
+                    if let Err(error) = handle.emit("mcp-draft-created", ()) {
+                        event_log.record(
+                            LogLevel::Warn,
+                            "mcp",
+                            &format!("Unable to notify the app about a new draft: {error}"),
+                        );
+                    }
+                }),
+            ));
 
             // Background PEC cron: periodically poll the inbox for SDI
             // notifications. No-op while PEC is not configured.
@@ -64,6 +74,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            mcp::get_mcp_status,
+            mcp::get_mcp_client_config,
             app_log::get_app_logs,
             app_log::write_app_log,
             app_log::open_app_log_directory,
@@ -77,7 +89,6 @@ pub fn run() {
             commands::invoices::validate_invoice,
             commands::invoices::export_invoice_xml,
             commands::invoices::render_invoice_pdf,
-            commands::invoices::sign_invoice_p7m,
             commands::invoices::verify_p7m_signature,
             commands::invoices::import_invoice_xml,
             commands::invoices::import_invoices_from_dir,
@@ -99,21 +110,10 @@ pub fn run() {
             commands::pec::send_invoice_pec,
             commands::pec::sync_pec,
             commands::pec::pec_sync_status,
-            commands::vault::get_active_vault,
-            commands::vault::switch_vault,
-            commands::vault::rebuild_vault_index,
-            commands::vault::verify_vault_integrity,
-            commands::vault::list_known_vaults,
-            commands::vault::add_known_vault,
-            commands::vault::remove_known_vault,
             commands::export::export_accountant_package,
             commands::export::export_accountant_csv,
             commands::export::export_agid_preservation_package,
             commands::export::verify_agid_preservation_package,
-            commands::sync::generate_sync_pairing_code,
-            commands::sync::sync_push_changes,
-            commands::sync::sync_pull_changes,
-            commands::sync::sync_check_relay,
             commands::payments::get_payment_schedule,
             commands::payments::register_invoice_payment,
             commands::payments::get_invoice_payment_history,
@@ -179,14 +179,13 @@ fn resolve_data_directory<R: tauri::Runtime>(
     let home = app.path().home_dir()?;
     let target_dir = home.join(".eattura");
 
-    if let Ok(old_dir) = app.path().app_data_dir() {
-        if (old_dir.join("index.json").exists() || old_dir.join("eattura.json").exists())
-            && !target_dir.join("index.json").exists()
-            && !target_dir.join("eattura.json").exists()
-        {
-            std::fs::create_dir_all(&target_dir)?;
-            let _ = copy_directory_contents(&old_dir, &target_dir);
-        }
+    if let Ok(old_dir) = app.path().app_data_dir()
+        && (old_dir.join("index.json").exists() || old_dir.join("eattura.json").exists())
+        && !target_dir.join("index.json").exists()
+        && !target_dir.join("eattura.json").exists()
+    {
+        std::fs::create_dir_all(&target_dir)?;
+        let _ = copy_directory_contents(&old_dir, &target_dir);
     }
 
     Ok(target_dir)

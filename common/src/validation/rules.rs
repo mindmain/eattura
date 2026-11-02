@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
+use super::{ValidationError, ValidationResult};
 use crate::sdi::v1::{
     DettaglioLinee, FatturaElettronica, FatturaElettronicaBody, FatturaElettronicaHeader,
     ScontoMaggiorazione,
 };
 use crate::xml::enum_map::{natura_to_sdi, tipo_sconto_maggiorazione_to_sdi};
-use super::{ValidationError, ValidationResult};
 
 /// Rounding tolerance for 2-decimal financial amounts (SDI 00421/00422).
 const TOLERANCE_2: f64 = 0.01;
@@ -50,41 +50,47 @@ pub fn validate_header(header: &FatturaElettronicaHeader) -> ValidationResult {
 
     // Validate DatiTrasmissione
     if let Some(dt) = &header.dati_trasmissione
-        && let Some(id) = &dt.id_trasmittente {
-            errors.extend(validate_id_fiscale(&id.id_paese, &id.id_codice));
-        }
+        && let Some(id) = &dt.id_trasmittente
+    {
+        errors.extend(validate_id_fiscale(&id.id_paese, &id.id_codice));
+    }
 
     // Validate CedentePrestatore
     if let Some(cp) = &header.cedente_prestatore
-        && let Some(da) = &cp.dati_anagrafici {
-            if let Some(id) = &da.id_fiscale_iva {
-                errors.extend(validate_id_fiscale(&id.id_paese, &id.id_codice));
-            }
-            if let Some(cf) = &da.codice_fiscale
-                && let Some(e) = validate_codice_fiscale(cf) {
-                    errors.push(e);
-                }
+        && let Some(da) = &cp.dati_anagrafici
+    {
+        if let Some(id) = &da.id_fiscale_iva {
+            errors.extend(validate_id_fiscale(&id.id_paese, &id.id_codice));
         }
+        if let Some(cf) = &da.codice_fiscale
+            && let Some(e) = validate_codice_fiscale(cf)
+        {
+            errors.push(e);
+        }
+    }
 
     // Validate CessionarioCommittente
     if let Some(cc) = &header.cessionario_committente
-        && let Some(da) = &cc.dati_anagrafici {
-            if let Some(id) = &da.id_fiscale_iva {
-                errors.extend(validate_id_fiscale(&id.id_paese, &id.id_codice));
-            }
-            if let Some(cf) = &da.codice_fiscale
-                && let Some(e) = validate_codice_fiscale(cf) {
-                    errors.push(e);
-                }
-            // 00417: the cessionario must be identified by IdFiscaleIVA or CodiceFiscale.
-            if da.id_fiscale_iva.is_none() && da.codice_fiscale.is_none() {
-                errors.push(ValidationError {
-                    code: "00417".into(),
-                    message: "CessionarioCommittente requires either IdFiscaleIVA or CodiceFiscale".into(),
-                    element_path: Some("Header/CessionarioCommittente/DatiAnagrafici".into()),
-                });
-            }
+        && let Some(da) = &cc.dati_anagrafici
+    {
+        if let Some(id) = &da.id_fiscale_iva {
+            errors.extend(validate_id_fiscale(&id.id_paese, &id.id_codice));
         }
+        if let Some(cf) = &da.codice_fiscale
+            && let Some(e) = validate_codice_fiscale(cf)
+        {
+            errors.push(e);
+        }
+        // 00417: the cessionario must be identified by IdFiscaleIVA or CodiceFiscale.
+        if da.id_fiscale_iva.is_none() && da.codice_fiscale.is_none() {
+            errors.push(ValidationError {
+                code: "00417".into(),
+                message: "CessionarioCommittente requires either IdFiscaleIVA or CodiceFiscale"
+                    .into(),
+                element_path: Some("Header/CessionarioCommittente/DatiAnagrafici".into()),
+            });
+        }
+    }
 
     // 00305: CodiceDestinatario must be 7 chars (private) or 6 chars (PA).
     if let Some(dt) = &header.dati_trasmissione {
@@ -170,7 +176,8 @@ fn validate_dati_generali(body: &FatturaElettronicaBody) -> Vec<ValidationError>
         if rit.importo_ritenuta <= 0.0 || rit.aliquota_ritenuta <= 0.0 {
             errors.push(ValidationError {
                 code: "EATTURA-RITENUTA".into(),
-                message: "DatiRitenuta requires a positive ImportoRitenuta and AliquotaRitenuta".into(),
+                message: "DatiRitenuta requires a positive ImportoRitenuta and AliquotaRitenuta"
+                    .into(),
                 element_path: Some(format!(
                     "Body/DatiGenerali/DatiGeneraliDocumento/DatiRitenuta[{}]",
                     i + 1
@@ -181,13 +188,16 @@ fn validate_dati_generali(body: &FatturaElettronicaBody) -> Vec<ValidationError>
 
     // Bollo: when present, ImportoBollo must be positive.
     if let Some(bollo) = &dgd.dati_bollo
-        && bollo.importo_bollo.unwrap_or(0.0) <= 0.0 {
-            errors.push(ValidationError {
-                code: "EATTURA-BOLLO".into(),
-                message: "DatiBollo requires a positive ImportoBollo".into(),
-                element_path: Some("Body/DatiGenerali/DatiGeneraliDocumento/DatiBollo/ImportoBollo".into()),
-            });
-        }
+        && bollo.importo_bollo.unwrap_or(0.0) <= 0.0
+    {
+        errors.push(ValidationError {
+            code: "EATTURA-BOLLO".into(),
+            message: "DatiBollo requires a positive ImportoBollo".into(),
+            element_path: Some(
+                "Body/DatiGenerali/DatiGeneraliDocumento/DatiBollo/ImportoBollo".into(),
+            ),
+        });
+    }
 
     errors
 }
@@ -210,7 +220,13 @@ fn is_iso_date(s: &str) -> bool {
     let max_day = match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
-        2 => if is_leap { 29 } else { 28 },
+        2 => {
+            if is_leap {
+                29
+            } else {
+                28
+            }
+        }
         _ => 0,
     };
     (1..=12).contains(&month) && day >= 1 && day <= max_day
@@ -236,9 +252,10 @@ fn validate_body_indexed(body: &FatturaElettronicaBody, _body_idx: usize) -> Val
     for dp in &body.dati_pagamento {
         for det in &dp.dettaglio_pagamento {
             if let Some(iban) = &det.iban
-                && let Some(e) = validate_iban(iban) {
-                    errors.push(e);
-                }
+                && let Some(e) = validate_iban(iban)
+            {
+                errors.push(e);
+            }
         }
     }
 
@@ -261,15 +278,27 @@ fn validate_natura_aliquota_coherence(body: &FatturaElettronicaBody) -> Vec<Vali
             if aliquota_zero && !has_natura {
                 errors.push(ValidationError {
                     code: "00400".into(),
-                    message: format!("Natura is required when AliquotaIVA is 0 (line {})", linea.numero_linea),
-                    element_path: Some(format!("Body/DatiBeniServizi/DettaglioLinee[{}]/Natura", i + 1)),
+                    message: format!(
+                        "Natura is required when AliquotaIVA is 0 (line {})",
+                        linea.numero_linea
+                    ),
+                    element_path: Some(format!(
+                        "Body/DatiBeniServizi/DettaglioLinee[{}]/Natura",
+                        i + 1
+                    )),
                 });
             }
             if !aliquota_zero && has_natura {
                 errors.push(ValidationError {
                     code: "00401".into(),
-                    message: format!("Natura must not be present when AliquotaIVA > 0 (line {})", linea.numero_linea),
-                    element_path: Some(format!("Body/DatiBeniServizi/DettaglioLinee[{}]/Natura", i + 1)),
+                    message: format!(
+                        "Natura must not be present when AliquotaIVA > 0 (line {})",
+                        linea.numero_linea
+                    ),
+                    element_path: Some(format!(
+                        "Body/DatiBeniServizi/DettaglioLinee[{}]/Natura",
+                        i + 1
+                    )),
                 });
             }
         }
@@ -283,14 +312,21 @@ fn validate_natura_aliquota_coherence(body: &FatturaElettronicaBody) -> Vec<Vali
                 errors.push(ValidationError {
                     code: "00400".into(),
                     message: "Natura is required in DatiRiepilogo when AliquotaIVA is 0".into(),
-                    element_path: Some(format!("Body/DatiBeniServizi/DatiRiepilogo[{}]/Natura", i + 1)),
+                    element_path: Some(format!(
+                        "Body/DatiBeniServizi/DatiRiepilogo[{}]/Natura",
+                        i + 1
+                    )),
                 });
             }
             if !aliquota_zero && has_natura {
                 errors.push(ValidationError {
                     code: "00401".into(),
-                    message: "Natura must not be present in DatiRiepilogo when AliquotaIVA > 0".into(),
-                    element_path: Some(format!("Body/DatiBeniServizi/DatiRiepilogo[{}]/Natura", i + 1)),
+                    message: "Natura must not be present in DatiRiepilogo when AliquotaIVA > 0"
+                        .into(),
+                    element_path: Some(format!(
+                        "Body/DatiBeniServizi/DatiRiepilogo[{}]/Natura",
+                        i + 1
+                    )),
                 });
             }
         }
@@ -301,24 +337,53 @@ fn validate_natura_aliquota_coherence(body: &FatturaElettronicaBody) -> Vec<Vali
 
 /// SDI 00419: For each AliquotaIVA in DettaglioLinee, a DatiRiepilogo must exist.
 /// SDI 00421: Imposta must equal AliquotaIVA * ImponibileImporto / 100.
-/// SDI 00422: ImponibileImporto must equal the sum of PrezzoTotale for matching lines.
+/// SDI 00422: ImponibileImporto must equal the sum of PrezzoTotale (and DatiCassaPrevidenziale) for matching (AliquotaIVA, Natura).
 fn validate_dati_riepilogo(body: &FatturaElettronicaBody) -> Vec<ValidationError> {
     let mut errors = Vec::new();
 
-    let Some(dbs) = &body.dati_beni_servizi else { return errors };
+    let Some(dbs) = &body.dati_beni_servizi else {
+        return errors;
+    };
 
-    // Group line totals by aliquota (using string key to avoid float comparison issues)
-    let mut line_totals_by_aliquota: HashMap<String, f64> = HashMap::new();
+    // Group line and cassa totals by (aliquota, natura) AND by aliquota alone
+    let mut totals_by_pair: HashMap<(String, Option<i32>), f64> = HashMap::new();
+    let mut line_aliquote: HashMap<String, f64> = HashMap::new();
     for linea in &dbs.dettaglio_linee {
-        let key = format!("{:.2}", linea.aliquota_iva);
-        *line_totals_by_aliquota.entry(key).or_default() += linea.prezzo_totale;
+        let aliq_key = format!("{:.2}", linea.aliquota_iva);
+        let nat_key = linea.natura.filter(|&n| n != 0);
+        *totals_by_pair
+            .entry((aliq_key.clone(), nat_key))
+            .or_default() += linea.prezzo_totale;
+        *line_aliquote.entry(aliq_key).or_default() += linea.prezzo_totale;
+    }
+
+    if let Some(dgd) = body
+        .dati_generali
+        .as_ref()
+        .and_then(|dg| dg.dati_generali_documento.as_ref())
+    {
+        for cassa in &dgd.dati_cassa_previdenziale {
+            let aliq_key = format!("{:.2}", cassa.aliquota_iva);
+            let nat_key = cassa.natura.filter(|&n| n != 0);
+            *totals_by_pair
+                .entry((aliq_key.clone(), nat_key))
+                .or_default() += cassa.importo_contributo_cassa;
+            *line_aliquote.entry(aliq_key).or_default() += cassa.importo_contributo_cassa;
+        }
     }
 
     // Build a set of aliquota values present in riepilogo
     let mut riepilogo_aliquote: HashMap<String, usize> = HashMap::new();
+    let mut riepilogo_sum_by_pair: HashMap<(String, Option<i32>), (f64, usize)> = HashMap::new();
     for (i, riep) in dbs.dati_riepilogo.iter().enumerate() {
-        let key = format!("{:.2}", riep.aliquota_iva);
-        riepilogo_aliquote.insert(key.clone(), i);
+        let aliq_key = format!("{:.2}", riep.aliquota_iva);
+        let nat_key = riep.natura.filter(|&n| n != 0);
+        riepilogo_aliquote.insert(aliq_key.clone(), i);
+        let arrotondamento = riep.arrotondamento.unwrap_or(0.0);
+        let entry = riepilogo_sum_by_pair
+            .entry((aliq_key.clone(), nat_key))
+            .or_insert((0.0, i));
+        entry.0 += riep.imponibile_importo - arrotondamento;
 
         // SDI 00420: EsigibilitaIVA cannot be S (Split Payment) when Natura is N6
         if riep.esigibilita_iva == Some(30) {
@@ -341,26 +406,35 @@ fn validate_dati_riepilogo(body: &FatturaElettronicaBody) -> Vec<ValidationError
                     "Imposta ({:.2}) does not match AliquotaIVA * ImponibileImporto / 100 ({:.2})",
                     riep.imposta, expected_imposta
                 ),
-                element_path: Some(format!("Body/DatiBeniServizi/DatiRiepilogo[{}]/Imposta", i + 1)),
+                element_path: Some(format!(
+                    "Body/DatiBeniServizi/DatiRiepilogo[{}]/Imposta",
+                    i + 1
+                )),
             });
         }
+    }
 
-        // SDI 00422: Check imponibile_importo matches sum of line totals
-        if let Some(&sum) = line_totals_by_aliquota.get(&key)
-            && (riep.imponibile_importo - sum).abs() > TOLERANCE_2 {
-                errors.push(ValidationError {
-                    code: "00422".into(),
-                    message: format!(
-                        "ImponibileImporto ({:.2}) does not match sum of PrezzoTotale for AliquotaIVA {} ({:.2})",
-                        riep.imponibile_importo, key, sum
-                    ),
-                    element_path: Some(format!("Body/DatiBeniServizi/DatiRiepilogo[{}]/ImponibileImporto", i + 1)),
-                });
-            }
+    // SDI 00422: Check imponibile_importo matches sum of line + cassa totals for each (AliquotaIVA, Natura)
+    for ((aliq_key, nat_key), (riep_sum, idx)) in &riepilogo_sum_by_pair {
+        if let Some(&expected_sum) = totals_by_pair.get(&(aliq_key.clone(), *nat_key))
+            && (*riep_sum - expected_sum).abs() > TOLERANCE_2
+        {
+            errors.push(ValidationError {
+                code: "00422".into(),
+                message: format!(
+                    "ImponibileImporto ({:.2}) does not match sum of PrezzoTotale for AliquotaIVA {} ({:.2})",
+                    riep_sum, aliq_key, expected_sum
+                ),
+                element_path: Some(format!(
+                    "Body/DatiBeniServizi/DatiRiepilogo[{}]/ImponibileImporto",
+                    idx + 1
+                )),
+            });
+        }
     }
 
     // SDI 00419: Check that every aliquota in lines has a riepilogo
-    for key in line_totals_by_aliquota.keys() {
+    for key in line_aliquote.keys() {
         if !riepilogo_aliquote.contains_key(key) {
             errors.push(ValidationError {
                 code: "00419".into(),
@@ -429,37 +503,60 @@ fn apply_sconto_maggiorazione(base: f64, adjustments: &[ScontoMaggiorazione]) ->
 fn validate_linee_riepilogo_match(body: &FatturaElettronicaBody) -> Vec<ValidationError> {
     let mut errors = Vec::new();
 
-    let Some(dbs) = &body.dati_beni_servizi else { return errors };
+    let Some(dbs) = &body.dati_beni_servizi else {
+        return errors;
+    };
 
     // Collect aliquota+natura pairs from riepilogo
-    let riepilogo_keys: Vec<(String, Option<String>)> = dbs.dati_riepilogo.iter().map(|r| {
-        let aliq = format!("{:.2}", r.aliquota_iva);
-        let nat = r.natura.and_then(|n| natura_to_sdi(n).map(String::from));
-        (aliq, nat)
-    }).collect();
+    let riepilogo_keys: Vec<(String, Option<String>)> = dbs
+        .dati_riepilogo
+        .iter()
+        .map(|r| {
+            let aliq = format!("{:.2}", r.aliquota_iva);
+            let nat = r.natura.and_then(|n| natura_to_sdi(n).map(String::from));
+            (aliq, nat)
+        })
+        .collect();
 
     for linea in &dbs.dettaglio_linee {
         let aliq = format!("{:.2}", linea.aliquota_iva);
-        let nat = linea.natura.and_then(|n| natura_to_sdi(n).map(String::from));
+        let nat = linea
+            .natura
+            .and_then(|n| natura_to_sdi(n).map(String::from));
 
         // SDI 00443: aliquota match
         if !riepilogo_keys.iter().any(|(a, _)| a == &aliq) {
             errors.push(ValidationError {
                 code: "00443".into(),
-                message: format!("No DatiRiepilogo with AliquotaIVA {} for line {}", aliq, linea.numero_linea),
-                element_path: Some(format!("Body/DatiBeniServizi/DettaglioLinee[{}]/AliquotaIVA", linea.numero_linea)),
+                message: format!(
+                    "No DatiRiepilogo with AliquotaIVA {} for line {}",
+                    aliq, linea.numero_linea
+                ),
+                element_path: Some(format!(
+                    "Body/DatiBeniServizi/DettaglioLinee[{}]/AliquotaIVA",
+                    linea.numero_linea
+                )),
             });
         }
 
         // SDI 00444: natura match (only if natura is set on the line)
         if let Some(ref line_nat) = nat
-            && !riepilogo_keys.iter().any(|(_, rn)| rn.as_deref() == Some(line_nat)) {
-                errors.push(ValidationError {
-                    code: "00444".into(),
-                    message: format!("No DatiRiepilogo with Natura {} for line {}", line_nat, linea.numero_linea),
-                    element_path: Some(format!("Body/DatiBeniServizi/DettaglioLinee[{}]/Natura", linea.numero_linea)),
-                });
-            }
+            && !riepilogo_keys
+                .iter()
+                .any(|(_, rn)| rn.as_deref() == Some(line_nat))
+        {
+            errors.push(ValidationError {
+                code: "00444".into(),
+                message: format!(
+                    "No DatiRiepilogo with Natura {} for line {}",
+                    line_nat, linea.numero_linea
+                ),
+                element_path: Some(format!(
+                    "Body/DatiBeniServizi/DettaglioLinee[{}]/Natura",
+                    linea.numero_linea
+                )),
+            });
+        }
     }
 
     errors
@@ -474,23 +571,33 @@ fn validate_linee_riepilogo_match(body: &FatturaElettronicaBody) -> Vec<Validati
 fn validate_tipo_documento_rules(invoice: &FatturaElettronica) -> Vec<ValidationError> {
     let mut errors = Vec::new();
 
-    let Some(header) = &invoice.header else { return errors };
+    let Some(header) = &invoice.header else {
+        return errors;
+    };
 
     for body in &invoice.body {
-        let Some(dg) = &body.dati_generali else { continue };
-        let Some(dgd) = &dg.dati_generali_documento else { continue };
+        let Some(dg) = &body.dati_generali else {
+            continue;
+        };
+        let Some(dgd) = &dg.dati_generali_documento else {
+            continue;
+        };
 
         let tipo = dgd.tipo_documento;
 
         // TD20, TD21, TD27: cedente and cessionario must be the same entity
         // (self-invoicing documents)
         if matches!(tipo, 200 | 210 | 270) {
-            let cedente_piva = header.cedente_prestatore.as_ref()
+            let cedente_piva = header
+                .cedente_prestatore
+                .as_ref()
                 .and_then(|cp| cp.dati_anagrafici.as_ref())
                 .and_then(|da| da.id_fiscale_iva.as_ref())
                 .map(|id| (&id.id_paese, &id.id_codice));
 
-            let cessionario_piva = header.cessionario_committente.as_ref()
+            let cessionario_piva = header
+                .cessionario_committente
+                .as_ref()
                 .and_then(|cc| cc.dati_anagrafici.as_ref())
                 .and_then(|da| da.id_fiscale_iva.as_ref())
                 .map(|id| (&id.id_paese, &id.id_codice));
@@ -510,7 +617,9 @@ fn validate_tipo_documento_rules(invoice: &FatturaElettronica) -> Vec<Validation
 
         // TD17, TD18, TD19, TD28: cedente must be a foreign entity (IdPaese != "IT")
         if matches!(tipo, 170 | 180 | 190 | 280) {
-            let cedente_paese = header.cedente_prestatore.as_ref()
+            let cedente_paese = header
+                .cedente_prestatore
+                .as_ref()
                 .and_then(|cp| cp.dati_anagrafici.as_ref())
                 .and_then(|da| da.id_fiscale_iva.as_ref())
                 .map(|id| id.id_paese.as_str());
@@ -544,7 +653,10 @@ fn validate_codice_fiscale(cf: &str) -> Option<ValidationError> {
     if !all_alnum || (len != 11 && len != 16) {
         Some(ValidationError {
             code: "00100".into(),
-            message: format!("Invalid CodiceFiscale format: '{}' (must be 11 or 16 alphanumeric characters)", cf),
+            message: format!(
+                "Invalid CodiceFiscale format: '{}' (must be 11 or 16 alphanumeric characters)",
+                cf
+            ),
             element_path: None,
         })
     } else {
@@ -559,7 +671,10 @@ fn validate_id_fiscale(id_paese: &str, id_codice: &str) -> Vec<ValidationError> 
     if id_paese.len() != 2 || !id_paese.chars().all(|c| c.is_ascii_uppercase()) {
         errors.push(ValidationError {
             code: "00200".into(),
-            message: format!("Invalid IdPaese: '{}' (must be 2 uppercase letters)", id_paese),
+            message: format!(
+                "Invalid IdPaese: '{}' (must be 2 uppercase letters)",
+                id_paese
+            ),
             element_path: None,
         });
     }
@@ -567,7 +682,10 @@ fn validate_id_fiscale(id_paese: &str, id_codice: &str) -> Vec<ValidationError> 
     if id_codice.is_empty() || id_codice.len() > 28 {
         errors.push(ValidationError {
             code: "00201".into(),
-            message: format!("Invalid IdCodice: '{}' (must be 1-28 characters)", id_codice),
+            message: format!(
+                "Invalid IdCodice: '{}' (must be 1-28 characters)",
+                id_codice
+            ),
             element_path: None,
         });
     }
@@ -600,31 +718,51 @@ fn validate_iban(iban: &str) -> Option<ValidationError> {
 
 fn validate_dati_documenti_correlati(body: &FatturaElettronicaBody) -> Vec<ValidationError> {
     let mut errors = Vec::new();
-    let Some(dg) = &body.dati_generali else { return errors; };
+    let Some(dg) = &body.dati_generali else {
+        return errors;
+    };
 
     let mut all_docs = Vec::new();
-    all_docs.extend(dg.dati_ordine_acquisto.iter().map(|d| ("DatiOrdineAcquisto", d)));
+    all_docs.extend(
+        dg.dati_ordine_acquisto
+            .iter()
+            .map(|d| ("DatiOrdineAcquisto", d)),
+    );
     all_docs.extend(dg.dati_contratto.iter().map(|d| ("DatiContratto", d)));
     all_docs.extend(dg.dati_convenzione.iter().map(|d| ("DatiConvenzione", d)));
-    all_docs.extend(dg.dati_fatture_collegate.iter().map(|d| ("DatiFattureCollegate", d)));
+    all_docs.extend(
+        dg.dati_fatture_collegate
+            .iter()
+            .map(|d| ("DatiFattureCollegate", d)),
+    );
 
     for (tag, doc) in all_docs {
         if let Some(cig) = &doc.codice_cig {
             let trimmed = cig.trim();
-            if !trimmed.is_empty() && (trimmed.len() != 10 || !trimmed.chars().all(|c| c.is_ascii_alphanumeric())) {
+            if !trimmed.is_empty()
+                && (trimmed.len() != 10 || !trimmed.chars().all(|c| c.is_ascii_alphanumeric()))
+            {
                 errors.push(ValidationError {
                     code: "00311".into(),
-                    message: format!("Codice CIG must be 10 alphanumeric characters, got '{}'", trimmed),
+                    message: format!(
+                        "Codice CIG must be 10 alphanumeric characters, got '{}'",
+                        trimmed
+                    ),
                     element_path: Some(format!("Body/DatiGenerali/{}/CodiceCIG", tag)),
                 });
             }
         }
         if let Some(cup) = &doc.codice_cup {
             let trimmed = cup.trim();
-            if !trimmed.is_empty() && (trimmed.len() != 15 || !trimmed.chars().all(|c| c.is_ascii_alphanumeric())) {
+            if !trimmed.is_empty()
+                && (trimmed.len() != 15 || !trimmed.chars().all(|c| c.is_ascii_alphanumeric()))
+            {
                 errors.push(ValidationError {
                     code: "00312".into(),
-                    message: format!("Codice CUP must be 15 alphanumeric characters, got '{}'", trimmed),
+                    message: format!(
+                        "Codice CUP must be 15 alphanumeric characters, got '{}'",
+                        trimmed
+                    ),
                     element_path: Some(format!("Body/DatiGenerali/{}/CodiceCUP", tag)),
                 });
             }
@@ -688,7 +826,9 @@ mod tests {
                             id_codice: "09876543210".into(),
                         }),
                         anagrafica: Some(Anagrafica {
-                            soggetto: Some(anagrafica::Soggetto::Denominazione("Cliente SRL".into())),
+                            soggetto: Some(anagrafica::Soggetto::Denominazione(
+                                "Cliente SRL".into(),
+                            )),
                             ..Default::default()
                         }),
                         ..Default::default()
@@ -741,7 +881,11 @@ mod tests {
     fn test_valid_invoice_passes() {
         let inv = minimal_invoice();
         let result = validate(&inv);
-        assert!(result.is_valid(), "Expected valid, got: {:?}", result.errors);
+        assert!(
+            result.is_valid(),
+            "Expected valid, got: {:?}",
+            result.errors
+        );
     }
 
     #[test]
@@ -835,19 +979,49 @@ mod tests {
     #[test]
     fn test_fpa12_and_fpr12_codice_destinatario() {
         let mut inv = minimal_invoice();
-        inv.header.as_mut().unwrap().dati_trasmissione.as_mut().unwrap().formato_trasmissione = 10; // FPA12
-        inv.header.as_mut().unwrap().dati_trasmissione.as_mut().unwrap().codice_destinatario = "UF1234".into(); // 6 chars
+        inv.header
+            .as_mut()
+            .unwrap()
+            .dati_trasmissione
+            .as_mut()
+            .unwrap()
+            .formato_trasmissione = 10; // FPA12
+        inv.header
+            .as_mut()
+            .unwrap()
+            .dati_trasmissione
+            .as_mut()
+            .unwrap()
+            .codice_destinatario = "UF1234".into(); // 6 chars
         assert!(validate(&inv).is_valid());
 
         // 7 chars on FPA12 should fail with 00305
-        inv.header.as_mut().unwrap().dati_trasmissione.as_mut().unwrap().codice_destinatario = "0000000".into();
+        inv.header
+            .as_mut()
+            .unwrap()
+            .dati_trasmissione
+            .as_mut()
+            .unwrap()
+            .codice_destinatario = "0000000".into();
         let res = validate(&inv);
         assert!(!res.is_valid());
         assert!(res.errors.iter().any(|e| e.code == "00305"));
 
         // 7 chars on FPR12 should pass
-        inv.header.as_mut().unwrap().dati_trasmissione.as_mut().unwrap().formato_trasmissione = 20;
-        inv.header.as_mut().unwrap().dati_trasmissione.as_mut().unwrap().codice_destinatario = "M5UXCR1".into();
+        inv.header
+            .as_mut()
+            .unwrap()
+            .dati_trasmissione
+            .as_mut()
+            .unwrap()
+            .formato_trasmissione = 20;
+        inv.header
+            .as_mut()
+            .unwrap()
+            .dati_trasmissione
+            .as_mut()
+            .unwrap()
+            .codice_destinatario = "M5UXCR1".into();
         assert!(validate(&inv).is_valid());
     }
 
@@ -865,18 +1039,92 @@ mod tests {
     #[test]
     fn test_cig_cup_validation() {
         let mut inv = minimal_invoice();
-        inv.body[0].dati_generali.as_mut().unwrap().dati_ordine_acquisto.push(DatiDocumentiCorrelati {
-            id_documento: "ORD-2026-1".into(),
-            codice_cig: Some("1234567890".into()), // 10 chars -> ok
-            codice_cup: Some("123456789012345".into()), // 15 chars -> ok
-            ..Default::default()
-        });
+        inv.body[0]
+            .dati_generali
+            .as_mut()
+            .unwrap()
+            .dati_ordine_acquisto
+            .push(DatiDocumentiCorrelati {
+                id_documento: "ORD-2026-1".into(),
+                codice_cig: Some("1234567890".into()), // 10 chars -> ok
+                codice_cup: Some("123456789012345".into()), // 15 chars -> ok
+                ..Default::default()
+            });
         assert!(validate(&inv).is_valid());
 
         // Invalid CIG length -> 00311
-        inv.body[0].dati_generali.as_mut().unwrap().dati_ordine_acquisto[0].codice_cig = Some("SHORT".into());
+        inv.body[0]
+            .dati_generali
+            .as_mut()
+            .unwrap()
+            .dati_ordine_acquisto[0]
+            .codice_cig = Some("SHORT".into());
         let res = validate(&inv);
         assert!(!res.is_valid());
         assert!(res.errors.iter().any(|e| e.code == "00311"));
+    }
+
+    #[test]
+    fn test_multiple_natura_codes_and_cassa_in_riepilogo() {
+        let mut inv = minimal_invoice();
+        let body = &mut inv.body[0];
+        body.dati_generali
+            .as_mut()
+            .unwrap()
+            .dati_generali_documento
+            .as_mut()
+            .unwrap()
+            .dati_cassa_previdenziale
+            .push(DatiCassaPrevidenziale {
+                tipo_cassa: 40, // TC04
+                al_cassa: 4.0,
+                importo_contributo_cassa: 4.0,
+                imponibile_cassa: Some(100.0),
+                aliquota_iva: 22.0,
+                ..Default::default()
+            });
+        let dbs = body.dati_beni_servizi.as_mut().unwrap();
+        // Line 1: 100 EUR @ 22% + 4 EUR cassa @ 22% = 104 EUR imponibile
+        dbs.dati_riepilogo[0].imponibile_importo = 104.0;
+        dbs.dati_riepilogo[0].imposta = 22.88;
+
+        // Add two 0% lines with different Natura codes (N1 and N2.2)
+        dbs.dettaglio_linee.push(DettaglioLinee {
+            numero_linea: 2,
+            descrizione: "Riaddebito bollo".into(),
+            quantita: Some(1.0),
+            prezzo_unitario: 2.0,
+            prezzo_totale: 2.0,
+            aliquota_iva: 0.0,
+            natura: Some(10), // N1
+            ..Default::default()
+        });
+        dbs.dettaglio_linee.push(DettaglioLinee {
+            numero_linea: 3,
+            descrizione: "Operazione non soggetta".into(),
+            quantita: Some(1.0),
+            prezzo_unitario: 50.0,
+            prezzo_totale: 50.0,
+            aliquota_iva: 0.0,
+            natura: Some(22), // N2.2
+            ..Default::default()
+        });
+        dbs.dati_riepilogo.push(DatiRiepilogo {
+            aliquota_iva: 0.0,
+            imponibile_importo: 2.0,
+            imposta: 0.0,
+            natura: Some(10), // N1
+            ..Default::default()
+        });
+        dbs.dati_riepilogo.push(DatiRiepilogo {
+            aliquota_iva: 0.0,
+            imponibile_importo: 50.0,
+            imposta: 0.0,
+            natura: Some(22), // N2.2
+            ..Default::default()
+        });
+
+        let res = validate(&inv);
+        assert!(res.is_valid(), "Expected valid, got: {:?}", res.errors);
     }
 }

@@ -7,6 +7,7 @@ const LABELS: Record<InvoiceStatus, string> = {
   sent: "Inviata",
   accepted: "Accettata",
   rejected: "Rifiutata",
+  imported: "Importata",
 };
 
 @Pipe({

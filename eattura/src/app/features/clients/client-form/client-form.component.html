@@ -58,7 +58,9 @@
           <input id="idPaese" type="text" formControlName="idPaese" maxlength="2" />
         </div>
         <div class="form-group" style="flex: 2;">
-          <label for="idCodice">Partita IVA *</label>
+          <label for="idCodice">
+            {{ subjectType() === "persona" ? "Partita IVA (opzionale per privati)" : "Partita IVA *" }}
+          </label>
           <div class="input-with-button">
             <input id="idCodice" type="text" formControlName="idCodice" placeholder="es. 01234567890" />
             <button
@@ -91,7 +93,9 @@
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label for="codiceFiscale">Codice Fiscale</label>
+          <label for="codiceFiscale">
+            {{ subjectType() === "persona" && !form.get("idCodice")?.value ? "Codice Fiscale *" : "Codice Fiscale" }}
+          </label>
           <input id="codiceFiscale" type="text" formControlName="codiceFiscale" />
         </div>
         <div class="form-group">

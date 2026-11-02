@@ -37,6 +37,12 @@ export class InvoiceStore {
   readonly pecSyncStatus = this._pecSyncStatus.asReadonly();
   readonly pecSyncError = signal<string | null>(null);
   readonly lastPecSuccessAt = computed(() => this._pecSyncStatus()?.lastSuccessAt ?? null);
+  readonly sdiAddress = computed(() => this._pecSyncStatus()?.sdiAddress ?? "sdi01@pec.fatturapa.it");
+  readonly sdiAddressDetected = computed(() => this._pecSyncStatus()?.sdiAddressDetected ?? null);
+  readonly sdiAddressUnverifiedWarning = computed(() => {
+    const status = this._pecSyncStatus();
+    return !!(status?.configured && status.sdiAddressVerified === false);
+  });
   readonly secondsToPecSync = computed(() => {
     const status = this._pecSyncStatus();
     return status?.configured && !status.inProgress ? Math.max(0, Math.ceil((status.nextSyncAt - this._clock()) / 1000)) : null;
@@ -106,6 +112,9 @@ export class InvoiceStore {
   );
   readonly rejectedCount = computed(
     () => this._invoices().filter((i) => i.stato === "rejected").length
+  );
+  readonly importedCount = computed(
+    () => this._invoices().filter((i) => i.stato === "imported").length
   );
 
   readonly salesCount = computed(
@@ -241,13 +250,6 @@ export class InvoiceStore {
       await Promise.all([this.refresh(), this.clientStore.refresh()]);
     }
     return summary;
-  }
-
-  /** Sign invoice into CAdES-BES .p7m envelope. */
-  async signP7m(id: string, signerName?: string, signerCf?: string): Promise<Uint8Array> {
-    const bytes = await this.invoiceService.signP7m(id, signerName, signerCf);
-    await this.refresh();
-    return new Uint8Array(bytes);
   }
 
   /** Rectify a rejected invoice (SDI scarto), moving it back to draft. */

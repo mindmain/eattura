@@ -64,9 +64,7 @@ describe("Shared Pure Pipes", () => {
           cognome: "Rossi",
           idPaese: "IT",
           idCodice: "123",
-          codiceFiscale: null,
           comune: "Roma",
-          provincia: null,
         })
       ).toBe("Acme SpA");
     });
@@ -80,9 +78,7 @@ describe("Shared Pure Pipes", () => {
           cognome: "Rossi",
           idPaese: "IT",
           idCodice: "123",
-          codiceFiscale: null,
           comune: "Roma",
-          provincia: null,
         })
       ).toBe("Mario Rossi");
     });

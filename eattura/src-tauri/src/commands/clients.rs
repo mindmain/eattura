@@ -53,6 +53,7 @@ pub struct CreateClientRequest {
     pub nome: Option<String>,
     pub cognome: Option<String>,
     pub id_paese: String,
+    #[serde(default)]
     pub id_codice: String,
     pub codice_fiscale: Option<String>,
     pub regime_fiscale: Option<String>,
@@ -68,6 +69,28 @@ pub struct CreateClientRequest {
     pub codice_destinatario: Option<String>,
     #[serde(default)]
     pub is_pa: Option<bool>,
+}
+
+fn resolve_tax_identifiers(
+    client: &CreateClientRequest,
+) -> Result<(String, Option<String>), String> {
+    let raw_id_codice = client.id_codice.trim();
+    let raw_cf = client
+        .codice_fiscale
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_ascii_uppercase);
+
+    let effective_id_codice = if !raw_id_codice.is_empty() {
+        raw_id_codice.to_ascii_uppercase()
+    } else if let Some(ref cf) = raw_cf {
+        cf.clone()
+    } else {
+        return Err("Specificare Partita IVA o Codice Fiscale per l'anagrafica".into());
+    };
+
+    Ok((effective_id_codice, raw_cf))
 }
 
 /// List all clients from the local file store.
@@ -94,9 +117,9 @@ pub async fn list_clients_store(
         .iter()
         .map(|row| {
             let cd: Option<String> = row.get("codice_destinatario");
-            let is_pa = row.get::<Option<bool>>("is_pa").unwrap_or_else(|| {
-                cd.as_deref().map(|c| c.trim().len() == 6).unwrap_or(false)
-            });
+            let is_pa = row
+                .get::<Option<bool>>("is_pa")
+                .unwrap_or_else(|| cd.as_deref().map(|c| c.trim().len() == 6).unwrap_or(false));
             ClientSummary {
                 id: row.get("id"),
                 search_text: row.get("search_text"),
@@ -140,7 +163,7 @@ pub async fn get_client_store(
 
 /// Create a new client.
 ///
-/// Generates a UUID for the new client and inserts it into the file store.
+/// Generates a deterministic ID for the new client and inserts it into the file store.
 /// Fiscal identity uniqueness prevents duplicate tax IDs.
 #[tauri::command]
 pub async fn create_client(
@@ -154,20 +177,56 @@ pub async fn create_client_store(
     store: &crate::storage::FileStore,
     client: CreateClientRequest,
 ) -> Result<ClientDetail, String> {
+    let (effective_id_codice, effective_cf) = resolve_tax_identifiers(&client)?;
     let is_pa = client.is_pa.unwrap_or_else(|| {
-        client.codice_destinatario.as_deref().map(|c| c.trim().len() == 6).unwrap_or(false)
+        client
+            .codice_destinatario
+            .as_deref()
+            .map(|c| c.trim().len() == 6)
+            .unwrap_or(false)
     });
     if let Some(cd) = client.codice_destinatario.as_deref() {
         let trimmed = cd.trim();
-        if is_pa && !trimmed.is_empty() && (trimmed.len() != 6 || !trimmed.chars().all(|c| c.is_ascii_alphanumeric())) {
-            return Err(format!("Codice Destinatario IPA per Pubblica Amministrazione deve essere di 6 caratteri alfanumerici, ricevuto '{}'", trimmed));
+        if is_pa
+            && !trimmed.is_empty()
+            && (trimmed.len() != 6 || !trimmed.chars().all(|c| c.is_ascii_alphanumeric()))
+        {
+            return Err(format!(
+                "Codice Destinatario IPA per Pubblica Amministrazione deve essere di 6 caratteri alfanumerici, ricevuto '{}'",
+                trimmed
+            ));
         }
     }
 
-    let id = digest::client_id(&client.id_paese, &client.id_codice)?;
+    let id = digest::client_id(&client.id_paese, &effective_id_codice)?;
 
-    store.insert("clients", serde_json::json!({"id": &id, "denominazione": &client.denominazione, "nome": &client.nome, "cognome": &client.cognome, "id_paese": &client.id_paese, "id_codice": &client.id_codice, "codice_fiscale": &client.codice_fiscale, "regime_fiscale": &client.regime_fiscale, "indirizzo": &client.indirizzo, "numero_civico": &client.numero_civico, "cap": &client.cap, "comune": &client.comune, "provincia": &client.provincia, "nazione": &client.nazione, "telefono": &client.telefono, "email": &client.email, "pec": &client.pec, "codice_destinatario": &client.codice_destinatario, "is_pa": is_pa})).await
-    .map_err(|e| e.to_string())?;
+    store
+        .insert(
+            "clients",
+            serde_json::json!({
+                "id": &id,
+                "denominazione": &client.denominazione,
+                "nome": &client.nome,
+                "cognome": &client.cognome,
+                "id_paese": &client.id_paese,
+                "id_codice": &effective_id_codice,
+                "codice_fiscale": &effective_cf,
+                "regime_fiscale": &client.regime_fiscale,
+                "indirizzo": &client.indirizzo,
+                "numero_civico": &client.numero_civico,
+                "cap": &client.cap,
+                "comune": &client.comune,
+                "provincia": &client.provincia,
+                "nazione": &client.nazione,
+                "telefono": &client.telefono,
+                "email": &client.email,
+                "pec": &client.pec,
+                "codice_destinatario": &client.codice_destinatario,
+                "is_pa": is_pa
+            }),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Fetch the newly created record to return it with persisted fields.
     get_client_store(store, &id).await
@@ -190,6 +249,7 @@ pub async fn update_client_store(
     id: &str,
     client: CreateClientRequest,
 ) -> Result<ClientDetail, String> {
+    let (effective_id_codice, effective_cf) = resolve_tax_identifiers(&client)?;
     let mut tx = store.begin().await?;
     let existing = tx
         .read("clients", "id", vec![serde_json::json!(id)], "")
@@ -197,24 +257,59 @@ pub async fn update_client_store(
         .await?
         .ok_or_else(|| format!("Client not found: {id}"))?;
     let same_fiscal_identity = existing.get::<String>("id_paese") == client.id_paese
-        && existing.get::<String>("id_codice") == client.id_codice;
+        && existing.get::<String>("id_codice") == effective_id_codice;
     let is_pa = client.is_pa.unwrap_or_else(|| {
-        client.codice_destinatario.as_deref().map(|c| c.trim().len() == 6).unwrap_or(false)
+        client
+            .codice_destinatario
+            .as_deref()
+            .map(|c| c.trim().len() == 6)
+            .unwrap_or(false)
     });
     if let Some(cd) = client.codice_destinatario.as_deref() {
         let trimmed = cd.trim();
-        if is_pa && !trimmed.is_empty() && (trimmed.len() != 6 || !trimmed.chars().all(|c| c.is_ascii_alphanumeric())) {
-            return Err(format!("Codice Destinatario IPA per Pubblica Amministrazione deve essere di 6 caratteri alfanumerici, ricevuto '{}'", trimmed));
+        if is_pa
+            && !trimmed.is_empty()
+            && (trimmed.len() != 6 || !trimmed.chars().all(|c| c.is_ascii_alphanumeric()))
+        {
+            return Err(format!(
+                "Codice Destinatario IPA per Pubblica Amministrazione deve essere di 6 caratteri alfanumerici, ricevuto '{}'",
+                trimmed
+            ));
         }
     }
 
     let new_id = if same_fiscal_identity {
         id.to_string()
     } else {
-        digest::client_id(&client.id_paese, &client.id_codice)?
+        digest::client_id(&client.id_paese, &effective_id_codice)?
     };
-    let result = tx.update("clients", id, serde_json::json!({"denominazione": &client.denominazione, "nome": &client.nome, "cognome": &client.cognome, "id_paese": &client.id_paese, "id_codice": &client.id_codice, "codice_fiscale": &client.codice_fiscale, "regime_fiscale": &client.regime_fiscale, "indirizzo": &client.indirizzo, "numero_civico": &client.numero_civico, "cap": &client.cap, "comune": &client.comune, "provincia": &client.provincia, "nazione": &client.nazione, "telefono": &client.telefono, "email": &client.email, "pec": &client.pec, "codice_destinatario": &client.codice_destinatario, "is_pa": is_pa})).await
-    .map_err(|e| e.to_string())?;
+    let result = tx
+        .update(
+            "clients",
+            id,
+            serde_json::json!({
+                "denominazione": &client.denominazione,
+                "nome": &client.nome,
+                "cognome": &client.cognome,
+                "id_paese": &client.id_paese,
+                "id_codice": &effective_id_codice,
+                "codice_fiscale": &effective_cf,
+                "regime_fiscale": &client.regime_fiscale,
+                "indirizzo": &client.indirizzo,
+                "numero_civico": &client.numero_civico,
+                "cap": &client.cap,
+                "comune": &client.comune,
+                "provincia": &client.provincia,
+                "nazione": &client.nazione,
+                "telefono": &client.telefono,
+                "email": &client.email,
+                "pec": &client.pec,
+                "codice_destinatario": &client.codice_destinatario,
+                "is_pa": is_pa
+            }),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
     if result.rows_affected() == 0 {
         return Err(format!("Client not found: {id}"));
@@ -269,8 +364,6 @@ pub async fn delete_client_store(
     Ok(())
 }
 
-/// Map a stored record to a `ClientDetail` struct.
-
 /// Query the official European Commission VIES REST API to validate a VAT number
 /// and autodiscover company details without local or remote persistence.
 #[tauri::command]
@@ -283,9 +376,7 @@ pub async fn lookup_vat_vies(
     }
 
     let (country, vat) = common::vies::normalize_vat(&country_code, &vat_number);
-    let url = format!(
-        "https://ec.europa.eu/taxation_customs/vies/rest-api/ms/{country}/vat/{vat}"
-    );
+    let url = format!("https://ec.europa.eu/taxation_customs/vies/rest-api/ms/{country}/vat/{vat}");
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -330,9 +421,9 @@ pub async fn lookup_vat_vies(
 
 fn row_to_client_detail(row: &Record) -> ClientDetail {
     let cd: Option<String> = row.get("codice_destinatario");
-    let is_pa = row.get::<Option<bool>>("is_pa").unwrap_or_else(|| {
-        cd.as_deref().map(|c| c.trim().len() == 6).unwrap_or(false)
-    });
+    let is_pa = row
+        .get::<Option<bool>>("is_pa")
+        .unwrap_or_else(|| cd.as_deref().map(|c| c.trim().len() == 6).unwrap_or(false));
     ClientDetail {
         id: row.get("id"),
         denominazione: row.get("denominazione"),
@@ -361,7 +452,11 @@ mod tests {
     use super::*;
 
     fn test_store(name: &str) -> (crate::storage::FileStore, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("eattura-test-clients-{}-{}", name, uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!(
+            "eattura-test-clients-{}-{}",
+            name,
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("index.json");
         let store = crate::storage::FileStore::open(path).unwrap();
@@ -417,7 +512,9 @@ mod tests {
         // 4. Update client (same fiscal identity)
         let mut update_req = sample_client_request("12345678901", "Acme SpA");
         update_req.comune = "Milano".to_string();
-        let updated = update_client_store(&store, &created.id, update_req).await.unwrap();
+        let updated = update_client_store(&store, &created.id, update_req)
+            .await
+            .unwrap();
         assert_eq!(updated.id, created.id); // Same ID because tax identity is unchanged
         assert_eq!(updated.denominazione.as_deref(), Some("Acme SpA"));
         assert_eq!(updated.comune, "Milano");
@@ -427,6 +524,21 @@ mod tests {
         assert!(get_client_store(&store, &created.id).await.is_err());
         let list_empty = list_clients_store(&store).await.unwrap();
         assert_eq!(list_empty.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_create_private_individual_with_codice_fiscale_only() {
+        let (store, _dir) = test_store("cf-only");
+        let mut req = sample_client_request("", "");
+        req.denominazione = None;
+        req.nome = Some("Mario".to_string());
+        req.cognome = Some("Rossi".to_string());
+        req.id_codice = String::new();
+        req.codice_fiscale = Some("rssmra80a01h501u".to_string());
+
+        let created = create_client_store(&store, req).await.unwrap();
+        assert_eq!(created.id_codice, "RSSMRA80A01H501U");
+        assert_eq!(created.codice_fiscale.as_deref(), Some("RSSMRA80A01H501U"));
     }
 
     #[tokio::test]
@@ -443,22 +555,31 @@ mod tests {
     #[tokio::test]
     async fn test_delete_client_referenced_by_invoice_fails() {
         let (store, _dir) = test_store("ref-protect");
-        let seller = create_client_store(&store, sample_client_request("11111111111", "Seller")).await.unwrap();
-        let buyer = create_client_store(&store, sample_client_request("22222222222", "Buyer")).await.unwrap();
+        let seller = create_client_store(&store, sample_client_request("11111111111", "Seller"))
+            .await
+            .unwrap();
+        let buyer = create_client_store(&store, sample_client_request("22222222222", "Buyer"))
+            .await
+            .unwrap();
 
         // Create an invoice referencing seller and buyer
         let mut tx = store.begin().await.unwrap();
-        tx.insert("invoices", serde_json::json!({
-            "id": "inv-001",
-            "numero": "1",
-            "data": "2026-01-01",
-            "tipo_documento": "TD01",
-            "divisa": "EUR",
-            "importo_totale": 100.0,
-            "stato": "draft",
-            "cedente_id": &seller.id,
-            "cessionario_id": &buyer.id
-        })).await.unwrap();
+        tx.insert(
+            "invoices",
+            serde_json::json!({
+                "id": "inv-001",
+                "numero": "1",
+                "data": "2026-01-01",
+                "tipo_documento": "TD01",
+                "divisa": "EUR",
+                "importo_totale": 100.0,
+                "stato": "draft",
+                "cedente_id": &seller.id,
+                "cessionario_id": &buyer.id
+            }),
+        )
+        .await
+        .unwrap();
         tx.commit().await.unwrap();
 
         // Attempting to delete the seller must fail
@@ -477,11 +598,16 @@ mod tests {
     #[tokio::test]
     async fn test_client_rekeying_when_tax_identity_changes() {
         let (store, _dir) = test_store("rekey");
-        let original = create_client_store(&store, sample_client_request("11111111111", "Original")).await.unwrap();
+        let original =
+            create_client_store(&store, sample_client_request("11111111111", "Original"))
+                .await
+                .unwrap();
 
         // Update with new P.IVA
         let update_req = sample_client_request("33333333333", "Renamed & Rekeyed");
-        let updated = update_client_store(&store, &original.id, update_req).await.unwrap();
+        let updated = update_client_store(&store, &original.id, update_req)
+            .await
+            .unwrap();
 
         let new_expected_id = digest::client_id("IT", "33333333333").unwrap();
         assert_eq!(updated.id, new_expected_id);

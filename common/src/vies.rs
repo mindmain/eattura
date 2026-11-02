@@ -32,7 +32,11 @@ pub struct RawViesResponse {
 }
 
 impl RawViesResponse {
-    pub fn into_vat_lookup_response(self, country_code: &str, vat_number: &str) -> VatLookupResponse {
+    pub fn into_vat_lookup_response(
+        self,
+        country_code: &str,
+        vat_number: &str,
+    ) -> VatLookupResponse {
         let name = self.name.and_then(|n| {
             let t = n.trim();
             if t.is_empty() || t == "---" {
@@ -77,12 +81,15 @@ impl RawViesResponse {
 /// Greece uses `EL` in VIES, so `GR` is normalized to `EL`.
 pub fn normalize_vat(country_code: &str, vat_number: &str) -> (String, String) {
     let raw_country = country_code.trim().to_uppercase();
-    let mut vat = vat_number.trim().to_uppercase().replace([' ', '.', '-'], "");
+    let mut vat = vat_number
+        .trim()
+        .to_uppercase()
+        .replace([' ', '.', '-'], "");
     if vat.starts_with(&raw_country) {
         vat = vat[raw_country.len()..].to_string();
-    } else if raw_country == "GR" && vat.starts_with("EL") {
-        vat = vat[2..].to_string();
-    } else if raw_country == "EL" && vat.starts_with("GR") {
+    } else if (raw_country == "GR" && vat.starts_with("EL"))
+        || (raw_country == "EL" && vat.starts_with("GR"))
+    {
         vat = vat[2..].to_string();
     }
     let country = if raw_country == "GR" {
@@ -97,7 +104,12 @@ pub fn normalize_vat(country_code: &str, vat_number: &str) -> (String, String) {
 pub fn parse_vies_address(
     country_code: &str,
     raw_address: &str,
-) -> (Option<String>, Option<String>, Option<String>, Option<String>) {
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
     let raw = raw_address.trim();
     if raw.is_empty() || raw == "---" {
         return (None, None, None, None);
@@ -112,7 +124,12 @@ pub fn parse_vies_address(
 
 fn parse_italian_vies_address(
     raw: &str,
-) -> (Option<String>, Option<String>, Option<String>, Option<String>) {
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
     let lines: Vec<&str> = raw
         .split('\n')
         .map(|l| l.trim())

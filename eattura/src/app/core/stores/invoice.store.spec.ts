@@ -188,6 +188,7 @@ describe("InvoiceStore", () => {
     await store.refreshPecSyncStatus();
     expect(mockInvoiceService.listInvoices).toHaveBeenCalledTimes(2);
   });
+
   afterEach(() => { store.stopPecMonitor(); vi.useRealTimers(); });
 
   it("starts the countdown and updates it while polling the native PEC status", async () => {
@@ -223,5 +224,37 @@ describe("InvoiceStore", () => {
     expect(store.pecSyncError()).toContain("registro attività");
   });
 
+  it("exposes SDI PEC warning when SDI address is not yet verified from PEC notifications", async () => {
+    mockInvoiceService.pecSyncStatus.mockResolvedValueOnce({
+      configured: true,
+      lastAttemptAt: 1000,
+      lastSuccessAt: 1000,
+      nextSyncAt: 301000,
+      lastError: null,
+      sdiAddress: "sdi01@pec.fatturapa.it",
+      sdiAddressDetected: null,
+      sdiAddressVerified: false,
+    });
 
+    await store.refreshPecSyncStatus();
+    expect(store.sdiAddressUnverifiedWarning()).toBe(true);
+    expect(store.sdiAddress()).toBe("sdi01@pec.fatturapa.it");
+    expect(store.sdiAddressDetected()).toBeNull();
+
+    mockInvoiceService.pecSyncStatus.mockResolvedValueOnce({
+      configured: true,
+      lastAttemptAt: 2000,
+      lastSuccessAt: 2000,
+      nextSyncAt: 302000,
+      lastError: null,
+      sdiAddress: "sdi12@pec.fatturapa.it",
+      sdiAddressDetected: "sdi12@pec.fatturapa.it",
+      sdiAddressVerified: true,
+    });
+
+    await store.refreshPecSyncStatus();
+    expect(store.sdiAddressUnverifiedWarning()).toBe(false);
+    expect(store.sdiAddress()).toBe("sdi12@pec.fatturapa.it");
+    expect(store.sdiAddressDetected()).toBe("sdi12@pec.fatturapa.it");
+  });
 });

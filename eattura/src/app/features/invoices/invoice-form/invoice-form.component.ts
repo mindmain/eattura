@@ -29,6 +29,7 @@ import type {
   DatiCassaDetail,
   DatiRitenutaDetail,
   DatiBolloDetail,
+  InvoiceDetail,
 } from "../../../core/models/invoice.model";
 import { TipoDocumentoPipe } from "../../../shared/pipes/tipo-documento.pipe";
 import { ModalitaPagamentoPipe } from "../../../shared/pipes/modalita-pagamento.pipe";
@@ -36,7 +37,7 @@ import { CondizioniPagamentoPipe } from "../../../shared/pipes/condizioni-pagame
 import { AppCurrencyPipe } from "../../../shared/pipes/app-currency.pipe";
 import { ClientNamePipe } from "../../../shared/pipes/client-name.pipe";
 import type { ClientSummary } from "../../../core/models/client.model";
-import type { CreateInvoiceRequest, CreateLineRequest, DatiDdtDetail, CreateAttachmentRequest, AttachmentDetail } from "../../../core/models/invoice.model";
+import type { CreateInvoiceRequest, CreateLineRequest, DatiDdtDetail, CreateAttachmentRequest } from "../../../core/models/invoice.model";
 
 interface LineItemFormValue {
   descrizione: string;
@@ -77,6 +78,7 @@ export class InvoiceFormComponent implements OnInit {
 
   currentStep = signal(1);
   invoiceId = signal<string | null>(null);
+  private loadedInvoice = signal<InvoiceDetail | null>(null);
   isEditMode = computed(() => !(!this.id() && !this.invoiceId()));
 
   // Expose clients signal to the template dropdowns
@@ -279,6 +281,7 @@ export class InvoiceFormComponent implements OnInit {
       this.invoiceId.set(paramId);
       try {
         const inv = await this.invoiceStore.getInvoice(paramId);
+        this.loadedInvoice.set(inv);
         this.form.patchValue({
           tipoDocumento: inv.tipoDocumento,
           numero: inv.numero,
@@ -290,9 +293,30 @@ export class InvoiceFormComponent implements OnInit {
           collegataNumero: inv.datiFattureCollegate?.[0]?.idDocumento ?? "",
           collegataData: inv.datiFattureCollegate?.[0]?.data ?? "",
         });
-        // Populate line items
+        // Populate line items (extract synthetic bollo recharge line if present alongside other lines)
         this.linee.clear();
-        for (const line of inv.linee) {
+        const hasSyntheticBolloLine =
+          inv.linee.length > 1 &&
+          inv.linee.some(
+            (l) =>
+              l.descrizione === "Riaddebito imposta di bollo" &&
+              l.aliquotaIva === 0 &&
+              (l.natura === "N1" || l.natura === "N2.2"),
+          );
+        const editableLines = hasSyntheticBolloLine
+          ? inv.linee.filter(
+              (l) =>
+                !(
+                  l.descrizione === "Riaddebito imposta di bollo" &&
+                  l.aliquotaIva === 0 &&
+                  (l.natura === "N1" || l.natura === "N2.2")
+                ),
+            )
+          : inv.linee;
+        if (hasSyntheticBolloLine) {
+          this.form.patchValue({ riaddebitaBollo: true, applicaBollo: true });
+        }
+        for (const line of editableLines) {
           this.linee.push(
             this.fb.group({
               descrizione: [line.descrizione, Validators.required],
@@ -656,6 +680,7 @@ export class InvoiceFormComponent implements OnInit {
   private buildRequest(): CreateInvoiceRequest {
     const val = this.form.getRawValue();
     const summary = this.financialSummary();
+    const orig = this.loadedInvoice();
     const rawLinee = (val.linee ?? []) as LineItemFormValue[];
     const linee: CreateLineRequest[] = rawLinee.map((l) => ({
       descrizione: l.descrizione,
@@ -666,8 +691,12 @@ export class InvoiceFormComponent implements OnInit {
       natura: l.natura || null,
     }));
 
-    // If client requested bollo recharge as invoice line item
-    if (val.riaddebitaBollo && summary.bolloAmt > 0) {
+    // If client requested bollo recharge as invoice line item, avoid duplicating if already present
+    if (
+      val.riaddebitaBollo &&
+      summary.bolloAmt > 0 &&
+      !linee.some((l) => l.descrizione === "Riaddebito imposta di bollo")
+    ) {
       linee.push({
         descrizione: "Riaddebito imposta di bollo",
         quantita: 1,
@@ -678,9 +707,10 @@ export class InvoiceFormComponent implements OnInit {
       });
     }
 
-    // Build Casse Previdenziali
+    // Build Casse Previdenziali (preserving any additional entries from loaded invoice)
     let datiCassaPrevidenziale: DatiCassaDetail[] | null = null;
     if (val.applicaCassa) {
+      const extraCasse = orig?.datiCassaPrevidenziale?.slice(1) ?? [];
       datiCassaPrevidenziale = [
         {
           tipoCassa: val.tipoCassa || "TC04",
@@ -691,12 +721,14 @@ export class InvoiceFormComponent implements OnInit {
           ritenuta: val.cassaSoggettaRitenuta ? "SI" : null,
           natura: val.isForfettario ? "N2.2" : null,
         },
+        ...extraCasse,
       ];
     }
 
-    // Build Ritenute d'Acconto
+    // Build Ritenute d'Acconto (preserving any additional entries from loaded invoice)
     let datiRitenuta: DatiRitenutaDetail[] | null = null;
     if (val.applicaRitenuta && !val.isForfettario && summary.importoRitenuta > 0) {
+      const extraRitenute = orig?.datiRitenuta?.slice(1) ?? [];
       datiRitenuta = [
         {
           tipoRitenuta: val.tipoRitenuta || "RT01",
@@ -704,6 +736,7 @@ export class InvoiceFormComponent implements OnInit {
           aliquotaRitenuta: Number(val.aliquotaRitenuta) || 20.0,
           causalePagamento: val.causalePagamentoRitenuta || "A",
         },
+        ...extraRitenute,
       ];
     }
 
@@ -721,6 +754,15 @@ export class InvoiceFormComponent implements OnInit {
       ? val.causale.split("\n").map((s: string) => s.trim()).filter((s: string) => s.length > 0)
       : [];
 
+    const extraPagamenti = (orig?.pagamenti?.slice(1) ?? []).map((p) => ({
+      modalitaPagamento: p.modalitaPagamento,
+      importoPagamento: p.importoPagamento,
+      dataScadenzaPagamento: p.dataScadenzaPagamento,
+      iban: p.iban,
+    }));
+
+    const extraCollegate = orig?.datiFattureCollegate?.slice(1) ?? [];
+
     return {
       numero: val.numero!,
       data: val.data!,
@@ -737,6 +779,7 @@ export class InvoiceFormComponent implements OnInit {
           dataScadenzaPagamento: val.dataScadenzaPagamento || null,
           iban: val.iban || null,
         },
+        ...extraPagamenti,
       ],
       datiCassaPrevidenziale,
       datiRitenuta,
@@ -744,8 +787,13 @@ export class InvoiceFormComponent implements OnInit {
       isAutofattura: this.isAutofattura(),
       soggettoEmittente: this.isAutofattura() ? "CC" : null,
       datiFattureCollegate: val.collegataNumero
-        ? [{ idDocumento: val.collegataNumero, data: val.collegataData || null }]
-        : null,
+        ? [
+            { idDocumento: val.collegataNumero, data: val.collegataData || null },
+            ...extraCollegate,
+          ]
+        : extraCollegate.length > 0
+          ? extraCollegate
+          : null,
       isPa: !!val.isPa,
       isSplitPayment: !!val.isSplitPayment,
       esigibilitaIva: val.isSplitPayment ? "S" : null,
@@ -756,7 +804,7 @@ export class InvoiceFormComponent implements OnInit {
             data: val.dataDocumentoTracciabilita || null,
             codiceCig: val.codiceCig ? val.codiceCig.trim() : null,
             codiceCup: val.codiceCup ? val.codiceCup.trim() : null,
-          }]
+          }, ...(orig?.datiOrdineAcquisto?.slice(1) ?? [])]
         : null,
       datiContratto: (val.idDocumentoTracciabilita || val.codiceCig || val.codiceCup) && val.tipoDocumentoTracciabilita === "contratto"
         ? [{
@@ -765,7 +813,7 @@ export class InvoiceFormComponent implements OnInit {
             data: val.dataDocumentoTracciabilita || null,
             codiceCig: val.codiceCig ? val.codiceCig.trim() : null,
             codiceCup: val.codiceCup ? val.codiceCup.trim() : null,
-          }]
+          }, ...(orig?.datiContratto?.slice(1) ?? [])]
         : null,
       datiConvenzione: (val.idDocumentoTracciabilita || val.codiceCig || val.codiceCup) && val.tipoDocumentoTracciabilita === "convenzione"
         ? [{
@@ -774,7 +822,7 @@ export class InvoiceFormComponent implements OnInit {
             data: val.dataDocumentoTracciabilita || null,
             codiceCig: val.codiceCig ? val.codiceCig.trim() : null,
             codiceCup: val.codiceCup ? val.codiceCup.trim() : null,
-          }]
+          }, ...(orig?.datiConvenzione?.slice(1) ?? [])]
         : null,
       datiDdt: this.datiDdt().length > 0 ? this.datiDdt() : null,
       allegati: this.allegati().length > 0 ? this.allegati() : null,
@@ -785,8 +833,10 @@ export class InvoiceFormComponent implements OnInit {
     const request = this.buildRequest();
     const editId = this.invoiceId();
     if (this.isEditMode() && editId) {
-      await this.invoiceStore.updateInvoice(editId, request);
-      return editId;
+      const updated = await this.invoiceStore.updateInvoice(editId, request);
+      const nextId = updated?.id || editId;
+      this.invoiceId.set(nextId);
+      return nextId;
     }
     const created = await this.invoiceStore.createInvoice(request);
     this.invoiceId.set(created.id);

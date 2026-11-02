@@ -1,6 +1,6 @@
 [package]
 name = "eattura"
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -10,10 +10,9 @@ publish = false
 name = "eattura_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
-
 [dependencies]
 common = { path = "../../common" }
-tauri = { version = "2", features = [] }
+tauri = { version = "~2.11.1", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
@@ -24,6 +23,12 @@ base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+axum = "0.8.8"
+rmcp = { version = "3.8.0", features = ["transport-streamable-http-server"] }
+schemars = "1"
+secrecy = "0.10"
+subtle = "2"
+tower-http = { version = "0.6.8", features = ["timeout"] }
 
 # PEC transport (SMTP send + IMAP receive), MIME parsing, and OS keyring.
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-native-tls"] }
@@ -32,9 +37,6 @@ native-tls = "0.2"
 mail-parser = "0.9"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 
-# Filesystem watcher for multi-vault real-time detection
-notify = "6.1"
-notify-debouncer-mini = "0.4.1"
 zip = "9.0.1"
 reqwest = { version = "0.13.5", features = ["json"] }
 
@@ -43,3 +45,4 @@ tauri-build = { version = "2", features = [] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
+tower = { version = "0.5", features = ["util"] }

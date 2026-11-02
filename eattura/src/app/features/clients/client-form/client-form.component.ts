@@ -41,7 +41,7 @@ export class ClientFormComponent {
   regimiFiscali = Object.entries(REGIME_FISCALE);
 
   form = this.fb.group({
-    denominazione: [""],
+    denominazione: ["", Validators.required],
     nome: [""],
     cognome: [""],
     idPaese: ["IT", Validators.required],
@@ -57,7 +57,7 @@ export class ClientFormComponent {
     telefono: [""],
     email: ["", Validators.email],
     pec: ["", Validators.email],
-    codiceDestinatario: ["0000000", [Validators.pattern(/^[A-Za-z0-9]{6,7}$/)]],
+    codiceDestinatario: ["0000000", [Validators.pattern(/^[A-Za-z0-9]{7}$/)]],
     isPa: [false],
   });
 
@@ -69,13 +69,23 @@ export class ClientFormComponent {
       try {
         const client = await this.clientStore.getClient(clientId);
         const isPa = !!(client.isPa || (client.codiceDestinatario && client.codiceDestinatario.length === 6));
+        const isPersona = !!(client.nome || client.cognome);
+        if (isPersona) {
+          this.onSubjectTypeChange("persona");
+        } else {
+          this.onSubjectTypeChange("azienda");
+        }
+        const isCfOnly =
+          isPersona &&
+          client.idPaese === "IT" &&
+          client.idCodice?.length === 16 &&
+          /[A-Za-z]/.test(client.idCodice);
         this.form.patchValue({
           ...client,
+          idCodice: isCfOnly ? "" : client.idCodice,
+          codiceFiscale: client.codiceFiscale || (isCfOnly ? client.idCodice : ""),
           isPa,
         });
-        if (client.nome || client.cognome) {
-          this.subjectType.set("persona");
-        }
         this.updateCodiceDestinatarioValidation(isPa);
       } catch {
         this.notify.error("Errore nel caricamento del cliente");
@@ -105,7 +115,7 @@ export class ClientFormComponent {
         const patch: Record<string, string | null> = {};
         if (res.name) {
           patch["denominazione"] = res.name;
-          this.subjectType.set("azienda");
+          this.onSubjectTypeChange("azienda");
         }
         if (res.street) {
           patch["indirizzo"] = res.street;
@@ -164,27 +174,52 @@ export class ClientFormComponent {
 
   onSubjectTypeChange(type: "azienda" | "persona"): void {
     this.subjectType.set(type);
+    const idCodiceCtrl = this.form.get("idCodice");
+    const denomCtrl = this.form.get("denominazione");
+    const nomeCtrl = this.form.get("nome");
+    const cognomeCtrl = this.form.get("cognome");
     if (type === "azienda") {
       this.form.patchValue({ nome: "", cognome: "" });
+      denomCtrl?.setValidators([Validators.required]);
+      nomeCtrl?.setValidators([]);
+      cognomeCtrl?.setValidators([]);
+      idCodiceCtrl?.setValidators([Validators.required, Validators.pattern(/^[A-Za-z0-9]{2,16}$/)]);
     } else {
       this.form.patchValue({ denominazione: "" });
+      denomCtrl?.setValidators([]);
+      nomeCtrl?.setValidators([Validators.required]);
+      cognomeCtrl?.setValidators([Validators.required]);
+      idCodiceCtrl?.setValidators([Validators.pattern(/^[A-Za-z0-9]{2,16}$/)]);
     }
+    denomCtrl?.updateValueAndValidity();
+    nomeCtrl?.updateValueAndValidity();
+    cognomeCtrl?.updateValueAndValidity();
+    idCodiceCtrl?.updateValueAndValidity();
   }
 
   async onSubmit(): Promise<void> {
+    const value = this.form.getRawValue();
+    const rawVat = (value.idCodice ?? "").trim();
+    const rawCf = (value.codiceFiscale ?? "").trim().toUpperCase();
+
+    if (!rawVat && !rawCf) {
+      this.form.markAllAsTouched();
+      this.notify.error("Inserisci la Partita IVA o il Codice Fiscale");
+      return;
+    }
+
     if (this.form.invalid) {
       this.form.markAllAsTouched();
       return;
     }
 
-    const value = this.form.getRawValue();
     const request = {
-      denominazione: this.subjectType() === "azienda" ? value.denominazione || null : null,
-      nome: this.subjectType() === "persona" ? value.nome || null : null,
-      cognome: this.subjectType() === "persona" ? value.cognome || null : null,
+      denominazione: this.subjectType() === "azienda" ? value.denominazione?.trim() || null : null,
+      nome: this.subjectType() === "persona" ? value.nome?.trim() || null : null,
+      cognome: this.subjectType() === "persona" ? value.cognome?.trim() || null : null,
       idPaese: value.idPaese!,
-      idCodice: value.idCodice!,
-      codiceFiscale: value.codiceFiscale || null,
+      idCodice: rawVat || rawCf,
+      codiceFiscale: rawCf || null,
       regimeFiscale: value.regimeFiscale || null,
       indirizzo: value.indirizzo!,
       numeroCivico: value.numeroCivico || null,

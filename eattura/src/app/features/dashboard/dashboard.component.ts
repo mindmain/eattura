@@ -61,12 +61,13 @@ export class DashboardComponent implements OnDestroy {
   readonly sentCount = this.invoiceStore.sentCount;
   readonly clientCount = this.clientStore.clientCount;
 
-  /** Monthly stats grouped by year derived from invoices. */
+  /** Monthly stats grouped by year derived from invoices (excluding drafts and rejected, subtracting credit notes). */
   readonly monthlyByYear = computed(() => {
     const invoices = this.invoiceStore.invoices();
     const map = new Map<string, MonthlyStats>();
 
     for (const inv of invoices) {
+      if (inv.stato === "draft" || inv.stato === "rejected") continue;
       if (!inv.data || inv.data.length < 7) continue;
       const year = inv.data.substring(0, 4);
       const month = Number(inv.data.substring(5, 7)) - 1; // 0..11
@@ -82,7 +83,8 @@ export class DashboardComponent implements OnDestroy {
         map.set(year, stats);
       }
 
-      const total = inv.importoTotale ?? 0;
+      const sign = inv.tipoDocumento === "TD04" || inv.tipoDocumento === "TD08" ? -1 : 1;
+      const total = (inv.importoTotale ?? 0) * sign;
       stats.counts[month] += 1;
       if (inv.direction === "sale") {
         stats.income[month] += total;

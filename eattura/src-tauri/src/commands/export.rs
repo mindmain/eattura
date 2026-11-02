@@ -1,17 +1,18 @@
-use std::io::{Cursor, Read, Write};
 use base64::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::io::{Cursor, Read, Write};
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
+use crate::TauriState;
 use crate::commands::invoices::{
-    build_fattura_from_store, export_invoice_xml_store, fetch_invoice_detail,
-    list_invoices_store, InvoiceDetail, InvoiceSummary,
+    InvoiceDetail, InvoiceSummary, build_fattura_from_store, export_invoice_xml_store,
+    fetch_invoice_detail, list_invoices_store,
 };
 use crate::commands::settings::AppSettings;
 use crate::storage::FileStore;
-use crate::TauriState;
 
 /// Filters for generating accountant and AgID preservation export packages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,8 +127,32 @@ fn compute_sha256_hex(data: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Load a lookup map `client_id -> (partita_iva, codice_fiscale)` from the store.
+async fn load_client_tax_map(store: &FileStore) -> HashMap<String, (String, String)> {
+    let mut map = HashMap::new();
+    if let Ok(rows) = store
+        .read("clients", "all", vec![], "")
+        .await
+        .fetch_all()
+        .await
+    {
+        for row in rows {
+            let id: String = row.get("id");
+            let id_codice: String = row.get::<Option<String>>("id_codice").unwrap_or_default();
+            let cf: String = row
+                .get::<Option<String>>("codice_fiscale")
+                .unwrap_or_default();
+            map.insert(id, (id_codice, cf));
+        }
+    }
+    map
+}
+
 /// Generate Prima Nota CSV content formatted for Zucchetti, TeamSystem, Datev, and Excel.
-pub fn generate_prima_nota_csv(invoices: &[(InvoiceDetail, String)]) -> String {
+pub fn generate_prima_nota_csv(
+    invoices: &[(InvoiceDetail, String)],
+    client_tax_map: &HashMap<String, (String, String)>,
+) -> String {
     let mut out = String::from("\u{FEFF}"); // UTF-8 BOM for automatic Excel recognition
 
     // Header row
@@ -143,10 +168,10 @@ pub fn generate_prima_nota_csv(invoices: &[(InvoiceDetail, String)]) -> String {
         let sezionabile = if is_purchase { "A1" } else { "V1" };
         let direzione_str = if is_purchase { "RICEVUTA" } else { "EMESSA" };
 
-        let party = if is_purchase {
-            &inv.cedente_denominazione
+        let (party, party_id) = if is_purchase {
+            (&inv.cedente_denominazione, &inv.cedente_id)
         } else {
-            &inv.cessionario_denominazione
+            (&inv.cessionario_denominazione, &inv.cessionario_id)
         };
 
         let mut imponibile_totale = 0.0;
@@ -155,7 +180,7 @@ pub fn generate_prima_nota_csv(invoices: &[(InvoiceDetail, String)]) -> String {
         let mut iva_10 = 0.0;
         let mut iva_22 = 0.0;
         let mut non_imponibile = 0.0;
-        let mut natura_counts = std::collections::HashMap::new();
+        let mut natura_counts = HashMap::new();
 
         for line in &inv.linee {
             let price = match line.quantita {
@@ -186,17 +211,13 @@ pub fn generate_prima_nota_csv(invoices: &[(InvoiceDetail, String)]) -> String {
             .map(|(nat, _)| nat)
             .unwrap_or_default();
 
-        let cassa_amt = inv
+        let cassa_amt: f64 = inv
             .dati_cassa_previdenziale
-            .first()
+            .iter()
             .map(|c| c.importo_contributo_cassa)
-            .unwrap_or(0.0);
+            .sum();
 
-        let ritenuta_amt = inv
-            .dati_ritenuta
-            .first()
-            .map(|r| r.importo_ritenuta)
-            .unwrap_or(0.0);
+        let ritenuta_amt: f64 = inv.dati_ritenuta.iter().map(|r| r.importo_ritenuta).sum();
 
         let bollo_amt = inv
             .dati_bollo
@@ -234,13 +255,19 @@ pub fn generate_prima_nota_csv(invoices: &[(InvoiceDetail, String)]) -> String {
             .and_then(|p| p.data_scadenza_pagamento.as_deref())
             .unwrap_or("");
 
-        let p_iva = "";
-        let cf = "";
+        let (p_iva, cf) = client_tax_map
+            .get(party_id)
+            .map(|(piva, cf)| (piva.as_str(), cf.as_str()))
+            .unwrap_or(("", ""));
 
         let clean_num = inv.numero.replace('/', "_");
         let xml_name = format!("{}_{}.xml", inv.tipo_documento, clean_num);
         let tot = inv.importo_totale.map(format_it_num).unwrap_or_default();
-        let netto = inv.netto_a_pagare.or(inv.importo_totale).map(format_it_num).unwrap_or_default();
+        let netto = inv
+            .netto_a_pagare
+            .or(inv.importo_totale)
+            .map(format_it_num)
+            .unwrap_or_default();
 
         out.push_str(&format!(
             "{};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{}\n",
@@ -249,8 +276,8 @@ pub fn generate_prima_nota_csv(invoices: &[(InvoiceDetail, String)]) -> String {
             csv_escape(&inv.numero),
             inv.data,
             direzione_str,
-            p_iva,
-            cf,
+            csv_escape(p_iva),
+            csv_escape(cf),
             csv_escape(party),
             format_it_num(imponibile_totale),
             format_it_num(iva_4),
@@ -297,10 +324,14 @@ async fn load_producer_info(store: &FileStore) -> (String, String, String) {
     };
 
     if let Some(company) = settings.company {
-        let denom = company.denominazione.unwrap_or_else(|| "AZIENDA UTENTE".to_string());
+        let denom = company
+            .denominazione
+            .unwrap_or_else(|| "AZIENDA UTENTE".to_string());
         (
             denom,
-            company.codice_fiscale.unwrap_or_else(|| company.id_codice.clone()),
+            company
+                .codice_fiscale
+                .unwrap_or_else(|| company.id_codice.clone()),
             company.id_codice,
         )
     } else {
@@ -358,6 +389,7 @@ pub async fn export_accountant_package_store(
         .iter()
         .filter(|s| matches_export_filter(s, &filter))
         .collect();
+    let client_tax_map = load_client_tax_map(store).await;
 
     let mut sales_details: Vec<(InvoiceDetail, String)> = Vec::new();
     let mut purchase_details: Vec<(InvoiceDetail, String)> = Vec::new();
@@ -380,8 +412,8 @@ pub async fn export_accountant_package_store(
     let mut zip_buffer = Vec::new();
     {
         let mut zip = ZipWriter::new(Cursor::new(&mut zip_buffer));
-        let options = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
         // 1. Process Sales (Fatture Emesse)
         for (detail, _) in &sales_details {
@@ -389,25 +421,31 @@ pub async fn export_accountant_package_store(
             let base_name = if let Some(ref f) = fattura_opt {
                 common::pec::sdi_filename(f)
             } else {
-                format!("{}_{}.xml", detail.tipo_documento, detail.numero.replace('/', "_"))
+                format!(
+                    "{}_{}.xml",
+                    detail.tipo_documento,
+                    detail.numero.replace('/', "_")
+                )
             };
             let clean_base = base_name.strip_suffix(".xml").unwrap_or(&base_name);
 
             // Add XML
             let xml_content = export_invoice_xml_store(store, &detail.id).await?;
             let xml_path = format!("{root_folder}/01_Fatture_Emesse/{base_name}");
-            zip.start_file(&xml_path, options).map_err(|e| e.to_string())?;
-            zip.write_all(xml_content.as_bytes()).map_err(|e| e.to_string())?;
+            zip.start_file(&xml_path, options)
+                .map_err(|e| e.to_string())?;
+            zip.write_all(xml_content.as_bytes())
+                .map_err(|e| e.to_string())?;
 
             // Add PDF if requested
-            if filter.include_pdf {
-                if let Some(ref f) = fattura_opt {
-                    if let Ok(pdf_bytes) = common::pdf::generate_courtesy_pdf(f) {
-                        let pdf_path = format!("{root_folder}/01_Fatture_Emesse/{clean_base}.pdf");
-                        zip.start_file(&pdf_path, options).map_err(|e| e.to_string())?;
-                        zip.write_all(&pdf_bytes).map_err(|e| e.to_string())?;
-                    }
-                }
+            if filter.include_pdf
+                && let Some(ref f) = fattura_opt
+                && let Ok(pdf_bytes) = common::pdf::generate_courtesy_pdf(f)
+            {
+                let pdf_path = format!("{root_folder}/01_Fatture_Emesse/{clean_base}.pdf");
+                zip.start_file(&pdf_path, options)
+                    .map_err(|e| e.to_string())?;
+                zip.write_all(&pdf_bytes).map_err(|e| e.to_string())?;
             }
 
             // Add SDI Receipts if requested
@@ -416,8 +454,10 @@ pub async fn export_accountant_package_store(
                 for (tipo, raw_xml) in receipts {
                     let receipt_path =
                         format!("{root_folder}/01_Fatture_Emesse/{clean_base}_{tipo}_001.xml");
-                    zip.start_file(&receipt_path, options).map_err(|e| e.to_string())?;
-                    zip.write_all(raw_xml.as_bytes()).map_err(|e| e.to_string())?;
+                    zip.start_file(&receipt_path, options)
+                        .map_err(|e| e.to_string())?;
+                    zip.write_all(raw_xml.as_bytes())
+                        .map_err(|e| e.to_string())?;
                 }
             }
         }
@@ -428,38 +468,44 @@ pub async fn export_accountant_package_store(
             let base_name = if let Some(ref f) = fattura_opt {
                 common::pec::sdi_filename(f)
             } else {
-                format!("{}_{}.xml", detail.tipo_documento, detail.numero.replace('/', "_"))
+                format!(
+                    "{}_{}.xml",
+                    detail.tipo_documento,
+                    detail.numero.replace('/', "_")
+                )
             };
             let clean_base = base_name.strip_suffix(".xml").unwrap_or(&base_name);
 
             // Add XML
             let xml_content = export_invoice_xml_store(store, &detail.id).await?;
             let xml_path = format!("{root_folder}/02_Fatture_Ricevute/{base_name}");
-            zip.start_file(&xml_path, options).map_err(|e| e.to_string())?;
-            zip.write_all(xml_content.as_bytes()).map_err(|e| e.to_string())?;
+            zip.start_file(&xml_path, options)
+                .map_err(|e| e.to_string())?;
+            zip.write_all(xml_content.as_bytes())
+                .map_err(|e| e.to_string())?;
 
             // Add PDF if requested
-            if filter.include_pdf {
-                if let Some(ref f) = fattura_opt {
-                    if let Ok(pdf_bytes) = common::pdf::generate_courtesy_pdf(f) {
-                        let pdf_path = format!("{root_folder}/02_Fatture_Ricevute/{clean_base}.pdf");
-                        zip.start_file(&pdf_path, options).map_err(|e| e.to_string())?;
-                        zip.write_all(&pdf_bytes).map_err(|e| e.to_string())?;
-                    }
-                }
+            if filter.include_pdf
+                && let Some(ref f) = fattura_opt
+                && let Ok(pdf_bytes) = common::pdf::generate_courtesy_pdf(f)
+            {
+                let pdf_path = format!("{root_folder}/02_Fatture_Ricevute/{clean_base}.pdf");
+                zip.start_file(&pdf_path, options)
+                    .map_err(|e| e.to_string())?;
+                zip.write_all(&pdf_bytes).map_err(|e| e.to_string())?;
             }
         }
 
         // 3. Add Prima Nota CSV spreadsheets
         if !sales_details.is_empty() {
-            let csv = generate_prima_nota_csv(&sales_details);
+            let csv = generate_prima_nota_csv(&sales_details, &client_tax_map);
             let path = format!("{root_folder}/Riepilogo_Fatture_Emesse.csv");
             zip.start_file(&path, options).map_err(|e| e.to_string())?;
             zip.write_all(csv.as_bytes()).map_err(|e| e.to_string())?;
         }
 
         if !purchase_details.is_empty() {
-            let csv = generate_prima_nota_csv(&purchase_details);
+            let csv = generate_prima_nota_csv(&purchase_details, &client_tax_map);
             let path = format!("{root_folder}/Riepilogo_Fatture_Ricevute.csv");
             zip.start_file(&path, options).map_err(|e| e.to_string())?;
             zip.write_all(csv.as_bytes()).map_err(|e| e.to_string())?;
@@ -468,8 +514,11 @@ pub async fn export_accountant_package_store(
         if !sales_details.is_empty() && !purchase_details.is_empty() {
             let mut combined = sales_details.clone();
             combined.extend(purchase_details.clone());
-            let csv = generate_prima_nota_csv(&combined);
-            let path = format!("{root_folder}/Prima_Nota_Completa_{}_{}.csv", filter.year, period_slug);
+            let csv = generate_prima_nota_csv(&combined, &client_tax_map);
+            let path = format!(
+                "{root_folder}/Prima_Nota_Completa_{}_{}.csv",
+                filter.year, period_slug
+            );
             zip.start_file(&path, options).map_err(|e| e.to_string())?;
             zip.write_all(csv.as_bytes()).map_err(|e| e.to_string())?;
         }
@@ -508,6 +557,7 @@ pub async fn export_accountant_csv_store(
         .iter()
         .filter(|s| matches_export_filter(s, &filter))
         .collect();
+    let client_tax_map = load_client_tax_map(store).await;
 
     let mut details = Vec::new();
     for s in &matching {
@@ -515,7 +565,7 @@ pub async fn export_accountant_csv_store(
         details.push((detail, s.direction.clone()));
     }
 
-    let csv_content = generate_prima_nota_csv(&details);
+    let csv_content = generate_prima_nota_csv(&details, &client_tax_map);
     let period_slug = filter.period.to_uppercase();
     let filename = format!("Prima_Nota_{}_{}.csv", filter.year, period_slug);
 
@@ -545,30 +595,63 @@ fn build_agid_sincro_xml(
     let mut xml = String::new();
     xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     xml.push_str("<IndiceConservazione xmlns=\"http://www.agid.gov.it/conservazione/sincro/1.0\" versione=\"1.0\">\n");
-    xml.push_str(&format!("  <IdentificativoPacchetto>urn:uuid:{package_uuid}</IdentificativoPacchetto>\n"));
-    xml.push_str(&format!("  <DataCreazionePacchetto>{created_at_utc}</DataCreazionePacchetto>\n"));
+    xml.push_str(&format!(
+        "  <IdentificativoPacchetto>urn:uuid:{package_uuid}</IdentificativoPacchetto>\n"
+    ));
+    xml.push_str(&format!(
+        "  <DataCreazionePacchetto>{created_at_utc}</DataCreazionePacchetto>\n"
+    ));
     xml.push_str("  <SoggettoProduttore>\n");
-    xml.push_str(&format!("    <Denominazione>{}</Denominazione>\n", escape_xml(&producer.0)));
-    xml.push_str(&format!("    <CodiceFiscale>{}</CodiceFiscale>\n", escape_xml(&producer.1)));
-    xml.push_str(&format!("    <PartitaIVA>{}</PartitaIVA>\n", escape_xml(&producer.2)));
+    xml.push_str(&format!(
+        "    <Denominazione>{}</Denominazione>\n",
+        escape_xml(&producer.0)
+    ));
+    xml.push_str(&format!(
+        "    <CodiceFiscale>{}</CodiceFiscale>\n",
+        escape_xml(&producer.1)
+    ));
+    xml.push_str(&format!(
+        "    <PartitaIVA>{}</PartitaIVA>\n",
+        escape_xml(&producer.2)
+    ));
     xml.push_str("    <Software>Eattura v0.1.0 (Zero-DB AgID Compliant)</Software>\n");
     xml.push_str("  </SoggettoProduttore>\n");
-    xml.push_str("  <StandardRiferimento>UNI 11386:2010 (SInCRO) / AgID LL.GG. 2021</StandardRiferimento>\n");
+    xml.push_str(
+        "  <StandardRiferimento>UNI 11386:2010 (SInCRO) / AgID LL.GG. 2021</StandardRiferimento>\n",
+    );
     xml.push_str("  <AlgoritmoImpronta>SHA-256</AlgoritmoImpronta>\n");
-    xml.push_str(&format!("  <NumeroDocumenti>{}</NumeroDocumenti>\n", documents.len()));
+    xml.push_str(&format!(
+        "  <NumeroDocumenti>{}</NumeroDocumenti>\n",
+        documents.len()
+    ));
     xml.push_str("  <Documenti>\n");
 
     for (inv, files) in documents {
         xml.push_str(&format!("    <Documento id=\"{}\">\n", inv.id));
         xml.push_str("      <TipologiaDocumentale>FatturaElettronica</TipologiaDocumentale>\n");
         xml.push_str("      <MetadatiFiscali>\n");
-        xml.push_str(&format!("        <TipoDocumento>{}</TipoDocumento>\n", inv.tipo_documento));
-        xml.push_str(&format!("        <Numero>{}</Numero>\n", escape_xml(&inv.numero)));
+        xml.push_str(&format!(
+            "        <TipoDocumento>{}</TipoDocumento>\n",
+            inv.tipo_documento
+        ));
+        xml.push_str(&format!(
+            "        <Numero>{}</Numero>\n",
+            escape_xml(&inv.numero)
+        ));
         xml.push_str(&format!("        <Data>{}</Data>\n", inv.data));
-        xml.push_str(&format!("        <Cedente>{}</Cedente>\n", escape_xml(&inv.cedente_denominazione)));
-        xml.push_str(&format!("        <Cessionario>{}</Cessionario>\n", escape_xml(&inv.cessionario_denominazione)));
+        xml.push_str(&format!(
+            "        <Cedente>{}</Cedente>\n",
+            escape_xml(&inv.cedente_denominazione)
+        ));
+        xml.push_str(&format!(
+            "        <Cessionario>{}</Cessionario>\n",
+            escape_xml(&inv.cessionario_denominazione)
+        ));
         if let Some(tot) = inv.importo_totale {
-            xml.push_str(&format!("        <ImportoTotale>{:.2}</ImportoTotale>\n", tot));
+            xml.push_str(&format!(
+                "        <ImportoTotale>{:.2}</ImportoTotale>\n",
+                tot
+            ));
         }
         xml.push_str(&format!("        <StatoSDI>{}</StatoSDI>\n", inv.stato));
         xml.push_str("      </MetadatiFiscali>\n");
@@ -577,8 +660,14 @@ fn build_agid_sincro_xml(
             xml.push_str(&format!("        <FileComponente ruolo=\"{}\">\n", f.role));
             xml.push_str(&format!("          <NomeFile>{}</NomeFile>\n", f.rel_path));
             xml.push_str(&format!("          <Formato>{}</Formato>\n", f.format_type));
-            xml.push_str(&format!("          <DimensioneByte>{}</DimensioneByte>\n", f.size_bytes));
-            xml.push_str(&format!("          <Impronta alg=\"SHA-256\">{}</Impronta>\n", f.sha256_hex));
+            xml.push_str(&format!(
+                "          <DimensioneByte>{}</DimensioneByte>\n",
+                f.size_bytes
+            ));
+            xml.push_str(&format!(
+                "          <Impronta alg=\"SHA-256\">{}</Impronta>\n",
+                f.sha256_hex
+            ));
             xml.push_str("        </FileComponente>\n");
         }
         xml.push_str("      </FileComponenti>\n");
@@ -648,12 +737,20 @@ pub async fn export_agid_preservation_package_store(
 
     for (detail, direction) in &all_docs {
         let is_purchase = direction == "purchase";
-        let sub_folder = if is_purchase { "02_Fatture_Ricevute" } else { "01_Fatture_Emesse" };
+        let sub_folder = if is_purchase {
+            "02_Fatture_Ricevute"
+        } else {
+            "01_Fatture_Emesse"
+        };
         let fattura_opt = build_fattura_from_store(store, &detail.id).await.ok();
         let base_name = if let Some(ref f) = fattura_opt {
             common::pec::sdi_filename(f)
         } else {
-            format!("{}_{}.xml", detail.tipo_documento, detail.numero.replace('/', "_"))
+            format!(
+                "{}_{}.xml",
+                detail.tipo_documento,
+                detail.numero.replace('/', "_")
+            )
         };
         let clean_base = base_name.strip_suffix(".xml").unwrap_or(&base_name);
 
@@ -674,21 +771,20 @@ pub async fn export_agid_preservation_package_store(
         staged_files.push((format!("{root_folder}/{xml_rel}"), xml_bytes));
 
         // 2. Courtesy PDF
-        if filter.include_pdf {
-            if let Some(ref f) = fattura_opt {
-                if let Ok(pdf_bytes) = common::pdf::generate_courtesy_pdf(f) {
-                    let pdf_rel = format!("{sub_folder}/{clean_base}.pdf");
-                    let pdf_sha = compute_sha256_hex(&pdf_bytes);
-                    file_entries.push(SincroFileEntry {
-                        rel_path: pdf_rel.clone(),
-                        role: "AllegatoPdf".to_string(),
-                        format_type: "PDF".to_string(),
-                        size_bytes: pdf_bytes.len(),
-                        sha256_hex: pdf_sha,
-                    });
-                    staged_files.push((format!("{root_folder}/{pdf_rel}"), pdf_bytes));
-                }
-            }
+        if filter.include_pdf
+            && let Some(ref f) = fattura_opt
+            && let Ok(pdf_bytes) = common::pdf::generate_courtesy_pdf(f)
+        {
+            let pdf_rel = format!("{sub_folder}/{clean_base}.pdf");
+            let pdf_sha = compute_sha256_hex(&pdf_bytes);
+            file_entries.push(SincroFileEntry {
+                rel_path: pdf_rel.clone(),
+                role: "AllegatoPdf".to_string(),
+                format_type: "PDF".to_string(),
+                size_bytes: pdf_bytes.len(),
+                sha256_hex: pdf_sha,
+            });
+            staged_files.push((format!("{root_folder}/{pdf_rel}"), pdf_bytes));
         }
 
         // 3. SDI Receipts
@@ -719,13 +815,15 @@ pub async fn export_agid_preservation_package_store(
     let mut zip_buffer = Vec::new();
     {
         let mut zip = ZipWriter::new(Cursor::new(&mut zip_buffer));
-        let options = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
         // Put indice_conservazione.xml at the root of the archive
         let index_path = format!("{root_folder}/indice_conservazione.xml");
-        zip.start_file(&index_path, options).map_err(|e| e.to_string())?;
-        zip.write_all(indice_xml.as_bytes()).map_err(|e| e.to_string())?;
+        zip.start_file(&index_path, options)
+            .map_err(|e| e.to_string())?;
+        zip.write_all(indice_xml.as_bytes())
+            .map_err(|e| e.to_string())?;
 
         // Write all staged files
         for (path, bytes) in staged_files {
@@ -775,7 +873,8 @@ pub async fn verify_agid_preservation_package(
         if is_index {
             let mut content = String::new();
             let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
-            file.read_to_string(&mut content).map_err(|e| e.to_string())?;
+            file.read_to_string(&mut content)
+                .map_err(|e| e.to_string())?;
             if let Some(pos) = name.rfind('/') {
                 root_prefix = name[..=pos].to_string();
             }
@@ -785,7 +884,9 @@ pub async fn verify_agid_preservation_package(
     }
 
     let Some(index_xml) = index_content else {
-        return Err("File 'indice_conservazione.xml' non trovato all'interno del pacchetto".to_string());
+        return Err(
+            "File 'indice_conservazione.xml' non trovato all'interno del pacchetto".to_string(),
+        );
     };
 
     // Parse essential tags from XML
@@ -793,10 +894,10 @@ pub async fn verify_agid_preservation_package(
         .unwrap_or_else(|| "SCONOSCIUTO".to_string());
     let created_at = extract_xml_tag(&index_xml, "DataCreazionePacchetto")
         .unwrap_or_else(|| "SCONOSCIUTO".to_string());
-    let producer = extract_xml_tag(&index_xml, "Denominazione")
-        .unwrap_or_else(|| "SCONOSCIUTO".to_string());
-    let algorithm = extract_xml_tag(&index_xml, "AlgoritmoImpronta")
-        .unwrap_or_else(|| "SHA-256".to_string());
+    let producer =
+        extract_xml_tag(&index_xml, "Denominazione").unwrap_or_else(|| "SCONOSCIUTO".to_string());
+    let algorithm =
+        extract_xml_tag(&index_xml, "AlgoritmoImpronta").unwrap_or_else(|| "SHA-256".to_string());
 
     let mut errors = Vec::new();
     let mut verified_files = 0;
@@ -818,7 +919,9 @@ pub async fn verify_agid_preservation_package(
                 if data.len() != comp.expected_size {
                     errors.push(format!(
                         "Dimensione errata per {}: attesi {} byte, trovati {} byte",
-                        comp.rel_path, comp.expected_size, data.len()
+                        comp.rel_path,
+                        comp.expected_size,
+                        data.len()
                     ));
                     continue;
                 }
@@ -835,7 +938,10 @@ pub async fn verify_agid_preservation_package(
                 verified_files += 1;
             }
             Err(_) => {
-                errors.push(format!("File dichiarato nell'indice ma mancante nel pacchetto: {}", comp.rel_path));
+                errors.push(format!(
+                    "File dichiarato nell'indice ma mancante nel pacchetto: {}",
+                    comp.rel_path
+                ));
             }
         }
     }
@@ -920,6 +1026,7 @@ mod tests {
                     "denominazione": "Azienda Committente SpA",
                     "id_paese": "IT",
                     "id_codice": "01234567890",
+                    "codice_fiscale": "01234567890",
                     "codice_destinatario": "SUBM70N",
                     "regime_fiscale": "RF01",
                     "comune": "Milano",
@@ -940,24 +1047,20 @@ mod tests {
             cedente_id: client_id.clone(),
             cessionario_id: client_id.clone(),
             causale: vec!["Consulenza software Q1 2026".to_string()],
-            linee: vec![
-                crate::commands::invoices::CreateLineRequest {
-                    descrizione: "Sviluppo backend Rust".to_string(),
-                    quantita: Some(10.0),
-                    unita_misura: Some("ORE".to_string()),
-                    prezzo_unitario: 100.0,
-                    aliquota_iva: 22.0,
-                    natura: None,
-                },
-            ],
-            pagamenti: vec![
-                crate::commands::invoices::CreatePaymentRequest {
-                    modalita_pagamento: "MP05".to_string(),
-                    importo_pagamento: 1220.0,
-                    data_scadenza_pagamento: Some("2026-03-31".to_string()),
-                    iban: Some("IT60X0542811101000000123456".to_string()),
-                },
-            ],
+            linee: vec![crate::commands::invoices::CreateLineRequest {
+                descrizione: "Sviluppo backend Rust".to_string(),
+                quantita: Some(10.0),
+                unita_misura: Some("ORE".to_string()),
+                prezzo_unitario: 100.0,
+                aliquota_iva: 22.0,
+                natura: None,
+            }],
+            pagamenti: vec![crate::commands::invoices::CreatePaymentRequest {
+                modalita_pagamento: "MP05".to_string(),
+                importo_pagamento: 1220.0,
+                data_scadenza_pagamento: Some("2026-03-31".to_string()),
+                iban: Some("IT60X0542811101000000123456".to_string()),
+            }],
             dati_cassa_previdenziale: None,
             dati_ritenuta: None,
             dati_bollo: None,
@@ -972,7 +1075,9 @@ mod tests {
             ..Default::default()
         };
 
-        let inv_detail = crate::commands::invoices::create_invoice_store(&store, inv_req).await.unwrap();
+        let inv_detail = crate::commands::invoices::create_invoice_store(&store, inv_req)
+            .await
+            .unwrap();
         assert_eq!(inv_detail.numero, "2026/001");
 
         // 3. Test Accountant CSV export
@@ -984,15 +1089,20 @@ mod tests {
             include_sdi_receipts: true,
         };
 
-        let csv_res = export_accountant_csv_store(&store, filter.clone()).await.unwrap();
+        let csv_res = export_accountant_csv_store(&store, filter.clone())
+            .await
+            .unwrap();
         assert_eq!(csv_res.row_count, 1);
         assert!(csv_res.csv_content.contains("2026/001"));
+        assert!(csv_res.csv_content.contains("01234567890")); // P.IVA / CF populated
         assert!(csv_res.csv_content.contains("1000,00")); // imponibile
-        assert!(csv_res.csv_content.contains("220,00"));  // iva 22%
+        assert!(csv_res.csv_content.contains("220,00")); // iva 22%
         assert!(csv_res.csv_content.contains("1220,00")); // totale lordo
 
         // 4. Test Accountant ZIP package
-        let pkg_res = export_accountant_package_store(&store, filter.clone()).await.unwrap();
+        let pkg_res = export_accountant_package_store(&store, filter.clone())
+            .await
+            .unwrap();
         assert_eq!(pkg_res.invoice_count, 1);
         assert!(pkg_res.zip_base64.len() > 100);
 
@@ -1007,15 +1117,23 @@ mod tests {
         }
         assert!(file_names.iter().any(|n: &String| n.ends_with(".xml")));
         assert!(file_names.iter().any(|n: &String| n.ends_with(".pdf")));
-        assert!(file_names.iter().any(|n: &String| n.ends_with("Riepilogo_Fatture_Emesse.csv")));
+        assert!(
+            file_names
+                .iter()
+                .any(|n: &String| n.ends_with("Riepilogo_Fatture_Emesse.csv"))
+        );
 
         // 5. Test AgID Preservation Package (SIP / SInCRO)
-        let agid_res = export_agid_preservation_package_store(&store, filter.clone()).await.unwrap();
+        let agid_res = export_agid_preservation_package_store(&store, filter.clone())
+            .await
+            .unwrap();
         assert_eq!(agid_res.invoice_count, 1);
 
         // 6. Test AgID Verification
-        let verify_res = verify_agid_preservation_package(agid_res.zip_base64).await.unwrap();
-        
+        let verify_res = verify_agid_preservation_package(agid_res.zip_base64)
+            .await
+            .unwrap();
+
         assert!(verify_res.valid);
         assert_eq!(verify_res.errors.len(), 0);
         assert!(verify_res.verified_files >= 2); // xml + pdf

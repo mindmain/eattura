@@ -4,16 +4,18 @@ import { ActivatedRoute, convertToParamMap } from "@angular/router";
 import { toSignal } from "@angular/core/rxjs-interop";
 import { of } from "rxjs";
 import { SettingsStore } from "../../core/stores/settings.store";
+import { InvoiceStore } from "../../core/stores/invoice.store";
 import { NotificationService } from "../../core/services/notification.service";
 import { signal } from "@angular/core";
 import { REGIME_FISCALE } from "../../core/models/sdi.model";
 import { ThemeService, type ThemePreference } from "../../core/services/theme.service";
 import { LucideAngularModule, Monitor, Moon, Sun } from "lucide-angular";
+import { McpSettingsComponent } from "./mcp-settings.component";
 
 @Component({
   selector: "app-settings",
   standalone: true,
-  imports: [ReactiveFormsModule, LucideAngularModule],
+  imports: [ReactiveFormsModule, LucideAngularModule, McpSettingsComponent],
   templateUrl: "./settings.component.html",
   styleUrl: "./settings.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -24,6 +26,8 @@ export class SettingsComponent implements OnInit {
   private readonly routeParams = toSignal(this.route?.queryParamMap ?? of(convertToParamMap({})));
   readonly section = computed(() => this.routeParams()?.get("section") === "account" ? "account" : "app");
   readonly settingsStore = inject(SettingsStore);
+  readonly invoiceStore = inject(InvoiceStore, { optional: true });
+  readonly pecSyncStatus = computed(() => this.invoiceStore?.pecSyncStatus() ?? null);
   private notify = inject(NotificationService);
   readonly theme = inject(ThemeService);
   readonly themeIcons = { Monitor, Sun, Moon };
@@ -53,7 +57,7 @@ export class SettingsComponent implements OnInit {
 
   pecForm = this.fb.group({
     pecEmail: ["", Validators.email],
-    sdiAddress: ["sdi01@pec.fatturapa.it", [Validators.required, Validators.email]],
+    sdiAddress: ["sdi01@pec.fatturapa.it", [Validators.email]],
     imapHost: [""],
     imapPort: [993],
     smtpHost: [""],
@@ -71,6 +75,7 @@ export class SettingsComponent implements OnInit {
 
   async ngOnInit(): Promise<void> {
     try {
+      void this.invoiceStore?.refreshPecSyncStatus();
       const s = await this.settingsStore.load();
       if (s?.company) {
         const c = s.company;
@@ -182,7 +187,9 @@ export class SettingsComponent implements OnInit {
         },
         v.pecPassword || undefined
       );
-      this.pecForm.patchValue({ pecPassword: "" });
+      const effectiveSdi = v.sdiAddress?.trim() || "sdi01@pec.fatturapa.it";
+      this.pecForm.patchValue({ pecPassword: "", sdiAddress: effectiveSdi });
+      void this.invoiceStore?.refreshPecSyncStatus();
       this.notify.success("Configurazione PEC salvata");
     } catch (e) {
       console.error("savePec failed:", e);

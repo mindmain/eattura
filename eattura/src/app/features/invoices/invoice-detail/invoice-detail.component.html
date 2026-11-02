@@ -33,6 +33,8 @@
         </button>
         @if (inv.stato === "draft") {
           <button class="btn-secondary" (click)="edit()">Modifica</button>
+        }
+        @if (inv.stato === "draft" || (inv.stato === "imported" && !isPurchase())) {
           <button class="btn-primary" (click)="validate()">Valida</button>
           <button class="btn-primary" (click)="promoteToValidated()">Promuovi a Validata</button>
         }
@@ -48,11 +50,21 @@
           </button>
         }
         <button class="btn-primary" (click)="exportXml()">Esporta XML</button>
-        <button class="btn-secondary" (click)="signP7m()" [disabled]="signingP7m()">
-          {{ signingP7m() ? "Firma in corso..." : "Firma CAdES (.p7m)" }}
-        </button>
       </div>
     </div>
+
+    @if (inv.stato === "validated" && pecSyncStatus()?.configured && pecSyncStatus()?.sdiAddressVerified === false) {
+      <div class="sdi-pec-warning mb-2" role="alert">
+        <div class="sdi-pec-warning-text">
+          <strong>Indirizzo PEC SdI non rilevabile dalle notifiche PEC:</strong>
+          per l'invio verrà usato automaticamente <code>{{ pecSyncStatus()?.sdiAddress || "sdi01@pec.fatturapa.it" }}</code>;
+          alla prima risposta dello SdI l'indirizzo assegnato verrà riconosciuto e salvato in automatico.
+        </div>
+        <a routerLink="/settings" [queryParams]="{ section: 'app' }" class="sdi-pec-warning-link">
+          Impostazioni PEC →
+        </a>
+      </div>
+    }
 
     @if (showAdeView()) {
       <div class="ade-view mb-2">

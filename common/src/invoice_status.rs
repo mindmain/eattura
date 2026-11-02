@@ -4,13 +4,13 @@
 //!
 //! ```text
 //! draft ──▶ validated ──▶ sent ──▶ accepted
-//!   ▲           │                └─▶ rejected
+//!   ▲           │                └──▶ rejected
 //!   └───────────┘ (revert to edit)
 //! ```
 //!
 //! `rejected` invoices (SDI "scarto" / NS) can be reverted to `draft` to be
-//! corrected and re-sent. `imported` is a separate received state used for
-//! invoices ingested from XML and is not part of the issuing flow.
+//! corrected and re-sent. `imported` invoices ingested from external XML can
+//! also be validated or transitioned as SDI outcomes arrive.
 
 use std::fmt;
 use std::str::FromStr;
@@ -28,7 +28,7 @@ pub enum InvoiceStatus {
     Accepted,
     /// Rejected by SDI (notifica di scarto / esito negativo).
     Rejected,
-    /// Ingested from an external XML, outside the issuing flow.
+    /// Ingested from an external XML.
     Imported,
 }
 
@@ -56,6 +56,10 @@ impl InvoiceStatus {
                 | (Sent, Accepted)
                 | (Sent, Rejected)
                 | (Rejected, Draft)
+                | (Imported, Validated)
+                | (Imported, Sent)
+                | (Imported, Accepted)
+                | (Imported, Rejected)
         )
     }
 
@@ -107,6 +111,8 @@ mod tests {
         assert!(InvoiceStatus::Sent.can_transition_to(InvoiceStatus::Accepted));
         assert!(InvoiceStatus::Sent.can_transition_to(InvoiceStatus::Rejected));
         assert!(InvoiceStatus::Rejected.can_transition_to(InvoiceStatus::Draft));
+        assert!(InvoiceStatus::Imported.can_transition_to(InvoiceStatus::Validated));
+        assert!(InvoiceStatus::Imported.can_transition_to(InvoiceStatus::Accepted));
     }
 
     #[test]
@@ -119,7 +125,14 @@ mod tests {
 
     #[test]
     fn roundtrip_str() {
-        for s in ["draft", "validated", "sent", "accepted", "rejected", "imported"] {
+        for s in [
+            "draft",
+            "validated",
+            "sent",
+            "accepted",
+            "rejected",
+            "imported",
+        ] {
             assert_eq!(s.parse::<InvoiceStatus>().unwrap().as_str(), s);
         }
         assert!("bogus".parse::<InvoiceStatus>().is_err());

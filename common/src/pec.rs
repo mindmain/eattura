@@ -14,6 +14,87 @@ use crate::xml::XmlError;
 /// The PEC address of the SDI receiving system for private/B2B invoices.
 pub const SDI_PEC_ADDRESS: &str = "sdi01@pec.fatturapa.it";
 
+/// The official domain used by Agenzia delle Entrate SDI PEC mailboxes.
+pub const SDI_PEC_DOMAIN: &str = "@pec.fatturapa.it";
+
+/// Extract all SDI PEC addresses (`*@pec.fatturapa.it`) found in a string.
+///
+/// Addresses are normalized to lowercase.
+pub fn extract_sdi_pec_addresses(text: &str) -> Vec<String> {
+    let lower = text.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    let domain_bytes = SDI_PEC_DOMAIN.as_bytes();
+    let mut found = Vec::new();
+    let mut search_from = 0;
+
+    while let Some(rel_pos) = lower[search_from..].find(SDI_PEC_DOMAIN) {
+        let at_pos = search_from + rel_pos;
+        let end_pos = at_pos + domain_bytes.len();
+
+        // Ensure the domain is not followed by another identifier character.
+        let valid_end = end_pos == bytes.len()
+            || !bytes[end_pos].is_ascii_alphanumeric()
+                && bytes[end_pos] != b'.'
+                && bytes[end_pos] != b'-';
+
+        if valid_end && at_pos > 0 {
+            let mut start = at_pos;
+            while start > 0 {
+                let b = bytes[start - 1];
+                if b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-') {
+                    start -= 1;
+                } else {
+                    break;
+                }
+            }
+            // Trim leading punctuation from local part
+            while start < at_pos && !bytes[start].is_ascii_alphanumeric() {
+                start += 1;
+            }
+            if start < at_pos {
+                let candidate = lower[start..end_pos].to_string();
+                if !found.contains(&candidate) {
+                    found.push(candidate);
+                }
+            }
+        }
+        search_from = end_pos;
+    }
+
+    found
+}
+
+/// Choose the most specific SDI PEC address from a list of candidates.
+///
+/// Prefers an assigned SDI mailbox (e.g. `sdi12@pec.fatturapa.it`) over the
+/// first-send fallback `sdi01@pec.fatturapa.it` when both appear in the same
+/// message envelope, falling back to `sdi01@pec.fatturapa.it` if that is the
+/// only SDI address present.
+pub fn select_preferred_sdi_address<I, S>(candidates: I) -> Option<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let collected: Vec<String> = candidates
+        .into_iter()
+        .flat_map(|item| extract_sdi_pec_addresses(item.as_ref()))
+        .collect();
+    if let Some(assigned) = collected
+        .iter()
+        .rev()
+        .find(|addr| !addr.eq_ignore_ascii_case(SDI_PEC_ADDRESS))
+    {
+        return Some(assigned.to_ascii_lowercase());
+    }
+    collected.last().map(|addr| addr.to_ascii_lowercase())
+}
+
+/// Extract the preferred SDI PEC address (`*@pec.fatturapa.it`) from text.
+pub fn extract_sdi_pec_address(text: &str) -> Option<String> {
+    let candidates = extract_sdi_pec_addresses(text);
+    select_preferred_sdi_address(&candidates)
+}
+
 /// Build the SDI-compliant file name for an invoice XML.
 ///
 /// Format: `{IdPaese}{IdCodice}_{Progressivo}.xml` — e.g. `IT01234567890_00001.xml`.
@@ -81,7 +162,9 @@ impl SdiMessageType {
             "NotificaScarto" => SdiMessageType::NotificaScarto,
             "NotificaMancataConsegna" => SdiMessageType::NotificaMancataConsegna,
             "NotificaEsito" | "NotificaEsitoCommittente" => SdiMessageType::NotificaEsito,
-            "NotificaDecorrenzaTermini" | "DecorrenzaTermini" => SdiMessageType::NotificaDecorrenzaTermini,
+            "NotificaDecorrenzaTermini" | "DecorrenzaTermini" => {
+                SdiMessageType::NotificaDecorrenzaTermini
+            }
             "AttestazioneTrasmissioneFattura" => SdiMessageType::AttestazioneTrasmissione,
             "MetadatiInvioFile" => SdiMessageType::MetadatiInvio,
             other => SdiMessageType::Unknown(other.to_string()),
@@ -136,7 +219,11 @@ pub struct ParsedNotification {
 
 /// Generate SDI receipt filename according to SDI specifications:
 /// `{NomeFileSenzaEstensione}_{TipoMessaggio}_{Progressivo:03}.xml`
-pub fn sdi_receipt_filename(original_invoice_filename: &str, receipt_type: &str, counter: u32) -> String {
+pub fn sdi_receipt_filename(
+    original_invoice_filename: &str,
+    receipt_type: &str,
+    counter: u32,
+) -> String {
     let base = original_invoice_filename
         .strip_suffix(".xml.p7m")
         .or_else(|| original_invoice_filename.strip_suffix(".p7m"))
@@ -171,8 +258,9 @@ impl ParsedNotification {
     /// move the invoice out of `sent`.
     pub fn resulting_status(&self) -> Option<InvoiceStatus> {
         match &self.message_type {
-            SdiMessageType::RicevutaConsegna
-            | SdiMessageType::NotificaDecorrenzaTermini => Some(InvoiceStatus::Accepted),
+            SdiMessageType::RicevutaConsegna | SdiMessageType::NotificaDecorrenzaTermini => {
+                Some(InvoiceStatus::Accepted)
+            }
             SdiMessageType::NotificaScarto => Some(InvoiceStatus::Rejected),
             SdiMessageType::NotificaEsito => match self.esito.as_deref() {
                 Some("EC01") => Some(InvoiceStatus::Accepted),
@@ -271,8 +359,8 @@ pub fn parse_notification(xml: &str) -> Result<ParsedNotification, XmlError> {
         buf.clear();
     }
 
-    let message_type = message_type
-        .ok_or_else(|| XmlError::MissingElement("notification root element".into()))?;
+    let message_type =
+        message_type.ok_or_else(|| XmlError::MissingElement("notification root element".into()))?;
 
     Ok(ParsedNotification {
         message_type,
@@ -420,6 +508,31 @@ mod tests {
         assert_eq!(n.message_type, SdiMessageType::RicevutaConsegna);
         assert_eq!(n.destinatario.as_deref(), Some("ABC1234"));
         assert_eq!(n.hash_file.as_deref(), Some("abcdef0123456789"));
-        assert_eq!(n.data_ora_ricezione.as_deref(), Some("2026-06-16T10:00:00.000+02:00"));
+        assert_eq!(
+            n.data_ora_ricezione.as_deref(),
+            Some("2026-06-16T10:00:00.000+02:00")
+        );
+    }
+
+    #[test]
+    fn test_extract_sdi_pec_address_prefers_assigned_over_default() {
+        let text = "Inviato a sdi01@pec.fatturapa.it - Per i prossimi invii utilizzare <SDI14@PEC.FATTURAPA.IT>.";
+        let addrs = extract_sdi_pec_addresses(text);
+        assert_eq!(
+            addrs,
+            vec![
+                "sdi01@pec.fatturapa.it".to_string(),
+                "sdi14@pec.fatturapa.it".to_string()
+            ]
+        );
+        assert_eq!(
+            extract_sdi_pec_address(text).as_deref(),
+            Some("sdi14@pec.fatturapa.it")
+        );
+        assert_eq!(
+            extract_sdi_pec_address("From: sdi01@pec.fatturapa.it").as_deref(),
+            Some("sdi01@pec.fatturapa.it")
+        );
+        assert_eq!(extract_sdi_pec_address("From: info@pec.example.it"), None);
     }
 }

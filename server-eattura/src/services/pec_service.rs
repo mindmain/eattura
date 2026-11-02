@@ -1,8 +1,8 @@
-use lettre::message::{header::ContentType, Attachment, MultiPart, SinglePart};
+use lettre::message::{Attachment, MultiPart, SinglePart, header::ContentType};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 
-use common::pec::{parse_notification, ParsedNotification, SDI_PEC_ADDRESS};
+use common::pec::{ParsedNotification, parse_notification};
 
 use crate::error::AppError;
 
@@ -76,12 +76,17 @@ impl PecService {
         Self { config }
     }
 
-    /// Send an invoice XML via PEC to the SDI endpoint.
+    /// Send an invoice XML via PEC to the specified SDI PEC recipient.
     ///
     /// Builds a PEC email with the XML as an attachment named per SDI
     /// conventions and submits it over an authenticated TLS SMTP connection.
     /// Returns the SMTP message identifier on success.
-    pub async fn send_invoice(&self, xml: &str, filename: &str) -> Result<String, AppError> {
+    pub async fn send_invoice(
+        &self,
+        recipient: &str,
+        xml: &str,
+        filename: &str,
+    ) -> Result<String, AppError> {
         let xml_part = Attachment::new(filename.to_string()).body(
             xml.as_bytes().to_vec(),
             ContentType::parse("application/xml").unwrap(),
@@ -94,15 +99,15 @@ impl PecService {
                     .parse()
                     .map_err(|e| AppError::Internal(format!("Invalid sender address: {e}")))?,
             )
-            .to(SDI_PEC_ADDRESS
+            .to(recipient
                 .parse()
-                .map_err(|e| AppError::Internal(format!("Invalid SDI address: {e}")))?)
+                .map_err(|e| AppError::BadRequest(format!("Invalid recipient address: {e}")))?)
             .subject(format!("INVIO FATTURA {filename}"))
             .multipart(
                 MultiPart::mixed()
-                    .singlepart(
-                        SinglePart::plain("Invio fattura elettronica al Sistema di Interscambio.".to_string()),
-                    )
+                    .singlepart(SinglePart::plain(
+                        "Invio fattura elettronica al Sistema di Interscambio.".to_string(),
+                    ))
                     .singlepart(xml_part),
             )
             .map_err(|e| AppError::Internal(format!("Failed to build PEC email: {e}")))?;
@@ -130,9 +135,8 @@ impl PecService {
 
     /// Check the PEC inbox for new (unseen) SDI notifications.
     ///
-    /// Connects via IMAPS, fetches unseen messages, and extracts their XML
-    /// attachments. The synchronous `imap` client runs on a blocking thread so
-    /// it does not stall the async runtime.
+    /// Connects via IMAPS, fetches unseen messages without marking them read,
+    /// and extracts their XML attachments.
     pub async fn check_inbox(&self) -> Result<Vec<PecMessage>, AppError> {
         let config = self.config.clone();
         tokio::task::spawn_blocking(move || Self::fetch_unseen(&config))
@@ -140,7 +144,7 @@ impl PecService {
             .map_err(|e| AppError::Internal(format!("IMAP task join error: {e}")))?
     }
 
-    /// Blocking IMAP fetch of unseen messages and their attachments.
+    /// Blocking IMAP fetch of unseen messages and their attachments using `BODY.PEEK[]`.
     fn fetch_unseen(config: &PecConfig) -> Result<Vec<PecMessage>, AppError> {
         let tls = native_tls::TlsConnector::builder()
             .build()
@@ -168,13 +172,14 @@ impl PecService {
         let mut messages = Vec::new();
         for uid in unseen {
             let fetches = session
-                .fetch(uid.to_string(), "RFC822")
+                .fetch(uid.to_string(), "BODY.PEEK[]")
                 .map_err(|e| AppError::Internal(format!("IMAP fetch failed: {e}")))?;
             for fetch in fetches.iter() {
                 if let Some(body) = fetch.body()
-                    && let Some(msg) = Self::parse_mime(body) {
-                        messages.push(msg);
-                    }
+                    && let Some(msg) = Self::parse_mime(body)
+                {
+                    messages.push(msg);
+                }
             }
         }
 
@@ -214,10 +219,8 @@ impl PecService {
     }
 
     /// Parse an SDI notification XML into a structured notification.
-    ///
-    /// Delegates to the shared `common::pec` parser so the server and desktop
-    /// interpret notifications identically.
     pub fn parse_notification(xml: &str) -> Result<ParsedNotification, AppError> {
-        parse_notification(xml).map_err(|e| AppError::Internal(format!("Notification parse failed: {e}")))
+        parse_notification(xml)
+            .map_err(|e| AppError::Internal(format!("Notification parse failed: {e}")))
     }
 }
