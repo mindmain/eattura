@@ -31,10 +31,10 @@
         <button class="btn-primary" (click)="downloadPdf()" [disabled]="downloadingPdf()">
           {{ downloadingPdf() ? "Generazione..." : "Scarica PDF" }}
         </button>
-        @if (inv.stato === "draft") {
+        @if (inv.stato === "draft" && !inv.recoverablePecFilename) {
           <button class="btn-secondary" (click)="edit()">Modifica</button>
         }
-        @if (inv.stato === "draft" || (inv.stato === "imported" && !isPurchase())) {
+        @if ((inv.stato === "draft" && !inv.recoverablePecFilename) || (inv.stato === "imported" && !isPurchase())) {
           <button class="btn-primary" (click)="validate()">Valida</button>
           <button class="btn-primary" (click)="promoteToValidated()">Promuovi a Validata</button>
         }
@@ -44,12 +44,14 @@
             {{ sending() ? "Invio in corso..." : "Invia via PEC" }}
           </button>
         }
-        @if (inv.stato === "rejected") {
+        @if (inv.stato === "rejected" && !inv.recoverablePecFilename) {
           <button class="btn-primary btn-rectify" (click)="rectifyRejected()" [disabled]="rectifying()">
             {{ rectifying() ? "Sblocco in corso..." : "Rettifica e Correggi (5 gg)" }}
           </button>
         }
-        <button class="btn-primary" (click)="exportXml()">Esporta XML</button>
+        @if (!inv.recoverablePecFilename) {
+          <button class="btn-primary" (click)="exportXml()">Esporta XML</button>
+        }
       </div>
     </div>
 
@@ -60,6 +62,12 @@
           <button class="btn-secondary" [disabled]="sending()" (click)="resolvePecAttempt(true)">Conferma PEC accettata</button>
           <button class="btn-secondary" [disabled]="sending()" (click)="resolvePecAttempt(false)">Conferma mancato invio</button>
         </div>
+      </section>
+    }
+    @if (inv.recoverablePecFilename; as filename) {
+      <section class="card mb-2" aria-label="Ripristina reinvio PEC">
+        <p role="status">Lo scarto riguarda un invio precedente. Se la PEC ha accettato <code>{{ filename }}</code>, puoi ripristinare lo stato Inviata e attendere l’esito SdI.</p>
+        <button class="btn-secondary" [disabled]="sending()" (click)="resolvePecAttempt(true)">Ripristina come Inviata</button>
       </section>
     }
 
@@ -230,16 +238,16 @@
 
         <div class="timeline-line" [class.line-completed]="inv.stato === 'accepted' || inv.stato === 'rejected'"></div>
 
-        <div class="timeline-step" [class.step-active]="inv.stato === 'accepted' || inv.stato === 'rejected'" [class.step-success]="inv.stato === 'accepted'" [class.step-error]="inv.stato === 'rejected'">
+        <div class="timeline-step" [class.step-active]="inv.stato === 'accepted' || (inv.stato === 'rejected' && !inv.recoverablePecFilename)" [class.step-success]="inv.stato === 'accepted'" [class.step-error]="inv.stato === 'rejected' && !inv.recoverablePecFilename">
           <div class="step-dot">
             @if (inv.stato === 'accepted') { ✓ }
-            @else if (inv.stato === 'rejected') { ✗ }
+            @else if (inv.stato === 'rejected' && !inv.recoverablePecFilename) { ✗ }
             @else { 4 }
           </div>
           <div class="step-content">
             <span class="step-title">
               @if (inv.stato === 'accepted') { Consegnata (RC) }
-              @else if (inv.stato === 'rejected') { Scartata (NS) }
+              @else if (inv.stato === 'rejected' && !inv.recoverablePecFilename) { Scartata (NS) }
               @else { In elaborazione SDI }
             </span>
             <span class="step-sub">
@@ -285,7 +293,7 @@
       }
 
       <!-- Mancata Consegna (MC) Banner -->
-      @for (notif of inv.notifications || []; track notif.id) {
+      @for (notif of currentAttemptNotifications(); track notif.id) {
         @if (notif.tipo === 'MC') {
           <div class="alert-mc mt-2">
             <strong>AVVISO MANCATA CONSEGNA SDI (MC) - CASSETTO FISCALE</strong>

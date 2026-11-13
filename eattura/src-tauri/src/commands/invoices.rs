@@ -203,6 +203,10 @@ pub struct InvoiceDetail {
     #[serde(default)]
     pub pending_pec_filename: Option<String>,
     #[serde(default)]
+    pub active_pec_filename: Option<String>,
+    #[serde(default)]
+    pub recoverable_pec_filename: Option<String>,
+    #[serde(default)]
     pub dati_ordine_acquisto: Vec<DatiDocumentoTracciabilitaDetail>,
     #[serde(default)]
     pub dati_contratto: Vec<DatiDocumentoTracciabilitaDetail>,
@@ -974,6 +978,12 @@ async fn editable_draft(
             "Cannot edit invoice {id}: only draft invoices are editable (current state: {stato})"
         ));
     }
+    if crate::commands::pec::recoverable_pec_filename(&tx.snapshot(), &row, id)
+        .await?
+        .is_some()
+    {
+        return Err("Verifica in PEC il reinvio già registrato prima di modificare la fattura.".into());
+    }
     if let Some(expected) = expected_revision
         && invoice_revision(&row).as_deref() != Some(expected)
     {
@@ -1244,21 +1254,22 @@ pub async fn delete_invoice_store(
     id: &str,
 ) -> Result<(), String> {
     let mut tx = store.begin().await?;
-    let stato: Option<String> = tx
+    let row = tx
         .read("invoices", "id", vec![serde_json::json!(id)], "")
         .fetch_optional()
-        .await
-        .map_err(|e| e.to_string())?
-        .map(|row| row.get("stato"));
-
-    match stato.as_deref() {
-        None => return Err(format!("Invoice not found: {id}")),
-        Some("draft") => {}
-        Some(other) => {
-            return Err(format!(
-                "Cannot delete invoice {id}: only draft invoices are deletable (current state: {other})"
-            ));
-        }
+        .await?
+        .ok_or_else(|| format!("Invoice not found: {id}"))?;
+    let status: String = row.get("stato");
+    if status != "draft" {
+        return Err(format!(
+            "Cannot delete invoice {id}: only draft invoices are deletable (current state: {status})"
+        ));
+    }
+    if crate::commands::pec::recoverable_pec_filename(&tx.snapshot(), &row, id)
+        .await?
+        .is_some()
+    {
+        return Err("Verifica in PEC il reinvio già registrato prima di eliminare la fattura.".into());
     }
 
     tx.remove("invoices", "id", id)
@@ -1371,6 +1382,12 @@ pub async fn set_invoice_status_store(
 
     // Block promotion to `validated` if the invoice does not pass SDI validation.
     if next == InvoiceStatus::Validated {
+        if crate::commands::pec::recoverable_pec_filename(&tx.snapshot(), &row, id)
+            .await?
+            .is_some()
+        {
+            return Err("Verifica in PEC il reinvio già registrato prima di procedere.".into());
+        }
         let fattura = build_fattura_from_store(&tx.snapshot(), id).await?;
         let result = common::validation::rules::validate(&fattura);
         if !result.is_valid() {
@@ -1438,14 +1455,25 @@ pub async fn export_invoice_xml_store(
     store: &crate::storage::FileStore,
     id: &str,
 ) -> Result<String, String> {
-    let fattura = build_fattura_from_store(store, id).await?;
+    let mut tx = store.begin().await?;
+    let snapshot = tx.snapshot();
+    let row = snapshot
+        .read("invoices", "id", vec![serde_json::json!(id)], "")
+        .await
+        .fetch_one()
+        .await?;
+    if crate::commands::pec::recoverable_pec_filename(&snapshot, &row, id)
+        .await?
+        .is_some()
+    {
+        return Err("Verifica in PEC il reinvio già registrato prima di esportare la fattura.".into());
+    }
+    let fattura = build_fattura_from_store(&snapshot, id).await?;
     let xml = common::xml::encode::encode(&fattura).map_err(|e| e.to_string())?;
 
     // Persist the generated XML as an audit trail.
-    store
-        .update("invoices", id, serde_json::json!({"xml_content": &xml}))
-        .await
-        .map_err(|e| e.to_string())?;
+    tx.update("invoices", id, serde_json::json!({"xml_content": &xml})).await?;
+    tx.commit().await?;
 
     Ok(xml)
 }
@@ -2360,6 +2388,8 @@ pub(crate) async fn fetch_invoice_detail(
         codice_destinatario,
         pec_destinatario,
         pending_pec_filename: invoice_row.get("pending_pec_filename"),
+        active_pec_filename: crate::commands::pec::active_pec_filename(&invoice_row),
+        recoverable_pec_filename: crate::commands::pec::recoverable_pec_filename(store, &invoice_row, id).await?,
         dati_ordine_acquisto,
         dati_contratto,
         dati_convenzione,
@@ -3179,13 +3209,14 @@ pub async fn rectify_rejected_invoice_store(
     store: &crate::storage::FileStore,
     id: &str,
 ) -> Result<InvoiceDetail, String> {
-    let stato: String = store
+    let mut tx = store.begin().await?;
+    let row = tx
+        .snapshot()
         .read("invoices", "id", vec![serde_json::json!(id)], "")
         .await
         .fetch_one()
-        .await
-        .map_err(|e| e.to_string())?
-        .get("stato");
+        .await?;
+    let stato: String = row.get("stato");
 
     if stato != "rejected" {
         return Err(format!(
@@ -3193,15 +3224,19 @@ pub async fn rectify_rejected_invoice_store(
         ));
     }
 
-    store
-        .update(
-            "invoices",
-            id,
-            serde_json::json!({"stato": "draft", "imported_from_xml": false}),
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-
+    if crate::commands::pec::recoverable_pec_filename(&tx.snapshot(), &row, id)
+        .await?
+        .is_some()
+    {
+        return Err("Lo scarto è di un invio precedente. Verifica in PEC il reinvio prima di rettificare.".into());
+    }
+    tx.update(
+        "invoices",
+        id,
+        serde_json::json!({"stato": "draft", "imported_from_xml": false}),
+    )
+    .await?;
+    tx.commit().await?;
     fetch_invoice_detail(store, id).await
 }
 

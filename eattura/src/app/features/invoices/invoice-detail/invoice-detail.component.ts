@@ -74,8 +74,8 @@ export class InvoiceDetailComponent {
     const inv = this.invoice();
     if (!inv || inv.stato !== "rejected") return null;
 
-    const notifs = inv.notifications ?? [];
-    const ns = notifs.find((n) => n.tipo === "NS");
+    if (inv.recoverablePecFilename) return null;
+    const ns = this.currentAttemptNotifications().find((n) => n.tipo === "NS");
     if (!ns) return { notification: null, daysRemaining: 5, expired: false };
 
     let daysRemaining = 5;
@@ -94,12 +94,23 @@ export class InvoiceDetailComponent {
     return { notification: ns, daysRemaining, expired };
   });
 
-  /** Latest delivery or receipt notification (RC, MC, NS, NE, DT). */
-  latestNotification = computed(() => {
+  currentAttemptNotifications = computed(() => {
     const inv = this.invoice();
-    const notifs = inv?.notifications ?? [];
-    return notifs.length > 0 ? notifs[notifs.length - 1] : null;
+    if (!inv || inv.stato === "draft" || inv.stato === "validated" || inv.recoverablePecFilename) {
+      return [];
+    }
+    const notifications = inv.notifications ?? [];
+    const active = inv.activePecFilename;
+    if (!active) return notifications;
+    const stem = (filename: string) => filename.replace(/(?:\.xml)?\.p7m$|\.xml$/i, "").toLowerCase();
+    const matchesFile = (filename?: string) => !!filename && stem(filename) === stem(active);
+    const ids = new Set(notifications.filter((receipt) => matchesFile(receipt.nomeFile))
+      .map((receipt) => receipt.identificativoSdi).filter(Boolean));
+    return notifications.filter((receipt) => matchesFile(receipt.nomeFile)
+      || (!receipt.nomeFile && ids.has(receipt.identificativoSdi)));
   });
+
+  latestNotification = computed(() => this.currentAttemptNotifications().at(-1) ?? null);
 
   hasDdt = computed(() => (this.invoice()?.datiDdt?.length ?? 0) > 0);
   hasAllegati = computed(() => (this.invoice()?.allegati?.length ?? 0) > 0);
@@ -177,7 +188,7 @@ export class InvoiceDetailComponent {
 
   async resolvePecAttempt(sent: boolean): Promise<void> {
     const inv = this.invoice();
-    const filename = inv?.pendingPecFilename;
+    const filename = inv?.pendingPecFilename ?? inv?.recoverablePecFilename;
     if (!inv || !filename || this.sending()) return;
     this.sending.set(true);
     try {

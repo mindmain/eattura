@@ -365,14 +365,34 @@ async fn resolve_pec_attempt_store(
         .await
         .fetch_one()
         .await?;
-    let aliases: Vec<String> = row
-        .get::<Option<Vec<String>>>("sdi_filenames")
-        .unwrap_or_default();
     if row.get::<Option<String>>("pending_pec_filename").as_deref() != Some(filename) {
         if sent
-            && aliases
-                .iter()
-                .any(|alias| same_sdi_filename(alias, filename))
+            && recoverable_pec_filename(&tx.snapshot(), &row, id).await?.as_deref()
+                == Some(filename)
+        {
+            let receipts = tx.snapshot()
+                .read("sdi_notifications", "invoice_children", vec![serde_json::json!(id)], "")
+                .await
+                .fetch_all()
+                .await?;
+            let status = receipts.iter().find_map(|receipt| {
+                let xml: String = receipt.get("raw_xml");
+                let notification = parse_notification(&xml).ok()?;
+                notification.nome_file.as_deref()
+                    .filter(|reference| same_sdi_filename(filename, reference))?;
+                notification.resulting_status()
+            }).unwrap_or(InvoiceStatus::Sent);
+            tx.update(
+                "invoices",
+                id,
+                serde_json::json!({"stato": status.as_str(), "active_pec_filename": filename}),
+            )
+            .await?;
+            tx.commit().await?;
+            return Ok(());
+        }
+        if sent
+            && active_pec_filename(&row).is_some_and(|active| same_sdi_filename(&active, filename))
             && matches!(
                 row.get::<String>("stato").as_str(),
                 "sent" | "accepted" | "rejected"
@@ -419,7 +439,8 @@ async fn complete_pec_attempt(
         serde_json::json!({
         "stato": status.as_str(), "xml_content": row.get::<Option<String>>("pending_pec_xml")
             .ok_or("XML del tentativo PEC mancante dall'archivio.")?,
-            "sdi_filenames": aliases, "pending_pec_filename": null, "pending_pec_xml": null
+            "sdi_filenames": aliases, "active_pec_filename": filename,
+            "pending_pec_filename": null, "pending_pec_xml": null
         }),
     )
     .await?;
@@ -750,7 +771,9 @@ pub async fn attach_sdi_notification(
         find_invoice_by_sdi_id(store, notification.identificativo_sdi.as_deref()).await?
     };
 
-    let matching_receipts: Vec<_> = store
+    let mut tx = store.begin().await?;
+    let snapshot = tx.snapshot();
+    let matching_receipts: Vec<_> = snapshot
         .read("sdi_notifications", "all", vec![], "")
         .await
         .fetch_all()
@@ -777,9 +800,6 @@ pub async fn attach_sdi_notification(
     let invoice_id = invoice_id.or_else(|| existing.as_ref().and_then(|row| row.get("invoice_id")));
 
     let mut new_status = None;
-    let mut tx = store.begin().await?;
-
-    let snapshot = tx.snapshot();
     let invoice = if let Some(inv_id) = invoice_id.as_deref() {
         snapshot
             .read("invoices", "id", vec![serde_json::json!(inv_id)], "")
@@ -807,16 +827,37 @@ pub async fn attach_sdi_notification(
             }
         } else if let Some(target) = notification.resulting_status()
             && let Ok(cur) = row.get::<String>("stato").parse::<InvoiceStatus>()
-            && (cur == InvoiceStatus::Imported || cur.transition_to(target).is_ok())
         {
-            tx.update(
-                "invoices",
-                inv_id,
-                serde_json::json!({"stato": target.as_str(),
-                            "imported_from_xml": cur == InvoiceStatus::Imported}),
-            )
-            .await?;
-            new_status = Some(target.as_str().to_string());
+            let active = active_pec_filename(&row);
+            let matches_attempt = match active.as_deref() {
+                Some(active) => {
+                    if let Some(filename) = notification.nome_file.as_deref() {
+                        same_sdi_filename(active, filename)
+                    } else {
+                        matches_sdi_id_for_attempt(&snapshot, inv_id, active, notification)
+                            .await?
+                    }
+                }
+                None => cur == InvoiceStatus::Imported
+                    || notification.nome_file.as_deref().is_some_and(|filename| {
+                        let aliases = row.get::<Option<Vec<String>>>("sdi_filenames").unwrap_or_default();
+                        aliases.len() == 1 && same_sdi_filename(&aliases[0], filename)
+                    }),
+            };
+            let can_apply = cur.transition_to(target).is_ok()
+                || (matches!(cur, InvoiceStatus::Draft | InvoiceStatus::Rejected)
+                    && matches_attempt
+                    && recoverable_pec_filename(&snapshot, &row, inv_id).await?.is_some());
+            if matches_attempt && can_apply {
+                tx.update(
+                    "invoices",
+                    inv_id,
+                    serde_json::json!({"stato": target.as_str(),
+                                "imported_from_xml": cur == InvoiceStatus::Imported}),
+                )
+                .await?;
+                new_status = Some(target.as_str().to_string());
+            }
         }
     }
 
@@ -980,7 +1021,89 @@ async fn find_invoice_ids_by_sdi_reference(
     Ok(matched)
 }
 
-fn same_sdi_filename(left: &str, right: &str) -> bool {
+pub(crate) fn active_pec_filename(row: &crate::storage::Record) -> Option<String> {
+    row.get::<Option<String>>("active_pec_filename")
+        .or_else(|| stored_xml_filename(row))
+}
+
+fn stored_xml_filename(row: &crate::storage::Record) -> Option<String> {
+    // Before active attempts were stored explicitly, the sent XML held the progressivo.
+    let xml: String = row.get::<Option<String>>("xml_content")?;
+    let invoice = common::xml::decode::decode(&xml).ok()?;
+    Some(sdi_filename(&invoice))
+}
+
+/// A wrongly rectified resend can be restored only when its transmitted XML is still available.
+pub(crate) async fn recoverable_pec_filename(
+    store: &FileStore,
+    row: &crate::storage::Record,
+    invoice_id: &str,
+) -> Result<Option<String>, String> {
+    if !matches!(row.get::<String>("stato").as_str(), "draft" | "rejected")
+        || row.get::<Option<String>>("pending_pec_filename").is_some()
+    {
+        return Ok(None);
+    }
+    let aliases = row.get::<Option<Vec<String>>>("sdi_filenames").unwrap_or_default();
+    let Some(filename) = active_pec_filename(row) else {
+        return Ok(None);
+    };
+    let Some(active_index) = aliases.iter().position(|alias| same_sdi_filename(alias, &filename)) else {
+        return Ok(None);
+    };
+    if !stored_xml_filename(row).is_some_and(|stored| same_sdi_filename(&stored, &filename)) {
+        return Ok(None);
+    }
+    let receipts = store
+        .read("sdi_notifications", "invoice_children", vec![serde_json::json!(invoice_id)], "")
+        .await
+        .fetch_all()
+        .await?;
+    let mut earlier_rejection = false;
+    for receipt in receipts {
+        if !matches!(receipt.get::<String>("tipo").as_str(), "NS" | "NE") {
+            continue;
+        }
+        if receipt.get::<String>("tipo") == "NE"
+            && receipt.get::<Option<String>>("esito").as_deref() != Some("EC02")
+        {
+            continue;
+        }
+        let Some(reference) = receipt.get::<Option<String>>("nome_file") else {
+            return Ok(None);
+        };
+        if same_sdi_filename(&filename, &reference) {
+            return Ok(None);
+        }
+        earlier_rejection |= aliases[..active_index]
+            .iter()
+            .any(|alias| same_sdi_filename(alias, &reference));
+    }
+    Ok(earlier_rejection.then_some(filename))
+}
+
+async fn matches_sdi_id_for_attempt(
+    store: &FileStore,
+    invoice_id: &str,
+    active: &str,
+    notification: &common::pec::ParsedNotification,
+) -> Result<bool, String> {
+    let Some(sdi_id) = notification.identificativo_sdi.as_deref() else {
+        return Ok(false);
+    };
+    let receipts = store
+        .read("sdi_notifications", "invoice_children", vec![serde_json::json!(invoice_id)], "")
+        .await
+        .fetch_all()
+        .await?;
+    Ok(receipts.iter().any(|row| {
+        row.get::<Option<String>>("identificativo_sdi").as_deref() == Some(sdi_id)
+            && row.get::<Option<String>>("nome_file")
+                .is_some_and(|filename| same_sdi_filename(active, &filename))
+    }))
+}
+
+pub(crate) fn same_sdi_filename(left: &str, right: &str) -> bool {
     fn stem(name: &str) -> &str {
         name.strip_suffix(".xml.p7m")
             .or_else(|| name.strip_suffix(".p7m"))
@@ -1167,20 +1290,67 @@ mod tests {
                 .await
                 .is_err()
         );
-        let receipt =
-            format!("<RicevutaConsegna><NomeFile>{retry_filename}</NomeFile></RicevutaConsegna>");
+        let receipt = format!(
+            "<RicevutaScarto><IdentificativoSdI>111</IdentificativoSdI><NomeFile>{retry_filename}</NomeFile></RicevutaScarto>"
+        );
         let result = import_sdi_receipt_store(&reopened, &receipt).await.unwrap();
-        assert_eq!(result.new_status.as_deref(), Some("accepted"));
+        assert_eq!(result.new_status.as_deref(), Some("rejected"));
         resolve_pec_attempt_store(&reopened, &invoice.id, &retry_filename, true)
             .await
             .unwrap();
         let detail = fetch_invoice_detail(&reopened, &invoice.id).await.unwrap();
-        assert_eq!(detail.stato, "accepted");
+        assert_eq!(detail.stato, "rejected");
         assert_eq!(detail.pending_pec_filename, None);
         let sent = build_fattura_from_store(&reopened, &invoice.id)
             .await
             .unwrap();
         assert_eq!(sdi_filename(&sent), retry_filename);
+
+        use crate::commands::invoices::rectify_rejected_invoice_store;
+        let rectified = rectify_rejected_invoice_store(&reopened, &invoice.id).await.unwrap();
+        assert_eq!(rectified.recoverable_pec_filename, None);
+        set_invoice_status_store(&reopened, &invoice.id, "validated").await.unwrap();
+        let (_, corrected_filename) = reserve_pec_attempt(&reopened, &invoice.id, &config)
+            .await
+            .unwrap();
+        resolve_pec_attempt_store(&reopened, &invoice.id, &corrected_filename, true)
+            .await
+            .unwrap();
+        assert_ne!(corrected_filename, retry_filename);
+
+        // Exercise legacy records and a full replay of historical receipts.
+        reopened.update("invoices", &invoice.id, json!({"active_pec_filename": null}))
+            .await.unwrap();
+        reconcile_unlinked_notifications(&reopened).await.unwrap();
+        let replayed = import_sdi_receipt_store(&reopened, &receipt).await.unwrap();
+        assert_eq!(replayed.new_status, None);
+        let detail = fetch_invoice_detail(&reopened, &invoice.id).await.unwrap();
+        assert_eq!(detail.stato, "sent");
+        assert_eq!(detail.notifications.len(), 1);
+
+        // Restore a resend already pushed back to draft by the old behavior.
+        reopened.update("invoices", &invoice.id, json!({"stato": "draft"}))
+            .await.unwrap();
+        let draft = fetch_invoice_detail(&reopened, &invoice.id).await.unwrap();
+        assert_eq!(draft.recoverable_pec_filename.as_deref(), Some(corrected_filename.as_str()));
+        assert!(set_invoice_status_store(&reopened, &invoice.id, "validated").await.is_err());
+        assert!(resolve_pec_attempt_store(&reopened, &invoice.id, &retry_filename, true).await.is_err());
+        resolve_pec_attempt_store(&reopened, &invoice.id, &corrected_filename, true)
+            .await.unwrap();
+        assert_eq!(fetch_invoice_detail(&reopened, &invoice.id).await.unwrap().stato, "sent");
+        let outcome = format!("<RicevutaConsegna><IdentificativoSdI>222</IdentificativoSdI><NomeFile>{corrected_filename}</NomeFile></RicevutaConsegna>");
+        let result = import_sdi_receipt_store(&reopened, &outcome).await.unwrap();
+        assert_eq!(result.new_status.as_deref(), Some("accepted"));
+        let detail = fetch_invoice_detail(&reopened, &invoice.id).await.unwrap();
+        assert_eq!(detail.notifications.len(), 2);
+
+        // The actual outcome can also recover a draft without manual confirmation.
+        reopened.update("invoices", &invoice.id, json!({"stato": "draft"}))
+            .await.unwrap();
+        let replayed = import_sdi_receipt_store(&reopened, &receipt).await.unwrap();
+        assert_eq!(replayed.new_status, None);
+        let result = import_sdi_receipt_store(&reopened, &outcome).await.unwrap();
+        assert_eq!(result.new_status.as_deref(), Some("accepted"));
     }
 
     #[tokio::test]
