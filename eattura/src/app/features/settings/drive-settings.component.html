@@ -1,0 +1,41 @@
+<section aria-labelledby="drive-title">
+  <h2 id="drive-title">Google Drive</h2>
+  @if (drive.desktop) {
+    <p>Collega una cartella personale o condivisa per importare all’avvio le fatture XML e P7M autorizzate su Google Drive.</p>
+    @if (drive.folderName(); as folder) {
+      <p>Cartella collegata <strong>{{ folder }}</strong></p>
+    }
+    <div class="form-group">
+      <label for="drive-credentials">File JSON del client OAuth desktop di Google</label>
+      <input #credentialInput id="drive-credentials" type="file" accept=".json,application/json"
+        [disabled]="drive.busy()" (change)="chooseCredentials($event)" />
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn-primary" [disabled]="drive.busy() || !credentials()"
+        (click)="connect(credentialInput)">{{ drive.folderName() ? "Cambia collegamento" : "Collega Google Drive" }}</button>
+      @if (drive.folderName()) {
+        <button type="button" class="btn-secondary" [disabled]="drive.busy()" (click)="drive.syncNow()">Sincronizza ora</button>
+        <button type="button" class="btn-secondary" [disabled]="drive.busy()" (click)="drive.authorizeFiles()">Autorizza file esistenti</button>
+        <button type="button" class="btn-secondary" [disabled]="drive.busy()" (click)="drive.disconnect()">Scollega</button>
+      }
+    </div>
+    @if (drive.busy()) {
+      <p role="status">Operazione Drive in corso…</p>
+    }
+    @if (drive.error(); as error) {
+      <p role="alert">{{ error }}</p>
+    }
+    @if (drive.lastSync(); as result) {
+      <p role="status">File importati: {{ result.imported }} · Già allineati: {{ result.unchanged }} · Ignorati: {{ result.ignored }} · Errori: {{ result.failed }}</p>
+      @if (result.errors.length) {
+        <ul>
+          @for (error of result.errors; track $index) {
+            <li>{{ error }}</li>
+          }
+        </ul>
+      }
+    }
+  } @else {
+    <p>Disponibile nell’app desktop Eattura.</p>
+  }
+</section>

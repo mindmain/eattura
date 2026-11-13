@@ -828,7 +828,7 @@ fn resolve_file(base: &std::path::Path, relative: &str) -> Result<PathBuf, Strin
         .ok_or("Missing app data directory")?
         .join(path))
 }
-fn atomic_json(path: &std::path::Path, value: &impl Serialize) -> Result<(), String> {
+pub(crate) fn atomic_json(path: &std::path::Path, value: &impl Serialize) -> Result<(), String> {
     use std::io::Write;
     let bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
     let temporary = path.with_extension("json.tmp");

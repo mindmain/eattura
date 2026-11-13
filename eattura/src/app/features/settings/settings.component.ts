@@ -11,11 +11,12 @@ import { REGIME_FISCALE } from "../../core/models/sdi.model";
 import { ThemeService, type ThemePreference } from "../../core/services/theme.service";
 import { LucideAngularModule, Monitor, Moon, Sun } from "lucide-angular";
 import { McpSettingsComponent } from "./mcp-settings.component";
+import { DriveSettingsComponent } from "./drive-settings.component";
 
 @Component({
   selector: "app-settings",
   standalone: true,
-  imports: [ReactiveFormsModule, LucideAngularModule, McpSettingsComponent],
+  imports: [ReactiveFormsModule, LucideAngularModule, McpSettingsComponent, DriveSettingsComponent],
   templateUrl: "./settings.component.html",
   styleUrl: "./settings.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,

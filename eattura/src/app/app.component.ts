@@ -8,6 +8,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ThemeService } from "./core/services/theme.service";
 import { LucideAngularModule, Settings2, UserRound } from "lucide-angular";
+import { DriveService } from "./core/services/drive.service";
 import { McpService } from "./core/services/mcp.service";
 
 @Component({
@@ -22,6 +23,7 @@ export class AppComponent implements OnInit, OnDestroy {
   protected notifications = inject(NotificationService);
   private invoices = inject(InvoiceStore);
   private readonly mcp = inject(McpService);
+  private readonly drive = inject(DriveService);
   private readonly theme = inject(ThemeService);
   private readonly document = inject(DOCUMENT);
   protected readonly macOSOverlay = isTauri() && /Macintosh|Mac OS X/.test(this.document.defaultView?.navigator.userAgent ?? "");
@@ -30,6 +32,7 @@ export class AppComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.invoices.startPecMonitor();
     void this.mcp.start();
+    void this.drive.start();
   }
 
   ngOnDestroy(): void {
