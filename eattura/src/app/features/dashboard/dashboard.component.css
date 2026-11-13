@@ -71,7 +71,8 @@
 .year-totals {
   display: flex;
   align-items: center;
-  gap: 1.25rem;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
 }
 
 .total-item {
@@ -98,6 +99,18 @@
 
 .total-item.cost .total-value {
   color: #dc2626;
+}
+
+.pending-dot {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: #d99500;
+}
+
+.pending-income .total-value {
+  color: light-dark(#805400, #f3bb48);
 }
 
 .chart-hint {

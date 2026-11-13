@@ -22,8 +22,12 @@ Chart.register(...registerables);
 interface MonthlyStats {
   income: number[];
   cost: number[];
-  counts: number[];
+  pendingIncome: number[];
 }
+
+const ACCEPTED_SDI_LABEL = "Fatturato · accettate dallo SdI";
+const PENDING_SDI_COLOR = "#d99500";
+const PENDING_SDI_LABEL = "Inviate · in attesa di esito SdI";
 
 const MONTH_LABELS = [
   "Gen", "Feb", "Mar", "Apr", "Mag", "Giu",
@@ -61,7 +65,7 @@ export class DashboardComponent implements OnDestroy {
   readonly sentCount = this.invoiceStore.sentCount;
   readonly clientCount = this.clientStore.clientCount;
 
-  /** Monthly stats grouped by year derived from invoices (excluding drafts and rejected, subtracting credit notes). */
+  /** Monthly totals by invoice date, with sales grouped by SdI outcome. */
   readonly monthlyByYear = computed(() => {
     const invoices = this.invoiceStore.invoices();
     const map = new Map<string, MonthlyStats>();
@@ -78,16 +82,17 @@ export class DashboardComponent implements OnDestroy {
         stats = {
           income: new Array(12).fill(0),
           cost: new Array(12).fill(0),
-          counts: new Array(12).fill(0),
+          pendingIncome: new Array(12).fill(0),
         };
         map.set(year, stats);
       }
 
       const sign = inv.tipoDocumento === "TD04" || inv.tipoDocumento === "TD08" ? -1 : 1;
       const total = (inv.importoTotale ?? 0) * sign;
-      stats.counts[month] += 1;
-      if (inv.direction === "sale") {
+      if (inv.direction === "sale" && inv.stato === "accepted") {
         stats.income[month] += total;
+      } else if (inv.direction === "sale" && inv.stato === "sent") {
+        stats.pendingIncome[month] += total;
       } else if (inv.direction === "purchase") {
         stats.cost[month] += total;
       }
@@ -116,9 +121,16 @@ export class DashboardComponent implements OnDestroy {
     return stats ? sum(stats.cost) : 0;
   });
 
+  readonly yearPendingIncome = computed(() =>
+    sum(this.monthlyByYear().get(this.selectedYear())?.pendingIncome ?? []),
+  );
+
   readonly annualIncome = computed(() => {
     const monthlyMap = this.monthlyByYear();
-    return this.annualYears.map((year) => sum(monthlyMap.get(year)?.income ?? []));
+    return {
+      accepted: this.annualYears.map((year) => sum(monthlyMap.get(year)?.income ?? [])),
+      pending: this.annualYears.map((year) => sum(monthlyMap.get(year)?.pendingIncome ?? [])),
+    };
   });
 
   constructor() {
@@ -147,11 +159,8 @@ export class DashboardComponent implements OnDestroy {
 
       if (!canvasRef || !year) return;
 
-      const stats = monthlyMap.get(year) ?? {
-        income: new Array(12).fill(0),
-        cost: new Array(12).fill(0),
-        counts: new Array(12).fill(0),
-      };
+      const stats = monthlyMap.get(year);
+      if (!stats) return;
 
       const chartInstance = this.renderChart(canvasRef.nativeElement, stats);
 
@@ -166,7 +175,7 @@ export class DashboardComponent implements OnDestroy {
       this.theme.effectiveTheme();
       if (!canvasRef) return;
 
-      const chartInstance = this.renderAnnualChart(canvasRef.nativeElement, income);
+      const chartInstance = this.renderAnnualChart(canvasRef.nativeElement, income.accepted, income.pending);
       onCleanup(() => chartInstance.destroy());
     });
   }
@@ -222,9 +231,15 @@ export class DashboardComponent implements OnDestroy {
         labels: MONTH_LABELS,
         datasets: [
           {
-            label: "Fatturato (Vendite)",
+            label: ACCEPTED_SDI_LABEL,
             data: stats.income,
             backgroundColor: "#2e7d32",
+            borderRadius: 4,
+          },
+          {
+            label: PENDING_SDI_LABEL,
+            data: stats.pendingIncome,
+            backgroundColor: PENDING_SDI_COLOR,
             borderRadius: 4,
           },
           {
@@ -277,7 +292,7 @@ export class DashboardComponent implements OnDestroy {
     return chart;
   }
 
-  private renderAnnualChart(canvas: HTMLCanvasElement, income: number[]): Chart {
+  private renderAnnualChart(canvas: HTMLCanvasElement, income: number[], pendingIncome: number[]): Chart {
     this.annualChart?.destroy();
     const textColor = this.theme.effectiveTheme() === "dark" ? "#d0d5dc" : "#34465f";
     const gridColor = this.theme.effectiveTheme() === "dark" ? "#2b3038" : "#dce3ee";
@@ -292,29 +307,40 @@ export class DashboardComponent implements OnDestroy {
       type: "line",
       data: {
         labels: this.annualYears,
-        datasets: [{
-          label: "Fatturato",
-          data: income,
-          borderColor: "#2563eb",
-          backgroundColor: "rgba(37, 99, 235, 0.14)",
-          borderWidth: 3,
-          fill: true,
-          tension: 0.35,
-          pointRadius: 5,
-          pointHoverRadius: 7,
-          pointBackgroundColor: "#2563eb",
-          pointBorderColor: "#fff",
-          pointBorderWidth: 2,
-        }],
+        datasets: [
+          {
+            label: ACCEPTED_SDI_LABEL,
+            data: income,
+            borderColor: "#2563eb",
+            backgroundColor: "rgba(37, 99, 235, 0.14)",
+            borderWidth: 3,
+            fill: true,
+            tension: 0.35,
+            pointRadius: 5,
+            pointHoverRadius: 7,
+            pointBackgroundColor: "#2563eb",
+            pointBorderColor: "#fff",
+            pointBorderWidth: 2,
+          },
+          {
+            label: PENDING_SDI_LABEL,
+            data: pendingIncome,
+            borderColor: PENDING_SDI_COLOR,
+            backgroundColor: PENDING_SDI_COLOR,
+            borderWidth: 2,
+            borderDash: [5, 4],
+            pointRadius: 4,
+          },
+        ],
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { display: false },
+          legend: { position: "top", labels: { color: textColor } },
           tooltip: {
             callbacks: {
-              label: (context) => ` Fatturato: ${currencyFormatter.format(Number(context.raw ?? 0))}`,
+              label: (context) => ` ${context.dataset.label}: ${currencyFormatter.format(Number(context.raw ?? 0))}`,
             },
           },
         },

@@ -11,7 +11,7 @@
       <p class="stat-value">{{ draftCount() }}</p>
     </div>
     <div class="stat-card">
-      <h3>Inviate</h3>
+      <h3><span class="pending-dot" aria-hidden="true"></span> In attesa di esito SdI</h3>
       <p class="stat-value">{{ sentCount() }}</p>
     </div>
     <div class="stat-card">
@@ -25,9 +25,9 @@
       <h2>Fatturato negli ultimi 8 anni</h2>
       <span class="chart-period">{{ annualYears[0] }}–{{ annualYears[7] }}</span>
     </div>
-    <p class="chart-hint mt-1">Somma delle fatture di vendita per anno. Clicca un punto per vedere le fatture.</p>
+    <p class="chart-hint mt-1">Clicca un punto per vedere le fatture di quell’anno.</p>
     <div class="chart-container annual-chart-container mt-2">
-      <canvas #annualChart role="img" aria-label="Andamento del fatturato negli ultimi otto anni"></canvas>
+      <canvas #annualChart role="img" aria-label="Fatturato e importi in attesa di esito SdI negli ultimi otto anni"></canvas>
     </div>
   </div>
 
@@ -48,6 +48,10 @@
           <div class="total-item income">
             <span class="total-label">Fatturato</span>
             <span class="total-value">{{ yearIncome() | appCurrency }}</span>
+          </div>
+          <div class="total-item pending-income">
+            <span class="total-label"><span class="pending-dot" aria-hidden="true"></span> In attesa di esito SdI</span>
+            <span class="total-value">{{ yearPendingIncome() | appCurrency }}</span>
           </div>
           <div class="total-item cost">
             <span class="total-label">Speso</span>

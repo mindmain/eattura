@@ -97,6 +97,28 @@
   max-width: 400px;
 }
 
+.table :is(.invoice-number, .invoice-date) {
+  width: 1%;
+  padding-inline: 0.65rem;
+  white-space: nowrap;
+}
+
+.invoice-date {
+  font-variant-numeric: tabular-nums;
+}
+
+.invoice-number-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+  contain: inline-size;
+}
+
+.invoice-number-badges .badge {
+  padding: 0.15rem 0.35rem;
+}
+
 .actions-cell {
   display: flex;
   gap: 0.4rem;

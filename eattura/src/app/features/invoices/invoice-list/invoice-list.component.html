@@ -80,8 +80,8 @@
   <table class="table">
     <thead>
       <tr>
-        <th>Numero</th>
-        <th>Data</th>
+        <th class="invoice-number">Numero</th>
+        <th class="invoice-date">Data</th>
         <th>Tipo</th>
         <th>Cedente</th>
         <th>Cessionario</th>
@@ -93,22 +93,26 @@
     <tbody>
       @for (inv of filteredInvoices(); track inv.id) {
         <tr>
-          <td>
+          <td class="invoice-number">
             <a (click)="navigateToDetail(inv.id)" class="link">{{ inv.numero }}</a>
-            @if (inv.isSigned) {
-              <span class="badge badge-p7m" title="Firmata digitalmente CAdES-BES">.p7m</span>
-            }
-            @if (inv.isAutofattura) {
-              <span class="badge badge-autofattura ml-1" title="Autofattura / Integrazione Reverse Charge">{{ inv.tipoDocumento }}</span>
-            }
-            @if (inv.isPa) {
-              <span class="badge badge-pa ml-1" title="FatturaPA (B2G - FPA12)">PA</span>
-            }
-            @if (inv.isSplitPayment) {
-              <span class="badge badge-split ml-1" title="Scissione Pagamenti (Split Payment)">Split</span>
+            @if (inv.isSigned || inv.isAutofattura || inv.isPa || inv.isSplitPayment) {
+              <div class="invoice-number-badges">
+                @if (inv.isSigned) {
+                  <span class="badge badge-p7m" title="Firmata digitalmente CAdES-BES">.p7m</span>
+                }
+                @if (inv.isAutofattura) {
+                  <span class="badge badge-autofattura" title="Autofattura / Integrazione Reverse Charge">{{ inv.tipoDocumento }}</span>
+                }
+                @if (inv.isPa) {
+                  <span class="badge badge-pa" title="FatturaPA (B2G - FPA12)">PA</span>
+                }
+                @if (inv.isSplitPayment) {
+                  <span class="badge badge-split" title="Scissione Pagamenti (Split Payment)">Split</span>
+                }
+              </div>
             }
           </td>
-          <td>{{ inv.data }}</td>
+          <td class="invoice-date">{{ formatInvoiceDate(inv.data) }}</td>
           <td>{{ inv.tipoDocumento | tipoDocumento }}</td>
           <td>{{ inv.cedenteDenominazione }}</td>
           <td>{{ inv.cessionarioDenominazione }}</td>
