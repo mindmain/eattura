@@ -230,6 +230,11 @@
   background: var(--color-primary, #3b82f6);
 }
 
+.timeline-step.step-pending .step-dot {
+  background: #d99500;
+  color: #17263e;
+}
+
 .timeline-step.step-success .step-dot {
   background: #10b981;
 }
@@ -324,6 +329,14 @@
 /* Receipts Table & Badges */
 .receipts-table {
   font-size: 0.85rem;
+}
+
+.receipt-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  white-space: nowrap;
 }
 
 .btn-xs {

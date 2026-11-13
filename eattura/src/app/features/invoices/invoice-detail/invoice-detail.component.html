@@ -206,9 +206,14 @@
         </div>
       </div>
 
-      <!-- Lifecycle Timeline Steps -->
+      @let awaitingSdiOutcome = inv.stato === 'sent';
+      @let acceptedBySdi = inv.stato === 'accepted';
+      @let rejectedBySdi = inv.stato === 'rejected' && !inv.recoverablePecFilename;
+      @let transmissionConfirmed = awaitingSdiOutcome || acceptedBySdi || inv.stato === 'rejected';
+      @let hasSdiOutcome = acceptedBySdi || rejectedBySdi;
+
       <div class="timeline-container mt-2">
-        <div class="timeline-step" [class.step-active]="true" [class.step-completed]="inv.stato !== 'draft'">
+        <div class="timeline-step step-active" [class.step-completed]="inv.stato !== 'draft'">
           <div class="step-dot">1</div>
           <div class="step-content">
             <span class="step-title">Creazione Bozza</span>
@@ -218,7 +223,7 @@
 
         <div class="timeline-line" [class.line-completed]="inv.stato !== 'draft'"></div>
 
-        <div class="timeline-step" [class.step-active]="inv.stato === 'validated' || inv.stato === 'sent' || inv.stato === 'accepted' || inv.stato === 'rejected'" [class.step-completed]="inv.stato === 'sent' || inv.stato === 'accepted' || inv.stato === 'rejected'">
+        <div class="timeline-step" [class.step-active]="inv.stato === 'validated' || transmissionConfirmed" [class.step-completed]="transmissionConfirmed">
           <div class="step-dot">2</div>
           <div class="step-content">
             <span class="step-title">Validata</span>
@@ -226,34 +231,43 @@
           </div>
         </div>
 
-        <div class="timeline-line" [class.line-completed]="inv.stato === 'sent' || inv.stato === 'accepted' || inv.stato === 'rejected'"></div>
+        <div class="timeline-line" [class.line-completed]="transmissionConfirmed"></div>
 
-        <div class="timeline-step" [class.step-active]="inv.stato === 'sent' || inv.stato === 'accepted' || inv.stato === 'rejected'" [class.step-completed]="inv.stato === 'accepted' || inv.stato === 'rejected'">
+        <div class="timeline-step"
+             [class.step-active]="transmissionConfirmed"
+             [class.step-completed]="transmissionConfirmed && !awaitingSdiOutcome"
+             [class.step-pending]="awaitingSdiOutcome"
+             [attr.aria-current]="awaitingSdiOutcome ? 'step' : null">
           <div class="step-dot">3</div>
           <div class="step-content">
-            <span class="step-title">Inviata a SDI</span>
-            <span class="step-sub">PEC / Interscambio</span>
+            <span class="step-title">Inviata allo SdI</span>
+            <span class="step-sub">{{ awaitingSdiOutcome ? 'In attesa di esito SdI' : 'Invio via PEC' }}</span>
           </div>
         </div>
 
-        <div class="timeline-line" [class.line-completed]="inv.stato === 'accepted' || inv.stato === 'rejected'"></div>
+        <div class="timeline-line" [class.line-completed]="hasSdiOutcome"></div>
 
-        <div class="timeline-step" [class.step-active]="inv.stato === 'accepted' || (inv.stato === 'rejected' && !inv.recoverablePecFilename)" [class.step-success]="inv.stato === 'accepted'" [class.step-error]="inv.stato === 'rejected' && !inv.recoverablePecFilename">
+        <div class="timeline-step"
+             [class.step-active]="hasSdiOutcome"
+             [class.step-success]="acceptedBySdi"
+             [class.step-error]="rejectedBySdi"
+             [attr.aria-current]="hasSdiOutcome ? 'step' : null">
           <div class="step-dot">
-            @if (inv.stato === 'accepted') { ✓ }
-            @else if (inv.stato === 'rejected' && !inv.recoverablePecFilename) { ✗ }
+            @if (acceptedBySdi) { ✓ }
+            @else if (rejectedBySdi) { ✗ }
             @else { 4 }
           </div>
           <div class="step-content">
             <span class="step-title">
-              @if (inv.stato === 'accepted') { Consegnata (RC) }
-              @else if (inv.stato === 'rejected' && !inv.recoverablePecFilename) { Scartata (NS) }
-              @else { In elaborazione SDI }
+              @if (acceptedBySdi) { Accettata dallo SdI }
+              @else if (rejectedBySdi) { Rifiutata dallo SdI }
+              @else { Esito SdI }
             </span>
-            <span class="step-sub">
-              @if (latestNotification(); as n) { {{ n.tipo }} - {{ n.identificativoSdi || "SDI" }} }
-              @else { In attesa esito }
-            </span>
+            @if (hasSdiOutcome) {
+              @if (latestNotification(); as n) {
+                <span class="step-sub">{{ n.tipo }} - {{ n.identificativoSdi || "SdI" }}</span>
+              }
+            }
           </div>
         </div>
       </div>
@@ -344,8 +358,10 @@
                     }
                   </td>
                   <td class="text-right">
-                    <button class="btn-xs btn-secondary mr-1" (click)="viewReceipt(r)">Vedi XML</button>
-                    <button class="btn-xs btn-secondary" (click)="downloadReceipt(r)">Scarica</button>
+                    <div class="receipt-actions">
+                      <button class="btn-xs btn-secondary" (click)="viewReceipt(r)">Vedi XML</button>
+                      <button class="btn-xs btn-secondary" (click)="downloadReceipt(r)">Scarica</button>
+                    </div>
                   </td>
                 </tr>
               }
