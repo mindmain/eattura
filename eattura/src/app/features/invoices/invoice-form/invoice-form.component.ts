@@ -11,6 +11,7 @@ import {
 } from "@angular/core";
 import { takeUntilDestroyed, toSignal } from "@angular/core/rxjs-interop";
 import { FormArray, FormBuilder, FormGroup, ReactiveFormsModule, Validators } from "@angular/forms";
+import type { ValidatorFn } from "@angular/forms";
 import { Router, RouterLink } from "@angular/router";
 import { InvoiceStore } from "../../../core/stores/invoice.store";
 import { ClientStore } from "../../../core/stores/client.store";
@@ -51,6 +52,18 @@ interface LineItemFormValue {
   natura: string;
   fields: InvoiceLineFields;
 }
+
+const sdiDescriptionValidator: ValidatorFn = (control) => {
+  const value: unknown = control.value;
+  if (typeof value !== "string" || !value || /^[\t\n\r \u0085\u00a0]+$/u.test(value)) {
+    return { required: true };
+  }
+
+  // Match the Rust check for XML 1.0 and the SdI String1000LatinType.
+  return value.length > 1000 || /[^\t\n\r\u0020-\u00ff]/u.test(value)
+    ? { sdiDescription: true }
+    : null;
+};
 
 function lineAmount(line: Pick<LineItemFormValue, "quantita" | "prezzoUnitario" | "fields">): number {
   const base = (line.quantita ?? 1) * (Number(line.prezzoUnitario) || 0);
@@ -325,7 +338,7 @@ export class InvoiceFormComponent implements OnInit {
         for (const line of editableLines) {
           this.linee.push(
             this.fb.group({
-              descrizione: [line.descrizione, Validators.required],
+              descrizione: [line.descrizione, sdiDescriptionValidator],
               quantita: [line.quantita],
               unitaMisura: [line.unitaMisura ?? ""],
               dataInizioPeriodo: [line.dataInizioPeriodo ?? ""],
@@ -569,9 +582,22 @@ export class InvoiceFormComponent implements OnInit {
   }
 
   nextStep(): void {
+    if (this.currentStep() === 2 && this.showDescriptionErrors()) return;
     if (this.currentStep() < 5) {
       this.currentStep.update((s) => s + 1);
     }
+  }
+
+  private showDescriptionErrors(): boolean {
+    const descriptions = this.linee.controls
+      .map((line) => line.get("descrizione"))
+      .filter((control) => control?.invalid);
+    if (!descriptions.length) return false;
+
+    for (const control of descriptions) control?.markAsTouched();
+    this.currentStep.set(2);
+    this.notify.error("Correggi le descrizioni delle righe evidenziate");
+    return true;
   }
 
   prevStep(): void {
@@ -600,7 +626,7 @@ export class InvoiceFormComponent implements OnInit {
     for (const l of draft.linee) {
       this.linee.push(
         this.fb.group({
-          descrizione: [l.descrizione, Validators.required],
+          descrizione: [l.descrizione, sdiDescriptionValidator],
           quantita: [l.quantita],
           unitaMisura: [l.unitaMisura ?? ""],
           dataInizioPeriodo: [l.dataInizioPeriodo ?? ""],
@@ -628,7 +654,7 @@ export class InvoiceFormComponent implements OnInit {
   addLine(): void {
     this.linee.push(
       this.fb.group({
-        descrizione: ["", Validators.required],
+        descrizione: ["", sdiDescriptionValidator],
         quantita: [1],
         unitaMisura: ["pz"],
         dataInizioPeriodo: [""],
@@ -873,6 +899,7 @@ export class InvoiceFormComponent implements OnInit {
   }
 
   async validateDraft(): Promise<void> {
+    if (this.showDescriptionErrors()) return;
     if (this.form.invalid) {
       this.form.markAllAsTouched();
       this.notify.error("Compila i campi obbligatori prima di validare");
@@ -885,7 +912,7 @@ export class InvoiceFormComponent implements OnInit {
       this.validationErrors.set(result.errors);
       this.validated.set(result.valid);
       if (result.valid) {
-        this.notify.success("Fattura valida e conforme alle specifiche SDI");
+        this.notify.success("Controlli locali superati");
       } else {
         this.notify.error(`Validazione fallita: ${result.errors.length} errori`);
       }
@@ -899,6 +926,7 @@ export class InvoiceFormComponent implements OnInit {
   }
 
   async onSubmit(): Promise<void> {
+    if (this.showDescriptionErrors()) return;
     if (this.form.invalid) {
       this.form.markAllAsTouched();
       this.notify.error("Compila i campi obbligatori prima di salvare");

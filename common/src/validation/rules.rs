@@ -17,7 +17,7 @@ const TOLERANCE_8: f64 = 1e-4;
 // Public API
 // ===========================================================================
 
-/// Validate a `FatturaElettronica` against all SDI rules.
+/// Validate a `FatturaElettronica` against the supported local SDI rules.
 ///
 /// Runs header validation, body validation for each body element,
 /// and cross-cutting checks (e.g. document-type-specific rules).
@@ -232,7 +232,34 @@ fn is_iso_date(s: &str) -> bool {
     (1..=12).contains(&month) && day >= 1 && day <= max_day
 }
 
-fn validate_body_indexed(body: &FatturaElettronicaBody, _body_idx: usize) -> ValidationResult {
+#[derive(Debug, thiserror::Error)]
+pub enum LineDescriptionError {
+    #[error("Descrizione contains an unsupported character {character:?} (U+{codepoint:04X}). Use Basic Latin or Latin-1 Supplement, with straight quotes and hyphens.")]
+    UnsupportedCharacter { character: char, codepoint: u32 },
+    #[error("Descrizione must contain 1 to 1000 characters and cannot be blank.")]
+    InvalidLength,
+}
+
+/// Validate DettaglioLinee/Descrizione against the XSD String1000LatinType.
+pub fn validate_line_description(description: &str) -> Result<(), LineDescriptionError> {
+    let mut length = 0;
+    for character in description.chars() {
+        // Intersect Basic Latin and Latin-1 Supplement with XML 1.0 characters.
+        if !matches!(character, '\t' | '\n' | '\r' | '\u{20}'..='\u{ff}') {
+            return Err(LineDescriptionError::UnsupportedCharacter {
+                character,
+                codepoint: u32::from(character),
+            });
+        }
+        length += 1;
+    }
+    if !(1..=1000).contains(&length) || description.trim().is_empty() {
+        return Err(LineDescriptionError::InvalidLength);
+    }
+    Ok(())
+}
+
+fn validate_body_indexed(body: &FatturaElettronicaBody, body_idx: usize) -> ValidationResult {
     let mut errors = Vec::new();
 
     errors.extend(validate_dati_generali(body));
@@ -241,9 +268,20 @@ fn validate_body_indexed(body: &FatturaElettronicaBody, _body_idx: usize) -> Val
     errors.extend(validate_linee_riepilogo_match(body));
     errors.extend(validate_dati_documenti_correlati(body));
 
-    // Validate each line item's price calculation
+    // Validate line descriptions and price calculations.
     if let Some(dbs) = &body.dati_beni_servizi {
         for linea in &dbs.dettaglio_linee {
+            if let Err(message) = validate_line_description(&linea.descrizione) {
+                errors.push(ValidationError {
+                    code: "00200".into(),
+                    message: format!("Line {}: {message}", linea.numero_linea),
+                    element_path: Some(format!(
+                        "Body[{}]/DatiBeniServizi/DettaglioLinee[NumeroLinea={}]/Descrizione",
+                        body_idx + 1,
+                        linea.numero_linea
+                    )),
+                });
+            }
             errors.extend(validate_prezzo_totale(linea));
         }
     }
@@ -886,6 +924,49 @@ mod tests {
             "Expected valid, got: {:?}",
             result.errors
         );
+    }
+
+    #[test]
+    fn rejects_non_sdi_line_descriptions_with_the_line_number() {
+        let mut invoice = minimal_invoice();
+        let description = |invoice: &mut FatturaElettronica, value: String| {
+            invoice.body[0].dati_beni_servizi.as_mut().unwrap().dettaglio_linee[0]
+                .descrizione = value;
+        };
+        for (value, codepoint) in [
+            ("Aggiornamento dell’immagine", "U+2019"),
+            ("Supporto “cloud”", "U+201C"),
+            ("Servizi – ottobre", "U+2013"),
+            ("Tariffa in €", "U+20AC"),
+            ("Supporto 🚀", "U+1F680"),
+            ("Invalid\u{0000} XML", "U+0000"),
+        ] {
+            description(&mut invoice, value.into());
+            let result = validate(&invoice);
+            assert_eq!(result.errors.len(), 1);
+            let error = &result.errors[0];
+            assert_eq!(error.code, "00200");
+            assert!(error.message.contains(codepoint));
+            assert_eq!(
+                error.element_path.as_deref(),
+                Some("Body[1]/DatiBeniServizi/DettaglioLinee[NumeroLinea=1]/Descrizione")
+            );
+            let mut output = Vec::new();
+            assert!(crate::xml::encode::encode_to_writer(&invoice, &mut output).is_err());
+            assert!(output.is_empty());
+        }
+        for value in [String::new(), " ".into(), "è".repeat(1001)] {
+            description(&mut invoice, value);
+            assert!(!validate(&invoice).is_valid());
+        }
+        for value in [
+            "Qualità dell'immagine - supporto & rilascio".into(),
+            "è".repeat(1000),
+        ] {
+            description(&mut invoice, value);
+            assert!(validate(&invoice).is_valid());
+            assert!(crate::xml::encode::encode(&invoice).is_ok());
+        }
     }
 
     #[test]

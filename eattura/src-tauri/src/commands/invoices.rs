@@ -292,6 +292,8 @@ pub struct CreateInvoiceRequest {
 #[serde(rename_all = "camelCase")]
 #[derive(schemars::JsonSchema)]
 pub struct CreateLineRequest {
+    /// SdI line description. Use Basic Latin or Latin-1 Supplement.
+    #[schemars(length(min = 1, max = 1000))]
     pub descrizione: String,
     pub quantita: Option<f64>,
     pub unita_misura: Option<String>,
@@ -473,6 +475,8 @@ fn check_line_period(number: usize, start: Option<&str>, end: Option<&str>) -> R
 fn check_draft_lines(lines: &[CreateLineRequest]) -> Result<(), String> {
     for (index, line) in lines.iter().enumerate() {
         use common::xml::enum_map::*;
+        common::validation::rules::validate_line_description(&line.descrizione)
+            .map_err(|error| format!("00200, line {}: {error}", index + 1))?;
         let fields = &line.fields;
         if fields
             .tipo_cessione_prestazione
@@ -983,6 +987,7 @@ async fn editable_draft(
 pub(crate) struct DraftLinePatch {
     #[schemars(range(min = 1, max = 9999))]
     numero_linea: i32,
+    /// SdI line description. Use Basic Latin or Latin-1 Supplement.
     #[schemars(length(min = 1, max = 1000))]
     descrizione: Option<String>,
     /// Omit to preserve the start date. Use null to clear it.
@@ -1037,11 +1042,8 @@ pub(crate) async fn update_draft_lines(
             .ok_or_else(|| format!("Line {number} does not exist in this draft."))?;
         let mut values = serde_json::Map::new();
         if let Some(description) = patch.descrizione {
-            if description.trim().is_empty() || description.chars().count() > 1000 {
-                return Err(format!(
-                    "Line {number}: description must contain 1 to 1000 characters."
-                ));
-            }
+            common::validation::rules::validate_line_description(&description)
+                .map_err(|error| format!("00200, line {number}: {error}"))?;
             values.insert("descrizione".into(), serde_json::json!(description));
         }
         if patch.data_inizio_periodo.is_some() || patch.data_fine_periodo.is_some() {

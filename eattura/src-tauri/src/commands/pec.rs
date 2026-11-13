@@ -1024,6 +1024,7 @@ mod tests {
     async fn pending_send_survives_restart_and_blocks_resend_until_reconciled() {
         use crate::commands::invoices::{
             create_invoice_store, fetch_invoice_detail, set_invoice_status_store,
+            validate_invoice_store,
         };
         use serde_json::json;
 
@@ -1043,12 +1044,35 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let request = serde_json::from_value(json!({
+        let mut request = json!({
             "numero": "1", "data": "2026-01-01", "tipoDocumento": "TD01", "divisa": "EUR",
             "cedenteId": "seller", "cessionarioId": "buyer", "pagamenti": [],
-            "linee": [{"descrizione": "Test", "quantita": 1, "prezzoUnitario": 100, "aliquotaIva": 22}]
-        })).unwrap();
-        let invoice = create_invoice_store(&store, request).await.unwrap();
+            "linee": [{"descrizione": "Aggiornamento dell’immagine", "quantita": 1, "prezzoUnitario": 100, "aliquotaIva": 22}]
+        });
+        let error = create_invoice_store(&store, serde_json::from_value(request.clone()).unwrap())
+            .await
+            .expect_err("Draft creation must reject the invalid description");
+        assert!(error.contains("U+2019"));
+        request["linee"][0]["descrizione"] = json!("Aggiornamento dell'immagine");
+        let invoice = create_invoice_store(&store, serde_json::from_value(request).unwrap())
+            .await
+            .unwrap();
+        let line_id: String = store
+            .read("invoice_lines", "invoice_children", vec![json!(invoice.id)], "line")
+            .await
+            .fetch_one()
+            .await
+            .unwrap()
+            .get("id");
+        // Simulate a saved draft from an earlier version.
+        store
+            .update(
+                "invoice_lines",
+                &line_id,
+                json!({"descrizione": "Aggiornamento dell’immagine"}),
+            )
+            .await
+            .unwrap();
         let config = PecConfig {
             email: "test@example.com".into(),
             password: String::new(),
@@ -1059,6 +1083,37 @@ mod tests {
             imap_port: 993,
         };
         assert_eq!(invoice.codice_destinatario.as_deref(), Some("ABC1234"));
+        let validation = validate_invoice_store(&store, &invoice.id).await.unwrap();
+        assert!(!validation.valid);
+        assert!(validation.errors.iter().any(|error| error.code == "00200"));
+        assert!(
+            set_invoice_status_store(&store, &invoice.id, "validated")
+                .await
+                .is_err()
+        );
+        // Simulate an invoice validated before the description check was introduced.
+        store
+            .update("invoices", &invoice.id, json!({"stato": "validated"}))
+            .await
+            .unwrap();
+        let error = reserve_pec_attempt(&store, &invoice.id, &config)
+            .await
+            .err()
+            .expect("PEC must reject a previously validated invoice with an invalid description");
+        assert!(error.contains("errori di validazione"));
+        let detail = fetch_invoice_detail(&store, &invoice.id).await.unwrap();
+        assert_eq!(detail.pending_pec_filename, None);
+        set_invoice_status_store(&store, &invoice.id, "draft")
+            .await
+            .unwrap();
+        store
+            .update(
+                "invoice_lines",
+                &line_id,
+                json!({"descrizione": "Aggiornamento dell'immagine"}),
+            )
+            .await
+            .unwrap();
         assert!(
             reserve_pec_attempt(&store, &invoice.id, &config)
                 .await

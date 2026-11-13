@@ -246,7 +246,23 @@
               <tbody formArrayName="linee">
                 @for (line of linee.controls; track $index; let i = $index) {
                   <tr [formGroupName]="i">
-                    <td><input type="text" formControlName="descrizione" placeholder="Descrizione" /></td>
+                    <td>
+                      @let description = line.get("descrizione");
+                      @let showError = description?.invalid && (description?.dirty || description?.touched);
+                      <input type="text" formControlName="descrizione" placeholder="Descrizione"
+                        [attr.aria-label]="'Descrizione riga ' + (i + 1)"
+                        [attr.aria-invalid]="showError ? 'true' : null"
+                        [attr.aria-describedby]="showError ? 'description-error-' + i : null" />
+                      @if (showError) {
+                        <span class="form-error" [id]="'description-error-' + i">
+                          @if (description?.hasError("required")) {
+                            Inserisci una descrizione.
+                          } @else {
+                            Usa da 1 a 1.000 caratteri compatibili con SdI. Usa apostrofi ('), virgolette (") e trattini (-) semplici. Gli accenti italiani sono ammessi.
+                          }
+                        </span>
+                      }
+                    </td>
                     <td class="col-sm"><input type="number" formControlName="quantita" min="0" step="0.01" /></td>
                     <td class="col-sm"><input type="text" formControlName="unitaMisura" /></td>
                     <td><input type="date" formControlName="dataInizioPeriodo" [attr.aria-label]="'Inizio periodo riga ' + (i + 1)" /></td>
@@ -686,7 +702,7 @@
             {{ validating() ? "Validazione in corso..." : "Valida (SDI)" }}
           </button>
           @if (validated()) {
-            <p class="validation-ok mt-1">✓ Fattura valida e conforme alle specifiche SDI.</p>
+            <p class="validation-ok mt-1">✓ Controlli locali superati.</p>
           }
           @if (validationErrors().length > 0) {
             <ul class="error-list mt-1">

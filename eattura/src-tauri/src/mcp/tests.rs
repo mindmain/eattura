@@ -285,6 +285,39 @@ async fn draft_updates_require_current_revision_and_preserve_attachments() {
 }
 
 #[tokio::test]
+async fn draft_tools_reject_non_sdi_descriptions_without_saving() {
+    let fixture = Fixture::new();
+    let (issuer, customer) = fixture.parties().await;
+    let mut invalid = draft(&issuer, &customer);
+    invalid["invoice"]["linee"][0]["descrizione"] = json!("Aggiornamento dell’immagine");
+    let rejected = fixture.call("create_draft", invalid.clone()).await;
+    assert!(failed(&rejected));
+    assert!(rejected.to_string().contains("U+2019"));
+    assert_eq!(fixture.drafts.load(Ordering::Relaxed), 0);
+
+    let created = fixture.call("create_draft", draft(&issuer, &customer)).await;
+    let created = &created["result"]["structuredContent"];
+    let id = &created["id"];
+    let revision = &created["revision"];
+    invalid["id"] = id.clone();
+    invalid["expectedRevision"] = revision.clone();
+    let rejected = fixture.call("update_draft", invalid).await;
+    assert!(failed(&rejected));
+    assert!(rejected.to_string().contains("U+2019"));
+
+    let patch = |description| json!({"id": id, "expectedRevision": revision, "linee": [
+        {"numeroLinea": 1, "descrizione": description}
+    ]});
+    let rejected = fixture.call("update_draft_lines", patch("Aggiornamento dell’immagine")).await;
+    assert!(failed(&rejected));
+    assert!(rejected.to_string().contains("U+2019"));
+    let unchanged = fixture.call("get_invoice", json!({"id": id})).await;
+    assert_eq!(unchanged["result"]["structuredContent"]["revision"], *revision);
+    assert_eq!(unchanged["result"]["structuredContent"]["linee"][0]["descrizione"], "Consulting");
+    assert!(!failed(&fixture.call("update_draft_lines", patch("Qualità dell'immagine")).await));
+}
+
+#[tokio::test]
 async fn line_patches_preserve_draft_parties_and_unrelated_fields() {
     let fixture = Fixture::new();
     let (issuer, customer) = fixture.parties().await;

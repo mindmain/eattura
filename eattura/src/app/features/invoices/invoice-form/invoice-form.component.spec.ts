@@ -196,6 +196,34 @@ describe("InvoiceFormComponent", () => {
     expect(component.lineTotal(0)).toBe(90);
   });
 
+  it("keeps the editor on the offending line and blocks saving and validation until corrected", async () => {
+    component.form.patchValue({ numero: "1", cedenteId: "seller", cessionarioId: "buyer" });
+    const description = component.linee.at(0).get("descrizione")!;
+    description.setValue("Aggiornamento dell’immagine");
+    component.currentStep.set(2);
+
+    component.nextStep();
+    expect(component.currentStep()).toBe(2);
+    expect(description.touched).toBe(true);
+    expect(description.hasError("sdiDescription")).toBe(true);
+
+    component.currentStep.set(5);
+    await component.onSubmit();
+    expect(component.currentStep()).toBe(2);
+    await component.validateDraft();
+    expect(invoiceStoreMock.createInvoice).not.toHaveBeenCalled();
+    expect(invoiceStoreMock.validateInvoice).not.toHaveBeenCalled();
+
+    description.setValue("è".repeat(1001));
+    expect(description.hasError("sdiDescription")).toBe(true);
+    description.setValue("Qualità dell'immagine - rilascio");
+    expect(component.form.valid).toBe(true);
+    await component.onSubmit();
+    expect(invoiceStoreMock.createInvoice).toHaveBeenCalledWith(expect.objectContaining({
+      linee: [expect.objectContaining({ descrizione: "Qualità dell'immagine - rilascio" })],
+    }));
+  });
+
   it("configura correttamente un'autofattura TD17 con soggetto emittente CC e fattura collegata", () => {
     component.form.patchValue({
       tipoDocumento: "TD17",

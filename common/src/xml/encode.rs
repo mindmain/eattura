@@ -5,6 +5,7 @@ use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 
 use crate::sdi::v1::*;
+use crate::validation::rules::validate_line_description;
 use super::XmlError;
 use super::enum_map::*;
 
@@ -35,6 +36,19 @@ pub fn encode_to_writer<W: Write>(
     invoice: &FatturaElettronica,
     writer: W,
 ) -> Result<(), XmlError> {
+    for (index, body) in invoice.body.iter().enumerate() {
+        if let Some(services) = &body.dati_beni_servizi {
+            for line in &services.dettaglio_linee {
+                validate_line_description(&line.descrizione).map_err(|error| {
+                    XmlError::Serialize(format!(
+                        "00200, body {}, line {}: {error}",
+                        index + 1,
+                        line.numero_linea
+                    ))
+                })?;
+            }
+        }
+    }
     let mut w = Writer::new(writer);
     write_fattura(&mut w, invoice)
 }
