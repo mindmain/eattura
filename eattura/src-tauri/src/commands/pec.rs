@@ -9,17 +9,19 @@ use common::pec::{
     SDI_PEC_ADDRESS, extract_sdi_pec_address, parse_notification, sdi_filename,
     select_preferred_sdi_address,
 };
-use std::sync::OnceLock;
+use std::{sync::OnceLock, time::Duration};
 
 use crate::app_log::{AppLog, LogLevel};
 use crate::commands::invoices::build_fattura_from_store;
 use crate::commands::settings::AppSettings;
 use crate::pec::{self, PecConfig};
 use crate::state::TauriState;
-use crate::storage::digest;
+use crate::storage::{FileStore, Transaction, digest};
 
 const SYNC_INTERVAL_MS: i64 = 300_000;
 static SYNC_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+static SEND_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+const SEND_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -247,40 +249,181 @@ pub async fn send_invoice_pec(
     state: tauri::State<'_, TauriState>,
     id: String,
 ) -> Result<String, String> {
-    // Only validated invoices may be sent.
-    let stato: String = state
-        .store
-        .read("invoices", "id", vec![serde_json::json!(&id)], "")
-        .await
-        .fetch_optional()
-        .await
-        .map_err(|e| e.to_string())?
-        .map(|r| r.get("stato"))
-        .ok_or_else(|| format!("Invoice not found: {id}"))?;
-
-    let current: InvoiceStatus = stato.parse()?;
-    current.transition_to(InvoiceStatus::Sent)?;
-
-    // Build the XML and SDI-compliant filename.
-    let fattura = build_fattura_from_store(&state.store, &id).await?;
-    let xml = common::xml::encode::encode(&fattura).map_err(|e| e.to_string())?;
-    let filename = sdi_filename(&fattura);
-
+    let _sending = SEND_LOCK
+        .try_lock()
+        .map_err(|_| "È già in corso un invio PEC.")?;
     let config = build_config(&state.store).await?;
-    let response = pec::send_invoice(&config, &xml, &filename).await?;
-
-    // Persist the sent XML and advance the status.
-    state
-        .store
-        .update(
-            "invoices",
-            &id,
-            serde_json::json!({"stato": "sent", "xml_content": &xml, "sdi_filenames": [&filename]}),
-        )
+    let (message, filename) = reserve_pec_attempt(&state.store, &id, &config).await?;
+    let response = match tokio::time::timeout(SEND_TIMEOUT, message.send()).await {
+        Ok(Ok(response)) => response,
+        Ok(Err(error)) => {
+            return Err(format!("Esito PEC da verificare per {filename}: {error}"));
+        }
+        Err(_) => {
+            return Err(format!(
+                "Tempo di attesa SMTP scaduto. Verifica l'esito PEC per {filename}."
+            ));
+        }
+    };
+    resolve_pec_attempt_store(&state.store, &id, &filename, true)
         .await
-        .map_err(|e| e.to_string())?;
-
+        .map_err(|error| {
+            format!("SMTP ha risposto positivamente per {filename}. Verifica l'archivio: {error}")
+        })?;
     Ok(response)
+}
+
+async fn reserve_pec_attempt(
+    store: &FileStore,
+    id: &str,
+    config: &PecConfig,
+) -> Result<(pec::PreparedInvoice, String), String> {
+    let mut tx = store.begin().await?;
+    let row = tx
+        .read("invoices", "id", vec![serde_json::json!(id)], "")
+        .fetch_one()
+        .await?;
+    if row.get::<String>("stato") != InvoiceStatus::Validated.as_str() {
+        return Err("Solo le fatture validate possono essere inviate via PEC.".into());
+    }
+    if row.get::<Option<String>>("pending_pec_filename").is_some() {
+        return Err("Verifica l'esito del precedente tentativo PEC prima di riprovare.".into());
+    }
+    let mut fattura = build_fattura_from_store(&tx.snapshot(), id).await?;
+    let previous_filename = sdi_filename(&fattura);
+    let used_filenames = tx
+        .read("invoices", "invoice_views", vec![], "")
+        .fetch_all()
+        .await?;
+    let transmission = fattura
+        .header
+        .as_mut()
+        .and_then(|header| header.dati_trasmissione.as_mut())
+        .ok_or("Dati di trasmissione mancanti.")?;
+    transmission.progressivo_invio =
+        common::pec::progressivo_from_id(&uuid::Uuid::new_v4().simple().to_string());
+    let filename = sdi_filename(&fattura);
+    if same_sdi_filename(&previous_filename, &filename)
+        || used_filenames.iter().any(|invoice| {
+            invoice
+                .get::<Option<String>>("pending_pec_filename")
+                .is_some_and(|pending| same_sdi_filename(&pending, &filename))
+                || invoice
+                    .get::<Option<Vec<String>>>("sdi_filenames")
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|alias| same_sdi_filename(alias, &filename))
+        })
+    {
+        return Err("Progressivo PEC già usato. Riprova per generarne uno nuovo.".into());
+    }
+    let validation = common::validation::rules::validate(&fattura);
+    if !validation.is_valid() {
+        return Err(format!(
+            "Invio bloccato: correggi i {} errori di validazione.",
+            validation.errors.len()
+        ));
+    }
+    let xml = common::xml::encode::encode(&fattura).map_err(|e| e.to_string())?;
+    let message = pec::prepare_invoice(config, &xml, &filename)?;
+    tx.update(
+        "invoices",
+        id,
+        serde_json::json!({
+            "pending_pec_filename": filename, "pending_pec_xml": xml
+        }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok((message, filename))
+}
+
+/// Resolve a previous attempt after the user checks the PEC mailbox.
+#[tauri::command]
+pub async fn resolve_pec_attempt(
+    state: tauri::State<'_, TauriState>,
+    id: String,
+    filename: String,
+    sent: bool,
+) -> Result<(), String> {
+    let _sending = SEND_LOCK
+        .try_lock()
+        .map_err(|_| "Attendi la fine dell'invio PEC.")?;
+    resolve_pec_attempt_store(&state.store, &id, &filename, sent).await
+}
+
+async fn resolve_pec_attempt_store(
+    store: &FileStore,
+    id: &str,
+    filename: &str,
+    sent: bool,
+) -> Result<(), String> {
+    let mut tx = store.begin().await?;
+    let row = tx
+        .snapshot()
+        .read("invoices", "id", vec![serde_json::json!(id)], "")
+        .await
+        .fetch_one()
+        .await?;
+    let aliases: Vec<String> = row
+        .get::<Option<Vec<String>>>("sdi_filenames")
+        .unwrap_or_default();
+    if row.get::<Option<String>>("pending_pec_filename").as_deref() != Some(filename) {
+        if sent
+            && aliases
+                .iter()
+                .any(|alias| same_sdi_filename(alias, filename))
+            && matches!(
+                row.get::<String>("stato").as_str(),
+                "sent" | "accepted" | "rejected"
+            )
+        {
+            return Ok(());
+        }
+        return Err("Il tentativo PEC non è più in attesa di verifica.".into());
+    }
+    if sent {
+        complete_pec_attempt(&mut tx, &row, id, filename, InvoiceStatus::Sent).await?;
+    } else {
+        tx.update(
+            "invoices",
+            id,
+            serde_json::json!({
+                "pending_pec_filename": null, "pending_pec_xml": null
+            }),
+        )
+        .await?;
+    }
+    tx.commit().await
+}
+
+async fn complete_pec_attempt(
+    tx: &mut Transaction,
+    row: &crate::storage::Record,
+    id: &str,
+    filename: &str,
+    status: InvoiceStatus,
+) -> Result<(), String> {
+    let mut aliases = row
+        .get::<Option<Vec<String>>>("sdi_filenames")
+        .unwrap_or_default();
+    if !aliases
+        .iter()
+        .any(|alias| same_sdi_filename(alias, filename))
+    {
+        aliases.push(filename.into());
+    }
+    tx.update(
+        "invoices",
+        id,
+        serde_json::json!({
+        "stato": status.as_str(), "xml_content": row.get::<Option<String>>("pending_pec_xml")
+            .ok_or("XML del tentativo PEC mancante dall'archivio.")?,
+            "sdi_filenames": aliases, "pending_pec_filename": null, "pending_pec_xml": null
+        }),
+    )
+    .await?;
+    Ok(())
 }
 
 /// Sync PEC invoice attachments and SDI notifications with local invoices.
@@ -539,21 +682,6 @@ async fn run_sync_inner(
     Ok(summaries)
 }
 
-/// Read the current status of an invoice.
-async fn current_status(
-    store: &crate::storage::FileStore,
-    id: &str,
-) -> Result<InvoiceStatus, String> {
-    let stato: String = store
-        .read("invoices", "id", vec![serde_json::json!(id)], "")
-        .await
-        .fetch_one()
-        .await
-        .map_err(|e| e.to_string())?
-        .get("stato");
-    stato.parse()
-}
-
 /// Import an SDI receipt directly from XML content.
 #[tauri::command]
 pub async fn import_sdi_receipt(
@@ -651,19 +779,45 @@ pub async fn attach_sdi_notification(
     let mut new_status = None;
     let mut tx = store.begin().await?;
 
-    if let (Some(inv_id), Some(target)) = (invoice_id.as_ref(), notification.resulting_status())
-        && let Ok(cur) = current_status(&tx.snapshot(), inv_id).await
-        && (cur == InvoiceStatus::Imported || cur.transition_to(target).is_ok())
-    {
-        tx.update(
-            "invoices",
-            inv_id,
-            serde_json::json!({"stato": target.as_str(),
-                        "imported_from_xml": cur == InvoiceStatus::Imported}),
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-        new_status = Some(target.as_str().to_string());
+    let snapshot = tx.snapshot();
+    let invoice = if let Some(inv_id) = invoice_id.as_deref() {
+        snapshot
+            .read("invoices", "id", vec![serde_json::json!(inv_id)], "")
+            .await
+            .fetch_optional()
+            .await?
+    } else {
+        None
+    };
+    if let (Some(inv_id), Some(row)) = (invoice_id.as_deref(), invoice) {
+        if let Some(pending) = row.get::<Option<String>>("pending_pec_filename") {
+            if !matches!(
+                notification.message_type,
+                common::pec::SdiMessageType::Unknown(_)
+            ) && notification
+                .nome_file
+                .as_deref()
+                .is_some_and(|filename| same_sdi_filename(&pending, filename))
+            {
+                let target = notification
+                    .resulting_status()
+                    .unwrap_or(InvoiceStatus::Sent);
+                complete_pec_attempt(&mut tx, &row, inv_id, &pending, target).await?;
+                new_status = Some(target.as_str().to_string());
+            }
+        } else if let Some(target) = notification.resulting_status()
+            && let Ok(cur) = row.get::<String>("stato").parse::<InvoiceStatus>()
+            && (cur == InvoiceStatus::Imported || cur.transition_to(target).is_ok())
+        {
+            tx.update(
+                "invoices",
+                inv_id,
+                serde_json::json!({"stato": target.as_str(),
+                            "imported_from_xml": cur == InvoiceStatus::Imported}),
+            )
+            .await?;
+            new_status = Some(target.as_str().to_string());
+        }
     }
 
     let errori_json = serde_json::to_string(
@@ -808,9 +962,12 @@ async fn find_invoice_ids_by_sdi_reference(
         let filenames = row
             .get::<Option<Vec<String>>>("sdi_filenames")
             .unwrap_or_default();
-        if filenames
-            .iter()
-            .any(|name| same_sdi_filename(name, reference))
+        if row
+            .get::<Option<String>>("pending_pec_filename")
+            .is_some_and(|pending| same_sdi_filename(&pending, reference))
+            || filenames
+                .iter()
+                .any(|name| same_sdi_filename(name, reference))
         {
             matched.push(id);
             continue;
@@ -869,6 +1026,114 @@ mod tests {
         AppSettings, PecSettings, get_settings_store, update_settings_store,
     };
     use crate::pec::{PecAttachment, PecMessage};
+
+    #[tokio::test]
+    async fn pending_send_survives_restart_and_blocks_resend_until_reconciled() {
+        use crate::commands::invoices::{
+            create_invoice_store, fetch_invoice_detail, set_invoice_status_store,
+        };
+        use serde_json::json;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("eattura.json");
+        let store = FileStore::open(path.clone()).unwrap();
+        for (id, vat) in [("seller", "01234567890"), ("buyer", "98765432101")] {
+            store
+                .insert(
+                    "clients",
+                    json!({
+                        "id": id, "id_paese": "IT", "id_codice": vat, "denominazione": id,
+                        "indirizzo": "Via Roma", "cap": "00100", "comune": "Roma",
+                        "nazione": "IT", "regime_fiscale": "RF01", "codice_destinatario": "ABC1234"
+                    }),
+                )
+                .await
+                .unwrap();
+        }
+        let request = serde_json::from_value(json!({
+            "numero": "1", "data": "2026-01-01", "tipoDocumento": "TD01", "divisa": "EUR",
+            "cedenteId": "seller", "cessionarioId": "buyer", "pagamenti": [],
+            "linee": [{"descrizione": "Test", "quantita": 1, "prezzoUnitario": 100, "aliquotaIva": 22}]
+        })).unwrap();
+        let invoice = create_invoice_store(&store, request).await.unwrap();
+        let config = PecConfig {
+            email: "test@example.com".into(),
+            password: String::new(),
+            sdi_address: String::new(),
+            smtp_host: "localhost".into(),
+            smtp_port: 465,
+            imap_host: "localhost".into(),
+            imap_port: 993,
+        };
+        assert_eq!(invoice.codice_destinatario.as_deref(), Some("ABC1234"));
+        assert!(
+            reserve_pec_attempt(&store, &invoice.id, &config)
+                .await
+                .is_err()
+        );
+        set_invoice_status_store(&store, &invoice.id, "validated")
+            .await
+            .unwrap();
+        let (first, second) = tokio::join!(
+            reserve_pec_attempt(&store, &invoice.id, &config),
+            reserve_pec_attempt(&store, &invoice.id, &config),
+        );
+        assert_ne!(first.is_ok(), second.is_ok());
+        let (_, filename) = first.or(second).unwrap();
+        assert!(
+            !std::fs::read_to_string(directory.path().join("index.json"))
+                .unwrap()
+                .contains("pending_pec_xml")
+        );
+        drop(store);
+
+        let reopened = FileStore::open(path).unwrap();
+        assert!(
+            reserve_pec_attempt(&reopened, &invoice.id, &config)
+                .await
+                .is_err()
+        );
+        assert!(
+            set_invoice_status_store(&reopened, &invoice.id, "draft")
+                .await
+                .is_err()
+        );
+        assert!(
+            resolve_pec_attempt_store(&reopened, &invoice.id, "different.xml", false)
+                .await
+                .is_err()
+        );
+        resolve_pec_attempt_store(&reopened, &invoice.id, &filename, false)
+            .await
+            .unwrap();
+        let (_, retry_filename) = reserve_pec_attempt(&reopened, &invoice.id, &config)
+            .await
+            .unwrap();
+        assert_ne!(filename, retry_filename);
+        assert_eq!(
+            retry_filename.split_once('_').unwrap().1.len(),
+            "00000.xml".len()
+        );
+        assert!(
+            resolve_pec_attempt_store(&reopened, &invoice.id, &filename, true)
+                .await
+                .is_err()
+        );
+        let receipt =
+            format!("<RicevutaConsegna><NomeFile>{retry_filename}</NomeFile></RicevutaConsegna>");
+        let result = import_sdi_receipt_store(&reopened, &receipt).await.unwrap();
+        assert_eq!(result.new_status.as_deref(), Some("accepted"));
+        resolve_pec_attempt_store(&reopened, &invoice.id, &retry_filename, true)
+            .await
+            .unwrap();
+        let detail = fetch_invoice_detail(&reopened, &invoice.id).await.unwrap();
+        assert_eq!(detail.stato, "accepted");
+        assert_eq!(detail.pending_pec_filename, None);
+        let sent = build_fattura_from_store(&reopened, &invoice.id)
+            .await
+            .unwrap();
+        assert_eq!(sdi_filename(&sent), retry_filename);
+    }
 
     #[tokio::test]
     async fn test_auto_detect_sdi_pec_address_and_persist_to_settings() {

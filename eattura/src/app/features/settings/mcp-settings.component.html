@@ -1,7 +1,7 @@
 <section aria-labelledby="mcp-title">
   <h2 id="mcp-title">Assistenti AI · MCP locale</h2>
   <p><strong>Apri Eattura e lasciala aperta per usare MCP.</strong> Il server parte con l'app e si arresta alla sua chiusura.</p>
-  <p>Gli assistenti autorizzati possono leggere fatture e clienti, controllare la validazione e creare nuove bozze. Non possono inviare fatture, cambiarne lo stato, modificarle o eliminarle: revisione e invio restano a te, nell'app.</p>
+  <p>Gli assistenti autorizzati possono leggere fatture e clienti, controllare la validazione, creare e aggiornare bozze. Revisione, cambio di stato e invio restano a te, nell’app.</p>
   @if (status(); as current) {
     <p role="status">Stato: <strong>{{ current.running ? 'Attivo, solo su questo computer' : 'Non disponibile' }}</strong></p>
     <dl>
@@ -19,7 +19,7 @@
   @if (status()) {
     <h3>Collega un assistente</h3>
     <p>La scansione mostra solo le applicazioni rilevate su questo computer. Controlla percorsi standard e configurazioni MCP del tuo utente, senza avviare programmi. App portatili, Store o percorsi personalizzati potrebbero non essere rilevati.</p>
-    <p><strong>Prima di installare MCP, chiudi il client.</strong> Il pulsante registra Eattura come server stdio, preservando le altre impostazioni e creando un backup se il file esiste. Le precedenti configurazioni HTTP riconosciute vengono migrate. Autorizzi il client a leggere fatture e clienti e creare bozze; i dati richiesti potrebbero essere elaborati dal suo fornitore AI. Il token resta locale all'app e non viene copiato nella configurazione del client. Nessun invio di fatture è consentito.</p>
+    <p><strong>Prima di installare MCP, chiudi il client.</strong> Il pulsante registra Eattura come server stdio, preservando le altre impostazioni e creando un backup se il file esiste. Le precedenti configurazioni HTTP riconosciute vengono migrate. Autorizzi il client a leggere fatture e clienti e a creare o aggiornare bozze. I dati richiesti potrebbero essere elaborati dal suo fornitore AI. Il token resta locale all’app. L’invio si esegue manualmente in Eattura.</p>
     <button type="button" (click)="scanClients()" [disabled]="loading()">{{ loading() ? 'Operazione in corso…' : 'Cerca assistenti installati' }}</button>
     @if (clients(); as found) {
       <div class="clients" aria-live="polite">

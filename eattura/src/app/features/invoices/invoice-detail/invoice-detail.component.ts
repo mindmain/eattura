@@ -8,6 +8,7 @@ import {
   signal,
 } from "@angular/core";
 import { Router, RouterLink } from "@angular/router";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { InvoiceStore } from "../../../core/stores/invoice.store";
 import { NotificationService } from "../../../core/services/notification.service";
 import { FileDownloadService } from "../../../core/services/file-download.service";
@@ -105,19 +106,27 @@ export class InvoiceDetailComponent {
   readonly pecSyncStatus = this.invoiceStore.pecSyncStatus;
 
   constructor() {
-    effect(async () => {
+    effect((onCleanup) => {
       const invoiceId = this.id();
       // Refresh the open fascicolo when the background PEC sync completes.
       this.invoiceStore.lastPecSuccessAt();
       if (!invoiceId) return;
-
-      try {
-        const inv = await this.invoiceStore.getInvoice(invoiceId);
-        this.invoice.set(inv);
-      } catch {
-        this.notify.error("Errore nel caricamento della fattura");
-        this.router.navigate(["/invoices"]);
+      const draft = this.invoiceStore.mcpDraft();
+      if (draft?.previousId === invoiceId && draft.id !== invoiceId) {
+        void this.router.navigate(["/invoices", draft.id], { replaceUrl: true });
+        return;
       }
+
+      let active = true;
+      onCleanup(() => { active = false; });
+      void this.invoiceStore.getInvoice(invoiceId).then(
+        (invoice) => { if (active) this.invoice.set(invoice); },
+        () => {
+          if (!active) return;
+          this.notify.error("Errore nel caricamento della fattura");
+          void this.router.navigate(["/invoices"]);
+        },
+      );
     });
   }
 
@@ -150,15 +159,39 @@ export class InvoiceDetailComponent {
   /** Send a validated invoice to SDI via PEC. */
   async sendPec(): Promise<void> {
     const inv = this.invoice();
-    if (!inv) return;
+    if (!inv || this.sending() || inv.pendingPecFilename) return;
     this.sending.set(true);
     try {
       await this.invoiceStore.sendInvoicePec(inv.id);
       const updated = await this.invoiceStore.getInvoice(inv.id);
       this.invoice.set(updated);
-      this.notify.success("Fattura inviata a SDI via PEC");
+      this.notify.success("PEC trasmessa. Controlla la ricevuta SdI per l'esito.");
     } catch (e) {
-      this.notify.error(typeof e === "string" ? e : "Errore durante l'invio PEC");
+      const updated = await this.invoiceStore.getInvoice(inv.id).catch(() => null);
+      if (updated) this.invoice.set(updated);
+      this.notify.error(e instanceof Error ? e.message : "Errore durante l'invio PEC");
+    } finally {
+      this.sending.set(false);
+    }
+  }
+
+  async resolvePecAttempt(sent: boolean): Promise<void> {
+    const inv = this.invoice();
+    const filename = inv?.pendingPecFilename;
+    if (!inv || !filename || this.sending()) return;
+    this.sending.set(true);
+    try {
+      const confirmed = await ask(
+        sent
+          ? `Confermi di aver verificato nella tua casella PEC che il messaggio con ${filename} è stato accettato?`
+          : `Confermi di aver verificato nella tua casella PEC che il messaggio con ${filename} non è partito? Potrai inviarlo di nuovo.`,
+        { title: "Verifica tentativo PEC" },
+      );
+      if (!confirmed) return;
+      await this.invoiceStore.resolvePecAttempt(inv.id, filename, sent);
+      this.invoice.set(await this.invoiceStore.getInvoice(inv.id));
+    } catch (error) {
+      this.notify.error(error instanceof Error ? error.message : "Verifica PEC non registrata");
     } finally {
       this.sending.set(false);
     }
@@ -173,7 +206,7 @@ export class InvoiceDetailComponent {
       this.notify.success(successMsg);
     } catch (e) {
       this.notify.error(
-        typeof e === "string" ? e : "Errore durante il cambio di stato"
+        e instanceof Error ? e.message : "Errore durante il cambio di stato"
       );
     }
   }

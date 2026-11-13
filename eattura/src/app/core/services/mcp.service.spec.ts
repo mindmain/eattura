@@ -14,6 +14,7 @@ describe("McpService", () => {
   let service: McpService;
   const invoke = vi.fn();
   const refresh = vi.fn();
+  const announceMcpDraft = vi.fn();
   const notify = { success: vi.fn(), error: vi.fn() };
   const record = vi.fn();
 
@@ -24,7 +25,7 @@ describe("McpService", () => {
     service = Injector.create({ providers: [
       McpService,
       { provide: TauriService, useValue: { invoke } },
-      { provide: InvoiceStore, useValue: { refresh } },
+      { provide: InvoiceStore, useValue: { refresh, announceMcpDraft } },
       { provide: NotificationService, useValue: notify },
       { provide: AppLogService, useValue: { record } },
     ] }).get(McpService);
@@ -40,17 +41,19 @@ describe("McpService", () => {
     expect(runtime.listen).not.toHaveBeenCalled();
   });
 
-  it("refreshes local invoice state after draft creation and releases its listener", async () => {
+  it("refreshes local invoice state after a draft is saved and releases its listener", async () => {
     const unlisten = vi.fn();
-    let onDraft: (() => void) | undefined;
-    runtime.listen.mockImplementation(async (_event: string, callback: () => void) => {
+    const event = { payload: { id: "updated", previousId: "original" } };
+    let onDraft: ((message: typeof event) => void) | undefined;
+    runtime.listen.mockImplementation(async (_event: string, callback: typeof onDraft) => {
       onDraft = callback;
       return unlisten;
     });
     await service.start();
     await service.start();
     expect(runtime.listen).toHaveBeenCalledTimes(1);
-    onDraft?.();
+    onDraft?.(event);
+    expect(announceMcpDraft).toHaveBeenCalledWith(event.payload);
     await vi.waitFor(() => expect(notify.success).toHaveBeenCalled());
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(notify.success.mock.calls[0][0]).toContain("controllala prima di inviarla");

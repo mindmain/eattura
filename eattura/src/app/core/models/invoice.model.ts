@@ -113,6 +113,7 @@ export interface InvoiceSummary {
 }
 
 export interface InvoiceDetail extends InvoiceSummary {
+  revision?: string | null;
   divisa: string;
   cedenteId: string;
   cessionarioId: string;
@@ -132,6 +133,9 @@ export interface InvoiceDetail extends InvoiceSummary {
   isSplitPayment?: boolean;
   esigibilitaIva?: string | null;
   formatoTrasmissione?: string | null;
+  codiceDestinatario?: string | null;
+  pecDestinatario?: string | null;
+  pendingPecFilename?: string | null;
   datiOrdineAcquisto?: DatiDocumentoTracciabilitaDetail[];
   datiContratto?: DatiDocumentoTracciabilitaDetail[];
   datiConvenzione?: DatiDocumentoTracciabilitaDetail[];

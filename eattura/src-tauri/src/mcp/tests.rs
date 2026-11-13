@@ -21,7 +21,7 @@ impl Fixture {
         let drafts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counter = drafts.clone();
         let app = InvoiceServer::new(store.clone(), AppLog::memory()).with_draft_callback(
-            Arc::new(move || {
+            Arc::new(move |_, _| {
                 counter.fetch_add(1, Ordering::Relaxed);
             }),
         );
@@ -136,13 +136,14 @@ async fn initialize_describes_open_app_requirement_and_tool_allowlist() {
             "get_invoice",
             "list_clients",
             "list_invoices",
+            "update_draft",
             "validate_invoice"
         ]
     );
     for tool in tools {
         assert_eq!(
             tool["annotations"]["readOnlyHint"],
-            tool["name"] != "create_draft"
+            tool["name"] != "create_draft" && tool["name"] != "update_draft"
         );
         assert_eq!(tool["annotations"]["openWorldHint"], false);
     }
@@ -189,6 +190,50 @@ async fn tool_calls_create_drafts_but_cannot_send_or_change_status() {
             .len(),
         1
     );
+}
+
+#[tokio::test]
+async fn draft_updates_require_current_revision_and_preserve_attachments() {
+    let fixture = Fixture::new();
+    let (issuer, customer) = fixture.parties().await;
+    let mut request = draft(&issuer, &customer);
+    request["invoice"]["allegati"] = json!([{
+        "nomeAttachment": "proof.txt", "attachmentBase64": "dGVzdA=="
+    }]);
+    let created = fixture.call("create_draft", request).await;
+    let original = &created["result"]["structuredContent"];
+    let id = original["id"].as_str().unwrap();
+    let mut update = draft(&issuer, &customer);
+    update["id"] = json!(id);
+    update["expectedRevision"] = json!("outdated");
+    update["invoice"]["linee"][0]["descrizione"] = json!("Updated line");
+    assert!(failed(&fixture.call("update_draft", update.clone()).await));
+    update["expectedRevision"] = original["revision"].clone();
+
+    let other = Fixture::new();
+    assert!(failed(&other.call("update_draft", update.clone()).await));
+    let updated = fixture.call("update_draft", update.clone()).await;
+    assert!(!failed(&updated), "{updated}");
+    let saved = &updated["result"]["structuredContent"];
+    assert_eq!(saved["stato"], "draft");
+    assert!(failed(&fixture.call("update_draft", update.clone()).await));
+
+    let saved_id = saved["id"].as_str().unwrap();
+    let reopened = FileStore::open(fixture._dir.path().join("eattura.json")).unwrap();
+    let detail = invoices::fetch_invoice_detail(&reopened, saved_id)
+        .await
+        .unwrap();
+    assert_eq!(detail.linee[0].descrizione, "Updated line");
+    assert_eq!(detail.allegati[0].attachment_base64, "dGVzdA==");
+    fixture
+        .store
+        .update("invoices", saved_id, json!({"stato": "validated"}))
+        .await
+        .unwrap();
+    update["id"] = saved["id"].clone();
+    let validated = fixture.call("get_invoice", json!({"id": saved_id})).await;
+    update["expectedRevision"] = validated["result"]["structuredContent"]["revision"].clone();
+    assert!(failed(&fixture.call("update_draft", update).await));
 }
 
 #[tokio::test]
@@ -348,7 +393,7 @@ async fn oversized_requests_are_rejected() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(healthy.tools.len(), 7);
+    assert!(healthy.tools.iter().any(|tool| tool.name == "update_draft"));
     assert!(
         invoices::list_invoices_store(&fixture.store)
             .await

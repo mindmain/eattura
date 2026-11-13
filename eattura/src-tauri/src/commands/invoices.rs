@@ -152,6 +152,8 @@ pub struct DatiDdtDetail {
 #[serde(rename_all = "camelCase")]
 pub struct InvoiceDetail {
     pub id: String,
+    #[serde(default)]
+    pub revision: Option<String>,
     pub numero: String,
     pub data: String,
     pub tipo_documento: String,
@@ -194,6 +196,12 @@ pub struct InvoiceDetail {
     pub esigibilita_iva: Option<String>,
     #[serde(default)]
     pub formato_trasmissione: Option<String>,
+    #[serde(default)]
+    pub codice_destinatario: Option<String>,
+    #[serde(default)]
+    pub pec_destinatario: Option<String>,
+    #[serde(default)]
+    pub pending_pec_filename: Option<String>,
     #[serde(default)]
     pub dati_ordine_acquisto: Vec<DatiDocumentoTracciabilitaDetail>,
     #[serde(default)]
@@ -717,37 +725,62 @@ pub async fn update_invoice(
     state: tauri::State<'_, TauriState>,
     id: String,
     invoice: CreateInvoiceRequest,
+    expected_revision: Option<String>,
 ) -> Result<InvoiceDetail, String> {
-    update_invoice_store(&state.store, &id, invoice).await
+    update_invoice_store(
+        &state.store,
+        &id,
+        invoice,
+        expected_revision.as_deref(),
+        false,
+    )
+    .await
 }
 
 pub async fn update_invoice_store(
     store: &crate::storage::FileStore,
     id: &str,
-    invoice: CreateInvoiceRequest,
+    mut invoice: CreateInvoiceRequest,
+    expected_revision: Option<&str>,
+    preserve_attachments: bool,
 ) -> Result<InvoiceDetail, String> {
-    let new_id =
-        digest::content_id(&serde_json::json!({"kind":"created_invoice","document":&invoice}))?;
     let mut tx = store.begin().await.map_err(|e| e.to_string())?;
 
-    // Ensure the invoice exists and is still a draft.
-    let stato: Option<String> = tx
-        .read("invoices", "id", vec![serde_json::json!(id)], "")
+    let row = tx
+        .read("invoices", "invoice_views", vec![serde_json::json!(id)], "")
         .fetch_optional()
-        .await
-        .map_err(|e| e.to_string())?
-        .map(|row| row.get("stato"));
-
-    match stato.as_deref() {
-        None => return Err(format!("Invoice not found: {id}")),
-        Some("draft") => {}
-        Some(other) => {
-            return Err(format!(
-                "Cannot edit invoice {id}: only draft invoices are editable (current state: {other})"
-            ));
-        }
+        .await?
+        .ok_or("Draft not found. Reload the invoice list before editing.")?;
+    let stato: String = row.get("stato");
+    if stato != "draft" {
+        return Err(format!(
+            "Cannot edit invoice {id}: only draft invoices are editable (current state: {stato})"
+        ));
+    }
+    if let Some(expected) = expected_revision
+        && invoice_revision(&row).as_deref() != Some(expected)
+    {
+        return Err("Draft changed. Reload the invoice before editing.".into());
+    }
+    if preserve_attachments && invoice.allegati.is_none() {
+        invoice.allegati =
+            row.get::<Option<Vec<AttachmentDetail>>>("allegati")
+                .map(|attachments| {
+                    attachments
+                        .into_iter()
+                        .map(|attachment| CreateAttachmentRequest {
+                            nome_attachment: attachment.nome_attachment,
+                            algoritmo_compressione: attachment.algoritmo_compressione,
+                            formato_attachment: attachment.formato_attachment,
+                            descrizione_attachment: attachment.descrizione_attachment,
+                            attachment_base64: attachment.attachment_base64,
+                        })
+                        .collect()
+                });
     }
 
+    let new_id =
+        digest::content_id(&serde_json::json!({"kind":"created_invoice","document":&invoice}))?;
     tx.rekey_invoice(id, &new_id).await?;
     let id = new_id;
 
@@ -995,17 +1028,23 @@ pub async fn set_invoice_status_store(
     use common::invoice_status::InvoiceStatus;
 
     let mut tx = store.begin().await?;
-    let current_str: String = tx
+    let row = tx
         .read("invoices", "id", vec![serde_json::json!(id)], "")
         .fetch_optional()
         .await
         .map_err(|e| e.to_string())?
-        .map(|row| row.get("stato"))
         .ok_or_else(|| format!("Invoice not found: {id}"))?;
 
+    if row.get::<Option<String>>("pending_pec_filename").is_some() {
+        return Err("Verifica l'esito PEC prima di cambiare lo stato della fattura.".into());
+    }
+    let current_str: String = row.get("stato");
     let current: InvoiceStatus = current_str.parse()?;
     let next: InvoiceStatus = status.parse()?;
     current.transition_to(next)?;
+    if next == InvoiceStatus::Sent {
+        return Err("Usa il comando di invio PEC per registrare la trasmissione.".into());
+    }
 
     // Block promotion to `validated` if the invoice does not pass SDI validation.
     if next == InvoiceStatus::Validated {
@@ -1847,16 +1886,38 @@ pub(crate) async fn fetch_invoice_detail(
                 "TD16" | "TD17" | "TD18" | "TD19" | "TD20" | "TD21" | "TD27"
             )
         });
-    let is_pa = invoice_row.get::<Option<bool>>("is_pa").unwrap_or(false);
+    let pending_xml = invoice_row.get::<Option<String>>("pending_pec_xml");
+    let stored = if let Some(xml) = pending_xml {
+        Some(common::xml::decode::decode(&xml).map_err(|error| error.to_string())?)
+    } else {
+        stored_transmission_document(&invoice_row)?
+    };
+    let transmission = if let Some(fattura) = stored {
+        fattura.header.and_then(|header| header.dati_trasmissione)
+    } else {
+        let buyer_id: String = invoice_row.get("cessionario_id");
+        store
+            .read("clients", "id", vec![serde_json::json!(buyer_id)], "")
+            .await
+            .fetch_optional()
+            .await?
+            .map(|buyer| destination(&invoice_row, &buyer, is_autofattura))
+    };
+    let formato_trasmissione = transmission
+        .as_ref()
+        .and_then(|data| {
+            common::xml::enum_map::formato_trasmissione_to_sdi(data.formato_trasmissione)
+        })
+        .map(str::to_owned);
+    let is_pa = formato_trasmissione.as_deref() == Some("FPA12");
+    let codice_destinatario = transmission
+        .as_ref()
+        .map(|data| data.codice_destinatario.clone());
+    let pec_destinatario = transmission.and_then(|data| data.pec_destinatario);
     let is_split_payment = invoice_row
         .get::<Option<bool>>("is_split_payment")
         .unwrap_or(false);
     let esigibilita_iva: Option<String> = invoice_row.get("esigibilita_iva");
-    let formato_trasmissione = Some(if is_pa {
-        "FPA12".to_string()
-    } else {
-        "FPR12".to_string()
-    });
     let dati_ordine_acquisto: Vec<DatiDocumentoTracciabilitaDetail> = invoice_row
         .get::<Option<Vec<DatiDocumentoTracciabilitaDetail>>>("dati_ordine_acquisto")
         .unwrap_or_default();
@@ -1911,6 +1972,7 @@ pub(crate) async fn fetch_invoice_detail(
 
     Ok(InvoiceDetail {
         id: invoice_row.get("id"),
+        revision: invoice_revision(&names_row),
         numero: invoice_row.get("numero"),
         data: invoice_row.get("data"),
         tipo_documento: invoice_row.get("tipo_documento"),
@@ -1941,12 +2003,72 @@ pub(crate) async fn fetch_invoice_detail(
         is_split_payment,
         esigibilita_iva,
         formato_trasmissione,
+        codice_destinatario,
+        pec_destinatario,
+        pending_pec_filename: invoice_row.get("pending_pec_filename"),
         dati_ordine_acquisto,
         dati_contratto,
         dati_convenzione,
         dati_ddt,
         allegati,
     })
+}
+
+fn invoice_revision(row: &crate::storage::Record) -> Option<String> {
+    row.get::<Option<String>>("file").and_then(|file| {
+        std::path::Path::new(&file)
+            .file_stem()?
+            .to_str()
+            .map(str::to_owned)
+    })
+}
+
+fn stored_transmission_document(
+    row: &crate::storage::Record,
+) -> Result<Option<common::sdi::v1::FatturaElettronica>, String> {
+    let status: String = row.get("stato");
+    if matches!(
+        status.as_str(),
+        "imported" | "sent" | "accepted" | "rejected"
+    ) || row.get::<Option<bool>>("imported_from_xml") == Some(true)
+    {
+        return row
+            .get::<Option<String>>("xml_content")
+            .filter(|xml| !xml.trim().is_empty())
+            .map(|xml| common::xml::decode::decode(&xml).map_err(|error| error.to_string()))
+            .transpose();
+    }
+    Ok(None)
+}
+
+fn destination(
+    invoice: &crate::storage::Record,
+    buyer: &crate::storage::Record,
+    is_autofattura: bool,
+) -> common::sdi::v1::DatiTrasmissione {
+    let codice_destinatario = buyer
+        .get::<Option<String>>("codice_destinatario")
+        .map(|code| code.trim().to_owned())
+        .filter(|code| !code.is_empty())
+        .unwrap_or_else(|| "0000000".to_owned());
+    let pec_destinatario = if !is_autofattura && codice_destinatario == "0000000" {
+        buyer
+            .get::<Option<String>>("pec")
+            .map(|pec| pec.trim().to_owned())
+            .filter(|pec| !pec.is_empty())
+    } else {
+        None
+    };
+    let is_pa = buyer
+        .get::<Option<bool>>("is_pa")
+        .unwrap_or(codice_destinatario.len() == 6)
+        || invoice.get::<Option<bool>>("is_pa").unwrap_or(false);
+    common::sdi::v1::DatiTrasmissione {
+        codice_destinatario,
+        pec_destinatario,
+        formato_trasmissione: if is_pa { 10 } else { 20 },
+        ..Default::default()
+    }
 }
 
 /// Build a `FatturaElettronica` proto from stored records.
@@ -1970,12 +2092,8 @@ pub(crate) async fn build_fattura_from_store(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Invoice not found: {id}"))?;
 
-    // Imported XML retains its original SDI transmission metadata and filename.
-    if (inv.get::<String>("stato") == "imported"
-        || inv.get::<Option<bool>>("imported_from_xml") == Some(true))
-        && let Some(xml) = inv.get::<Option<String>>("xml_content")
-    {
-        return common::xml::decode::decode(&xml).map_err(|e| e.to_string());
+    if let Some(fattura) = stored_transmission_document(&inv)? {
+        return Ok(fattura);
     }
 
     let cedente_id: String = inv.get("cedente_id");
@@ -2139,54 +2257,23 @@ pub(crate) async fn build_fattura_from_store(
             .and_then(common::xml::enum_map::soggetto_emittente_from_sdi)
     };
 
-    // In an autofattura/integrazione, the buyer (cessionario) transmits the file to SDI,
-    // so IdTrasmittente and CodiceDestinatario must be those of Cessionario (the Italian buyer).
-    let raw_codice_dest = cessionario_row
-        .get::<Option<String>>("codice_destinatario")
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "0000000".to_string());
-    let (trasmittente_paese, trasmittente_codice, codice_dest) = if is_autofattura {
-        (
-            cessionario_row.get::<String>("id_paese"),
-            cessionario_row.get::<String>("id_codice"),
-            raw_codice_dest,
-        )
+    let transmitter = if is_autofattura {
+        &cessionario_row
     } else {
-        (
-            cedente_row.get::<String>("id_paese"),
-            cedente_row.get::<String>("id_codice"),
-            raw_codice_dest,
-        )
+        &cedente_row
     };
-
-    let pec_destinatario = if !is_autofattura && codice_dest == "0000000" {
-        cessionario_row
-            .get::<Option<String>>("pec")
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-    } else {
-        None
-    };
-
-    let is_pa_buyer = cessionario_row
-        .get::<Option<bool>>("is_pa")
-        .unwrap_or_else(|| codice_dest.trim().len() == 6)
-        || inv.get::<Option<bool>>("is_pa").unwrap_or(false);
-    let formato_trasmissione = if is_pa_buyer { 10 } else { 20 }; // 10 = FPA12, 20 = FPR12
+    let destination = destination(&inv, &cessionario_row, is_autofattura);
+    let formato_trasmissione = destination.formato_trasmissione;
 
     // Build header.
     let header = FatturaElettronicaHeader {
         dati_trasmissione: Some(DatiTrasmissione {
             id_trasmittente: Some(IdFiscale {
-                id_paese: trasmittente_paese,
-                id_codice: trasmittente_codice,
+                id_paese: transmitter.get("id_paese"),
+                id_codice: transmitter.get("id_codice"),
             }),
             progressivo_invio: common::pec::progressivo_from_id(id),
-            formato_trasmissione,
-            codice_destinatario: codice_dest,
-            pec_destinatario,
-            ..Default::default()
+            ..destination
         }),
         cedente_prestatore: Some(cedente),
         cessionario_committente: Some(cessionario),
@@ -2336,7 +2423,7 @@ pub(crate) async fn build_fattura_from_store(
 
     let is_split_payment = inv.get::<Option<bool>>("is_split_payment").unwrap_or(false)
         || inv.get::<Option<String>>("esigibilita_iva").as_deref() == Some("S")
-        || is_pa_buyer;
+        || formato_trasmissione == 10;
 
     // Recalculate dati_riepilogo with cassa contributions included and split payment flag
     let dati_riepilogo: Vec<DatiRiepilogo> = riepilogo_map
@@ -3127,7 +3214,7 @@ mod tests {
             natura: None,
         }];
 
-        let updated = update_invoice_store(&store, &created.id, update_req)
+        let updated = update_invoice_store(&store, &created.id, update_req, None, false)
             .await
             .unwrap();
 
@@ -3254,7 +3341,7 @@ mod tests {
         // Attempt to update must fail
         let mut update_req = sample_invoice_request(&seller_id, &buyer_id, "30/2026");
         update_req.linee[0].prezzo_unitario = 999.0;
-        let update_res = update_invoice_store(&store, &created.id, update_req).await;
+        let update_res = update_invoice_store(&store, &created.id, update_req, None, false).await;
         assert!(update_res.is_err());
         assert!(
             update_res

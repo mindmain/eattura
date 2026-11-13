@@ -38,8 +38,8 @@
           <button class="btn-primary" (click)="validate()">Valida</button>
           <button class="btn-primary" (click)="promoteToValidated()">Promuovi a Validata</button>
         }
-        @if (inv.stato === "validated") {
-          <button class="btn-secondary" (click)="revertToDraft()">Riporta in Bozza</button>
+        @if (inv.stato === "validated" && !inv.pendingPecFilename) {
+          <button class="btn-secondary" (click)="revertToDraft()" [disabled]="sending()">Riporta in Bozza</button>
           <button class="btn-primary" (click)="sendPec()" [disabled]="sending()">
             {{ sending() ? "Invio in corso..." : "Invia via PEC" }}
           </button>
@@ -52,6 +52,16 @@
         <button class="btn-primary" (click)="exportXml()">Esporta XML</button>
       </div>
     </div>
+
+    @if (inv.pendingPecFilename; as filename) {
+      <section class="card mb-2" aria-label="Verifica tentativo PEC">
+        <p role="status">Verifica nella casella PEC l’esito del tentativo per <code>{{ filename }}</code> prima di riprovare.</p>
+        <div class="actions">
+          <button class="btn-secondary" [disabled]="sending()" (click)="resolvePecAttempt(true)">Conferma PEC accettata</button>
+          <button class="btn-secondary" [disabled]="sending()" (click)="resolvePecAttempt(false)">Conferma mancato invio</button>
+        </div>
+      </section>
+    }
 
     @if (inv.stato === "validated" && pecSyncStatus()?.configured && pecSyncStatus()?.sdiAddressVerified === false) {
       <div class="sdi-pec-warning mb-2" role="alert">
@@ -76,8 +86,11 @@
         <div class="ade-section">
           <div class="ade-section-title">1. DATI TRASMISSIONE</div>
           <div class="ade-section-body">
-            <p><strong>Formato Trasmissione:</strong> {{ (inv.isPa || inv.formatoTrasmissione === 'FPA12') ? 'FPA12 (Pubblica Amministrazione)' : 'FPR12 (Fattura ordinaria tra privati)' }}</p>
-            <p><strong>Codice Destinatario:</strong> {{ (inv.isPa || inv.formatoTrasmissione === 'FPA12') ? 'Codice Univoco Ufficio (IPA)' : '0000000' }}</p>
+            <p><strong>Formato Trasmissione:</strong> {{ inv.formatoTrasmissione || '—' }}</p>
+            <p><strong>Codice Destinatario:</strong> {{ inv.codiceDestinatario || '—' }}</p>
+            @if (inv.pecDestinatario; as pec) {
+              <p><strong>PEC Destinatario:</strong> {{ pec }}</p>
+            }
           </div>
         </div>
 

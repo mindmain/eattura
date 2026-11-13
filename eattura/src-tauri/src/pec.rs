@@ -67,8 +67,17 @@ pub fn load_password(email: &str) -> Result<String, String> {
         .map_err(|e| format!("Keyring read failed (no PEC password stored?): {e}"))
 }
 
-/// Send an invoice XML via PEC to the SDI endpoint, returning the SMTP response.
-pub async fn send_invoice(config: &PecConfig, xml: &str, filename: &str) -> Result<String, String> {
+pub struct PreparedInvoice {
+    email: Message,
+    mailer: AsyncSmtpTransport<Tokio1Executor>,
+}
+
+/// Prepare the local message and transport before recording an SMTP attempt.
+pub fn prepare_invoice(
+    config: &PecConfig,
+    xml: &str,
+    filename: &str,
+) -> Result<PreparedInvoice, String> {
     let email = build_invoice_message(config, xml, filename)?;
 
     let creds = Credentials::new(config.email.clone(), config.password.clone());
@@ -79,16 +88,23 @@ pub async fn send_invoice(config: &PecConfig, xml: &str, filename: &str) -> Resu
             .credentials(creds)
             .build();
 
-    let response = mailer
-        .send(email)
-        .await
-        .map_err(|e| format!("PEC send failed: {e}"))?;
-    Ok(response
-        .message()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .trim()
-        .to_string())
+    Ok(PreparedInvoice { email, mailer })
+}
+
+impl PreparedInvoice {
+    pub async fn send(self) -> Result<String, String> {
+        let response = self
+            .mailer
+            .send(self.email)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(response
+            .message()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim()
+            .to_string())
+    }
 }
 
 fn build_invoice_message(config: &PecConfig, xml: &str, filename: &str) -> Result<Message, String> {

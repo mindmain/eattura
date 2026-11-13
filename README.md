@@ -46,7 +46,7 @@ Full invoice documents live in `invoices/<revision>.json` and are loaded on dema
 
 Eattura exposes MCP over **stdio**, using its installed executable with `--mcp-stdio`. **Open Eattura and keep it running before connecting your MCP client.** This mode starts no second GUI, archive, or PEC synchronization job. The desktop retains its shared in-memory store. Stdio processes connect to the running app through private OS IPC: Unix domain sockets on macOS/Linux, local named pipes on Windows. There is **no HTTP/TCP MCP listener**, public endpoint, tunnel, or external bridge dependency.
 
-In **Impostazioni app → Assistenti AI · MCP locale**, check stdio status and optionally show client configuration, also written to `~/.eattura/mcp.json`. It contains only the executable path and arguments, not credentials. Internal IPC uses `~/.eattura/mcp-token` and runtime discovery in `~/.eattura/mcp-ipc.json`. Never share these internal files. Mutual nonce-based HMAC-SHA256 authentication prevents connections or impersonation without the secret. Files use owner-only permissions on Unix; sockets sit in random private directories. Windows pipes reject remote clients. There are up to 16 IPC sessions, ten-second authentication/initialization timeouts, 35-second forwarded requests, and 2 MiB MCP message/result limits. A process lock prevents duplicate MCP listeners for the same data directory. MCP failure does not prevent opening the app: inspect activity logs, resolve permissions or duplicate instances, and restart.
+In **Impostazioni app → Assistenti AI · MCP locale**, check stdio status and optionally show client configuration, also written to `~/.eattura/mcp.json`. It contains the executable path and arguments. Internal IPC uses `~/.eattura/mcp-token` and runtime discovery in `~/.eattura/mcp-ipc.json`. Keep these internal files private. Mutual nonce-based HMAC-SHA256 authenticates both peers. Files use owner-only permissions on Unix, and sockets sit in random private directories. Windows pipes reject remote clients. There are up to 16 IPC sessions, ten-second authentication and initialization timeouts, 35-second forwarded requests, and 2 MiB MCP message and result limits. The desktop holds an exclusive lock on its local archive. If MCP fails, inspect the app's activity logs.
 
 #### One-button local client setup
 
@@ -81,7 +81,7 @@ Example JSON (replace the executable path; Claude Code also uses `"type": "stdio
 }
 ```
 
-Authorization covers the current desktop user's invoice archive and draft creation; there are no per-client archive scopes. The stdio process never opens an archive independently. If the app is unavailable it fails with an instruction to open Eattura, without exposing secrets. Stdout is reserved for MCP messages.
+Authorization covers reading the current desktop user's invoice archive and creating or updating drafts. All clients connect to the same archive. The stdio process connects to the running app. Stdout carries MCP messages.
 
 Available tools:
 
@@ -92,9 +92,18 @@ Available tools:
 | `get_invoice` | Read invoice details, payments and notification summaries; omit attachment bytes and raw receipt XML. |
 | `list_clients` / `get_client` | Find and read existing local client records. |
 | `create_draft` | Create a new draft using existing issuer/customer IDs and the desktop invoice request schema. |
+| `update_draft` | Update a saved draft using its ID and the current `revision` from `get_invoice` as `expectedRevision`. Supply the complete editable invoice and omit `allegati` to keep existing attachments. Use the ID and revision returned by the update for subsequent calls. |
 | `validate_invoice` | Report local validation errors without changing invoice status. |
 
-**MCP cannot send, issue, promote, edit or delete invoices, change their status, change settings, or access PEC credentials.** New drafts appear in the app through a desktop event. The user must review the draft and personally validate and send it in Eattura. Local validation is not an SDI submission or acceptance. The server's initialization description, title and instructions explicitly state the open-app requirement and the no-transmission policy. When the app is closed, the stdio process cannot connect; the visible registration name and this setup guidance remind the user to open it.
+Drafts are stored locally and appear in the app after creation or editing through MCP. The desktop user reviews the draft, promotes it to validated and initiates any transmission. Use the SdI receipt to check the outcome. If SMTP or the local write leaves an uncertain result, open the invoice and verify the indicated file in the PEC mailbox. A matching SdI receipt can reconcile the pending attempt automatically.
+
+### Google Drive integration proposal
+
+Eattura can use a dedicated folder in My Drive, optionally shared with named users, or a folder in a Workspace shared drive. A regular folder keeps files visible in Drive and lets Google enforce access through its existing sharing settings. The hidden application-data folder supports private app data and has no sharing support. [Drive folders](https://developers.google.com/workspace/drive/api/guides/folder) · [Sharing permissions](https://developers.google.com/workspace/drive/api/guides/manage-sharing) · [Application data](https://developers.google.com/workspace/drive/api/guides/appdata)
+
+The native integration would use a Google Cloud OAuth desktop client, the system browser, PKCE and a temporary loopback callback. Eattura would keep the refresh token in the OS credential store. Use `drive.file` for files created through Eattura and explicitly selected existing files. Verify multi-account access to pre-existing and newly uploaded files with Google Picker before committing to automatic discovery under that scope. A Workspace shared drive also requires the shared-drive options on the Drive API requests. [Desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app) · [Drive scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth) · [Desktop Picker](https://developers.google.com/workspace/drive/picker/guides/desktop-mobile-picker) · [Shared-drive API support](https://developers.google.com/workspace/drive/api/guides/enable-shareddrives)
+
+Start with an initial folder scan and incremental downloads at app startup, using Drive file IDs and versions to avoid repeat imports. Import XML and signed invoices through the existing local deduplication path. Keep the active catalog, credentials, and pending PEC state local. An upload phase can publish immutable invoice copies and receipts to the configured folder. Shared draft edits would need a separate revision and conflict policy. Drive API standard usage is currently available at no additional cost, subject to Google's quotas and the account's storage limits. This integration is proposed. [Drive change feed](https://developers.google.com/workspace/drive/api/guides/manage-changes) · [API quotas](https://developers.google.com/workspace/drive/api/guides/limits)
 
 ### Definizioni Protobuf
 

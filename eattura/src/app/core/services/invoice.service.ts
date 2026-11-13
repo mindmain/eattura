@@ -30,8 +30,8 @@ export class InvoiceService {
     return this.tauri.invoke("create_invoice", { invoice });
   }
 
-  updateInvoice(id: string, invoice: CreateInvoiceRequest): Promise<InvoiceDetail> {
-    return this.tauri.invoke("update_invoice", { id, invoice });
+  updateInvoice(id: string, invoice: CreateInvoiceRequest, expectedRevision?: string | null): Promise<InvoiceDetail> {
+    return this.tauri.invoke("update_invoice", { id, invoice, expectedRevision });
   }
 
   setStatus(id: string, status: InvoiceStatus): Promise<InvoiceDetail> {
@@ -74,6 +74,10 @@ export class InvoiceService {
 
   sendInvoicePec(id: string): Promise<string> {
     return this.tauri.invoke("send_invoice_pec", { id });
+  }
+
+  resolvePecAttempt(id: string, filename: string, sent: boolean): Promise<void> {
+    return this.tauri.invoke("resolve_pec_attempt", { id, filename, sent });
   }
 
   syncPec(): Promise<NotificationSummary[]> {

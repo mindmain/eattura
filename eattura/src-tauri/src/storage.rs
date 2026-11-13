@@ -41,6 +41,22 @@ pub struct FileStore {
     path: Arc<std::sync::RwLock<PathBuf>>,
     data: Arc<Mutex<Data>>,
 }
+
+pub(crate) fn lock_archive(directory: &std::path::Path) -> std::io::Result<std::fs::File> {
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(directory.join("archive.lock"))?;
+    lock.try_lock().map_err(|error| match error {
+        std::fs::TryLockError::WouldBlock => {
+            std::io::Error::other("Eattura already has this archive open")
+        }
+        std::fs::TryLockError::Error(error) => error,
+    })?;
+    Ok(lock)
+}
 pub struct Transaction {
     store: FileStore,
     guard: OwnedMutexGuard<Data>,
@@ -752,6 +768,8 @@ fn validate_shape(domain: &str, value: &Value) -> Result<(), String> {
         "pec",
         "codice_destinatario",
         "xml_content",
+        "pending_pec_filename",
+        "pending_pec_xml",
         "unita_misura",
         "natura",
         "condizioni_pagamento",
@@ -824,6 +842,16 @@ fn atomic_json(path: &std::path::Path, value: &impl Serialize) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archive_lock_rejects_a_second_opener_until_released() {
+        let archive = tempfile::tempdir().unwrap();
+        let first = lock_archive(archive.path()).unwrap();
+        assert!(lock_archive(archive.path()).is_err());
+        assert!(lock_archive(tempfile::tempdir().unwrap().path()).is_ok());
+        drop(first);
+        assert!(lock_archive(archive.path()).is_ok());
+    }
     struct Fixture {
         dir: PathBuf,
         store: FileStore,

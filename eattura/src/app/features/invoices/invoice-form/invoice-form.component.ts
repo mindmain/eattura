@@ -833,12 +833,14 @@ export class InvoiceFormComponent implements OnInit {
     const request = this.buildRequest();
     const editId = this.invoiceId();
     if (this.isEditMode() && editId) {
-      const updated = await this.invoiceStore.updateInvoice(editId, request);
+      const updated = await this.invoiceStore.updateInvoice(editId, request, this.loadedInvoice()?.revision);
       const nextId = updated?.id || editId;
+      if (updated) this.loadedInvoice.set(updated);
       this.invoiceId.set(nextId);
       return nextId;
     }
     const created = await this.invoiceStore.createInvoice(request);
+    this.loadedInvoice.set(created);
     this.invoiceId.set(created.id);
     return created.id;
   }
@@ -862,7 +864,7 @@ export class InvoiceFormComponent implements OnInit {
       }
     } catch (e) {
       this.notify.error(
-        typeof e === "string" ? e : "Errore durante la validazione"
+        e instanceof Error ? e.message : "Errore durante la validazione"
       );
     } finally {
       this.validating.set(false);
@@ -876,21 +878,14 @@ export class InvoiceFormComponent implements OnInit {
       return;
     }
 
-    const request = this.buildRequest();
-
     try {
       const editId = this.invoiceId();
-      if (this.isEditMode() && editId) {
-        await this.invoiceStore.updateInvoice(editId, request);
-        this.notify.success("Fattura aggiornata");
-      } else {
-        await this.invoiceStore.createInvoice(request);
-        this.notify.success("Fattura creata");
-      }
+      await this.saveDraft();
+      this.notify.success(this.isEditMode() && editId ? "Fattura aggiornata" : "Fattura creata");
       this.router.navigate(["/invoices"]);
     } catch (e) {
       this.notify.error(
-        typeof e === "string" ? e : "Errore durante il salvataggio della fattura"
+        e instanceof Error ? e.message : "Errore durante il salvataggio della fattura"
       );
     }
   }

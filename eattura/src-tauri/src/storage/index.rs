@@ -93,7 +93,9 @@ impl Index {
         for invoice in items(data, "invoices") {
             let id: String = invoice.get("id");
             let mut entry = invoice.clone();
-            entry.0.as_object_mut().unwrap().remove("xml_content");
+            let fields = entry.0.as_object_mut().unwrap();
+            fields.remove("xml_content");
+            fields.remove("pending_pec_xml");
             let previous = data.index.invoices.entities.get(&id);
             let file = files
                 .get(&id)

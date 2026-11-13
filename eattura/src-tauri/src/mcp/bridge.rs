@@ -25,6 +25,7 @@ const TOOL_NAMES: &[&str] = &[
     "list_clients",
     "get_client",
     "create_draft",
+    "update_draft",
     "validate_invoice",
 ];
 
@@ -72,7 +73,7 @@ impl ServerHandler for LocalBridge {
         let result = tokio::time::timeout(TIMEOUT, self.peer.call_tool(request)).await;
         match result {
             Ok(Ok(result)) => Ok(result.into()),
-            _ => Ok(CallToolResult::error(vec![ContentBlock::text("Connection unavailable or interrupted. Open Eattura and keep it running. Do not automatically retry draft creation: first check the app for an existing draft.")]).into()),
+            _ => Ok(CallToolResult::error(vec![ContentBlock::text("Connection unavailable or interrupted. Open Eattura and keep it running. Check the saved draft in the app before retrying a write.")]).into()),
         }
     }
 }

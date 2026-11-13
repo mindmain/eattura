@@ -77,7 +77,8 @@ describe("McpSettingsComponent", () => {
     fixture.detectChanges();
     const element: HTMLElement = fixture.nativeElement;
     expect(element.textContent).toContain("Apri Eattura e lasciala aperta");
-    expect(element.textContent).toContain("Non possono inviare fatture");
+    expect(element.textContent).toContain("creare e aggiornare bozze");
+    expect(element.textContent).toContain("L’invio si esegue manualmente in Eattura");
     expect(element.querySelector("textarea")).toBeNull();
     expect(service.clientConfig).not.toHaveBeenCalled();
   });

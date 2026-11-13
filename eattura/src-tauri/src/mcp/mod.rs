@@ -170,7 +170,7 @@ pub fn start(
     store: FileStore,
     log: AppLog,
     data_dir: &Path,
-    on_draft: Arc<dyn Fn() + Send + Sync>,
+    on_draft: Arc<tools::DraftCallback>,
 ) -> McpState {
     let config_path = data_dir.join("mcp.json");
     let running = Arc::new(AtomicBool::new(false));
@@ -206,7 +206,7 @@ pub fn start(
                     let mut listener = ipc::Listener::bind()?;
                     write_json(&discovery, &json!({"endpoint": listener.endpoint()}))?;
                     active.store(true, Ordering::Release);
-                    log.record(LogLevel::Info, "mcp", "Local MCP stdio ready; private OS IPC only, no HTTP listener; draft creation only");
+                    log.record(LogLevel::Info, "mcp", "Local MCP stdio ready; invoice writes are limited to drafts");
                     let permits = Arc::new(tokio::sync::Semaphore::new(16));
                     let mut connections = tokio::task::JoinSet::new();
                     loop {

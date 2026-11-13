@@ -59,7 +59,10 @@ export class McpService {
     this.listening = true;
     const generation = ++this.generation;
     try {
-      const unlisten = await listen("mcp-draft-created", () => void this.draftCreated());
+      const unlisten = await listen<{ id: string; previousId: string | null }>(
+        "mcp-draft-saved",
+        ({ payload }) => void this.draftSaved(payload),
+      );
       if (this.listening && this.generation === generation) this.unlisten = unlisten;
       else unlisten();
     } catch (error) {
@@ -75,10 +78,11 @@ export class McpService {
     this.unlisten = undefined;
   }
 
-  private async draftCreated(): Promise<void> {
+  private async draftSaved(draft: { id: string; previousId: string | null }): Promise<void> {
+    this.invoices.announceMcpDraft(draft);
     try {
       await this.invoices.refresh();
-      this.notifications.success("Nuova bozza creata tramite MCP: controllala prima di inviarla.");
+      this.notifications.success("Bozza salvata tramite MCP: controllala prima di inviarla.");
     } catch (error) {
       void this.log.record("error", "mcp", error);
       this.notifications.error("Bozza MCP salvata, ma elenco non aggiornato. Riapri Eattura per visualizzarla.");

@@ -8,7 +8,7 @@ mod pec;
 mod state;
 mod storage;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tauri::{Emitter, Manager};
 
 use app_log::{AppLog, LogLevel};
@@ -18,7 +18,9 @@ use state::TauriState;
 pub fn run() {
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--mcp-stdio")) {
         if mcp::bridge::run().is_err() {
-            eprintln!("MCP unavailable. Open Eattura, keep it running and reconnect the MCP client.");
+            eprintln!(
+                "MCP unavailable. Open Eattura, keep it running and reconnect the MCP client."
+            );
             std::process::exit(1);
         }
         return;
@@ -30,8 +32,10 @@ pub fn run() {
         .setup(|app| {
             // Resolve ~/.eattura in the user's home directory so invoice data
             // persists across application uninstalls and updates.
-            let data_dir = resolve_data_directory(app)?;
+            let data_dir = app.path().home_dir()?.join(".eattura");
             std::fs::create_dir_all(&data_dir)?;
+            app.manage(storage::lock_archive(&data_dir)?);
+            migrate_data_directory(app, &data_dir);
             let log = AppLog::open(data_dir.join("logs")).unwrap_or_else(|error| {
                 let log = AppLog::memory();
                 log.record(
@@ -63,12 +67,13 @@ pub fn run() {
                 store.clone(),
                 log.clone(),
                 &data_dir,
-                std::sync::Arc::new(move || {
-                    if let Err(error) = handle.emit("mcp-draft-created", ()) {
+                std::sync::Arc::new(move |id, previous_id| {
+                    let draft = serde_json::json!({"id": id, "previousId": previous_id});
+                    if let Err(error) = handle.emit("mcp-draft-saved", draft) {
                         event_log.record(
                             LogLevel::Warn,
                             "mcp",
-                            &format!("Unable to notify the app about a new draft: {error}"),
+                            &format!("Unable to notify the app about a saved draft: {error}"),
                         );
                     }
                 }),
@@ -117,6 +122,7 @@ pub fn run() {
             commands::settings::open_data_directory,
             commands::pec::set_pec_password,
             commands::pec::send_invoice_pec,
+            commands::pec::resolve_pec_attempt,
             commands::pec::sync_pec,
             commands::pec::pec_sync_status,
             commands::export::export_accountant_package,
@@ -178,26 +184,15 @@ fn spawn_pec_cron(store: storage::FileStore, log: AppLog) {
     });
 }
 
-/// Resolves `~/.eattura` in the user's home directory.
-///
-/// If existing data is found in the legacy `app_data_dir` (e.g. `Application Support`)
-/// and `~/.eattura` is not yet populated, migrates it transparently.
-fn resolve_data_directory<R: tauri::Runtime>(
-    app: &tauri::App<R>,
-) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let home = app.path().home_dir()?;
-    let target_dir = home.join(".eattura");
-
+/// Copy legacy data before opening the archive, with its exclusive lock held.
+fn migrate_data_directory<R: tauri::Runtime>(app: &tauri::App<R>, target_dir: &Path) {
     if let Ok(old_dir) = app.path().app_data_dir()
         && (old_dir.join("index.json").exists() || old_dir.join("eattura.json").exists())
         && !target_dir.join("index.json").exists()
         && !target_dir.join("eattura.json").exists()
     {
-        std::fs::create_dir_all(&target_dir)?;
-        let _ = copy_directory_contents(&old_dir, &target_dir);
+        let _ = copy_directory_contents(&old_dir, target_dir);
     }
-
-    Ok(target_dir)
 }
 
 /// Recursively copy all files and subdirectories from `from` into `to`.
@@ -208,6 +203,9 @@ fn copy_directory_contents(from: &Path, to: &Path) -> std::io::Result<()> {
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
         let target = to.join(entry.file_name());
+        if entry.file_name() == "archive.lock" {
+            continue;
+        }
         if entry.file_type()?.is_dir() {
             std::fs::create_dir_all(&target)?;
             copy_directory_contents(&entry.path(), &target)?;

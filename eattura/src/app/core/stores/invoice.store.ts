@@ -28,6 +28,12 @@ export class InvoiceStore {
   private _invoices = signal<InvoiceSummary[]>([]);
   private _loading = signal<boolean>(false);
   private hasLoaded = false;
+  private readonly _mcpDraft = signal<{ id: string; previousId: string | null } | null>(null);
+  readonly mcpDraft = this._mcpDraft.asReadonly();
+
+  announceMcpDraft(draft: { id: string; previousId: string | null }): void {
+    this._mcpDraft.set(draft);
+  }
 
   // Readonly signals exposed to components
   readonly invoices = this._invoices.asReadonly();
@@ -163,9 +169,10 @@ export class InvoiceStore {
   /** Update a draft invoice and refresh the in-memory list. */
   async updateInvoice(
     id: string,
-    invoice: CreateInvoiceRequest
+    invoice: CreateInvoiceRequest,
+    expectedRevision?: string | null,
   ): Promise<InvoiceDetail> {
-    const detail = await this.invoiceService.updateInvoice(id, invoice);
+    const detail = await this.invoiceService.updateInvoice(id, invoice, expectedRevision);
     await this.refresh();
     return detail;
   }
@@ -211,10 +218,13 @@ export class InvoiceStore {
   /** Send a validated invoice to SDI via PEC and mark it as sent. */
   async sendInvoicePec(id: string): Promise<string> {
     const response = await this.invoiceService.sendInvoicePec(id);
-    this._invoices.update((list) =>
-      list.map((inv) => (inv.id === id ? { ...inv, stato: "sent" } : inv))
-    );
+    await this.refresh();
     return response;
+  }
+
+  async resolvePecAttempt(id: string, filename: string, sent: boolean): Promise<void> {
+    await this.invoiceService.resolvePecAttempt(id, filename, sent);
+    await this.refresh();
   }
 
   /** Sync PEC invoices and receipts, then refresh the visible archive. */
