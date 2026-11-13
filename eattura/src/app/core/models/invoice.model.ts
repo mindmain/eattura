@@ -102,6 +102,7 @@ export interface InvoiceSummary {
   cedenteDenominazione: string;
   cessionarioDenominazione: string;
   stato: InvoiceStatus;
+  taxIdErrors?: { code: string; message: string; elementPath: string | null }[];
   /** `sale` = income (owner is cedente), `purchase` = cost (owner is cessionario). */
   direction: InvoiceDirection;
   /** Searchable metadata from the in-memory desktop index. */

@@ -95,8 +95,11 @@
         <tr>
           <td class="invoice-number">
             <a (click)="navigateToDetail(inv.id)" class="link">{{ inv.numero }}</a>
-            @if (inv.isSigned || inv.isAutofattura || inv.isPa || inv.isSplitPayment) {
+            @if (inv.taxIdErrors?.length || inv.isSigned || inv.isAutofattura || inv.isPa || inv.isSplitPayment) {
               <div class="invoice-number-badges">
+                @if (inv.taxIdErrors?.length) {
+                  <span class="badge badge-rejected" title="Controlla partita IVA e codice fiscale nel dettaglio">Errore fiscale</span>
+                }
                 @if (inv.isSigned) {
                   <span class="badge badge-p7m" title="Firmata digitalmente CAdES-BES">.p7m</span>
                 }

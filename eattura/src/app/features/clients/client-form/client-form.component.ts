@@ -12,6 +12,7 @@ import { Router } from "@angular/router";
 import { ClientStore } from "../../../core/stores/client.store";
 import { NotificationService } from "../../../core/services/notification.service";
 import { ViesService } from "../../../core/services/vies.service";
+import { italianTaxIds } from "../../../core/models/italian-tax-id";
 import { REGIME_FISCALE } from "../../../core/models/sdi.model";
 
 @Component({
@@ -45,7 +46,7 @@ export class ClientFormComponent {
     nome: [""],
     cognome: [""],
     idPaese: ["IT", Validators.required],
-    idCodice: ["", [Validators.required, Validators.pattern(/^[A-Za-z0-9]{2,16}$/)]],
+    idCodice: ["", Validators.required],
     codiceFiscale: [""],
     regimeFiscale: ["RF01"],
     indirizzo: ["", Validators.required],
@@ -59,7 +60,7 @@ export class ClientFormComponent {
     pec: ["", Validators.email],
     codiceDestinatario: ["0000000", [Validators.pattern(/^[A-Za-z0-9]{7}$/)]],
     isPa: [false],
-  });
+  }, { validators: italianTaxIds });
 
   constructor() {
     effect(async () => {
@@ -76,8 +77,7 @@ export class ClientFormComponent {
           this.onSubjectTypeChange("azienda");
         }
         const isCfOnly =
-          isPersona &&
-          client.idPaese === "IT" &&
+          client.idPaese.toUpperCase() === "IT" &&
           client.idCodice?.length === 16 &&
           /[A-Za-z]/.test(client.idCodice);
         this.form.patchValue({
@@ -86,6 +86,8 @@ export class ClientFormComponent {
           codiceFiscale: client.codiceFiscale || (isCfOnly ? client.idCodice : ""),
           isPa,
         });
+        if (this.form.hasError("invalidVat")) this.form.controls.idCodice.markAsTouched();
+        if (this.form.hasError("invalidFiscalCode")) this.form.controls.codiceFiscale.markAsTouched();
         this.updateCodiceDestinatarioValidation(isPa);
       } catch {
         this.notify.error("Errore nel caricamento del cliente");
@@ -183,13 +185,13 @@ export class ClientFormComponent {
       denomCtrl?.setValidators([Validators.required]);
       nomeCtrl?.setValidators([]);
       cognomeCtrl?.setValidators([]);
-      idCodiceCtrl?.setValidators([Validators.required, Validators.pattern(/^[A-Za-z0-9]{2,16}$/)]);
+      idCodiceCtrl?.setValidators(Validators.required);
     } else {
       this.form.patchValue({ denominazione: "" });
       denomCtrl?.setValidators([]);
       nomeCtrl?.setValidators([Validators.required]);
       cognomeCtrl?.setValidators([Validators.required]);
-      idCodiceCtrl?.setValidators([Validators.pattern(/^[A-Za-z0-9]{2,16}$/)]);
+      idCodiceCtrl?.clearValidators();
     }
     denomCtrl?.updateValueAndValidity();
     nomeCtrl?.updateValueAndValidity();
@@ -217,8 +219,8 @@ export class ClientFormComponent {
       denominazione: this.subjectType() === "azienda" ? value.denominazione?.trim() || null : null,
       nome: this.subjectType() === "persona" ? value.nome?.trim() || null : null,
       cognome: this.subjectType() === "persona" ? value.cognome?.trim() || null : null,
-      idPaese: value.idPaese!,
-      idCodice: rawVat || rawCf,
+      idPaese: value.idPaese!.trim().toUpperCase(),
+      idCodice: rawVat,
       codiceFiscale: rawCf || null,
       regimeFiscale: value.regimeFiscale || null,
       indirizzo: value.indirizzo!,

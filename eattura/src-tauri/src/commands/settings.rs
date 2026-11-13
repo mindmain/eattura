@@ -107,30 +107,48 @@ pub async fn update_settings_store(
     store: &crate::storage::FileStore,
     settings: AppSettings,
 ) -> Result<AppSettings, String> {
-    let json = serde_json::to_string(&settings).map_err(|e| e.to_string())?;
-    let existing = if let Some(company) = &settings.company {
-        if !company.id_codice.trim().is_empty() {
-            store
-                .read(
-                    "clients",
-                    "tax_identity",
-                    vec![
-                        serde_json::json!(&company.id_paese),
-                        serde_json::json!(&company.id_codice),
-                    ],
-                    "",
-                )
-                .await
-                .fetch_optional()
-                .await
-                .map_err(|e| e.to_string())?
-        } else {
-            None
+    let mut tx = store.begin().await?;
+    if let Some(company) = &settings.company
+        && company.id_paese.trim().eq_ignore_ascii_case("IT")
+    {
+        // A PEC-only update can carry the same legacy issuer data.
+        let previous = tx
+            .read("settings", "settings", vec![], "")
+            .fetch_optional()
+            .await?
+            .map(|row| serde_json::from_str::<AppSettings>(&row.get::<String>("value")))
+            .transpose()
+            .map_err(|error| error.to_string())?
+            .and_then(|settings| settings.company);
+        if !previous.as_ref().is_some_and(|previous| {
+            previous.id_paese == company.id_paese
+                && previous.id_codice == company.id_codice
+                && previous.codice_fiscale == company.codice_fiscale
+        }) {
+            super::clients::validate_italian_tax_fields(
+                Some(&company.id_codice),
+                company.codice_fiscale.as_deref().filter(|value| !value.is_empty()),
+            )?;
         }
+    }
+    let json = serde_json::to_string(&settings).map_err(|e| e.to_string())?;
+    let existing = if let Some(company) = &settings.company
+        && !company.id_codice.trim().is_empty()
+    {
+        tx.read(
+            "clients",
+            "tax_identity",
+            vec![
+                serde_json::json!(&company.id_paese),
+                serde_json::json!(&company.id_codice),
+            ],
+            "",
+        )
+        .fetch_optional()
+        .await?
     } else {
         None
     };
-    let mut tx = store.begin().await.map_err(|e| e.to_string())?;
     tx.insert(
         "settings",
         serde_json::json!({"key": "app_settings", "value": &json}),
@@ -256,8 +274,8 @@ mod tests {
                 nome: None,
                 cognome: None,
                 id_paese: "IT".to_string(),
-                id_codice: "99988877766".to_string(),
-                codice_fiscale: Some("99988877766".to_string()),
+                id_codice: "99988877769".to_string(),
+                codice_fiscale: Some("99988877769".to_string()),
                 regime_fiscale: "RF01".to_string(),
                 indirizzo: "Corso Italia 10".to_string(),
                 numero_civico: Some("10".to_string()),
@@ -284,7 +302,7 @@ mod tests {
 
         // 3. Reload settings from disk
         let reloaded = get_settings_store(&store).await.unwrap();
-        assert_eq!(reloaded.company.as_ref().unwrap().id_codice, "99988877766");
+        assert_eq!(reloaded.company.as_ref().unwrap().id_codice, "99988877769");
         assert_eq!(reloaded.pec.as_ref().unwrap().imap_host, "imaps.pec.it");
         assert_eq!(reloaded.pec.as_ref().unwrap().smtp_port, 465);
         assert_eq!(
@@ -297,7 +315,7 @@ mod tests {
             .read(
                 "clients",
                 "tax_identity",
-                vec![serde_json::json!("IT"), serde_json::json!("99988877766")],
+                vec![serde_json::json!("IT"), serde_json::json!("99988877769")],
                 "",
             )
             .await
@@ -318,7 +336,7 @@ mod tests {
                 nome: Some("Mario".into()),
                 cognome: Some("Rossi".into()),
                 id_paese: "IT".into(),
-                id_codice: "12345678901".into(),
+                id_codice: "12345678903".into(),
                 codice_fiscale: Some("RSSMRA80A01H501U".into()),
                 regime_fiscale: "RF19".into(),
                 indirizzo: "Via Roma".into(),
@@ -345,7 +363,7 @@ mod tests {
             .read(
                 "clients",
                 "tax_identity",
-                vec![serde_json::json!("IT"), serde_json::json!("12345678901")],
+                vec![serde_json::json!("IT"), serde_json::json!("12345678903")],
                 "",
             )
             .await

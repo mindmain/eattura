@@ -89,7 +89,7 @@ impl FileStore {
         let needs_index = !index_path.exists();
         let mut data = match std::fs::read(&index_path) {
             Ok(bytes) => {
-                let index: Index =
+                let mut index: Index =
                     serde_json::from_slice(&bytes).map_err(|e| format!("Invalid index: {e}"))?;
                 if index.version != 1 {
                     return Err("Unsupported desktop index version".into());
@@ -151,11 +151,19 @@ impl FileStore {
                         })
                         .collect::<Result<_, _>>()?,
                 );
-                for invoice in index.invoices.entities.values() {
+                for invoice in index.invoices.entities.values_mut() {
                     let file = invoice.0["file"]
                         .as_str()
                         .ok_or("Missing indexed invoice file")?;
-                    resolve_file(&path, file)?;
+                    let document_path = resolve_file(&path, file)?;
+                    // Populate the catalog for revisions indexed before tax checks were added.
+                    if invoice.0["tax_id_errors"].is_null()
+                        && let Ok(bytes) = std::fs::read(document_path)
+                        && let Ok(document) = serde_json::from_slice::<InvoiceDocument>(&bytes)
+                        && document.invoice.0["id"] == invoice.0["id"]
+                    {
+                        invoice.0["tax_id_errors"] = json!(index::archived_tax_errors(&document.invoice));
+                    }
                     if !invoice.0["line_terms"]
                         .as_array()
                         .is_some_and(|terms| terms.iter().all(Value::is_string))

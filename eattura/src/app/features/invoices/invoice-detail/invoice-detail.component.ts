@@ -141,6 +141,14 @@ export class InvoiceDetailComponent {
     });
   }
 
+  taxIdErrorLabel(path: string | null): string {
+    const field = path?.endsWith("/CodiceFiscale") ? "Codice fiscale" : "Partita IVA";
+    if (path?.includes("/RappresentanteFiscale/")) return `${field} del rappresentante fiscale`;
+    if (path?.includes("/TerzoIntermediarioOSoggettoEmittente/")) return `${field} dell’intermediario`;
+    if (path?.includes("/CedentePrestatore/")) return `${field} del cedente`;
+    return `${field} del cessionario`;
+  }
+
   async validate(): Promise<void> {
     const inv = this.invoice();
     if (!inv) return;

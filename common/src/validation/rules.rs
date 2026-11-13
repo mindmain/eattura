@@ -212,20 +212,13 @@ pub fn validate_header(header: &FatturaElettronicaHeader) -> ValidationResult {
                 "RegimeFiscale is required",
             );
         }
-        if let Some(id) = &supplier.id_fiscale_iva {
-            errors.extend(
-                validate_tax_id(id, "00301", &format!("{SUPPLIER}/IdFiscaleIVA"), false).err(),
-            );
-        } else {
+        if supplier.id_fiscale_iva.is_none() {
             report(
                 &mut errors,
                 "00200",
                 format!("{SUPPLIER}/IdFiscaleIVA"),
                 "Supplier IdFiscaleIVA is required",
             );
-        }
-        if let Some(cf) = &supplier.codice_fiscale {
-            validate_codice_fiscale(cf, "00302", SUPPLIER, &mut errors);
         }
     } else {
         report(
@@ -238,14 +231,6 @@ pub fn validate_header(header: &FatturaElettronicaHeader) -> ValidationResult {
 
     if let Some(customer) = customer {
         validate_anagrafica(customer.anagrafica.as_ref(), CUSTOMER, &mut errors);
-        if let Some(id) = &customer.id_fiscale_iva {
-            errors.extend(
-                validate_tax_id(id, "00305", &format!("{CUSTOMER}/IdFiscaleIVA"), false).err(),
-            );
-        }
-        if let Some(cf) = &customer.codice_fiscale {
-            validate_codice_fiscale(cf, "00306", CUSTOMER, &mut errors);
-        }
         if customer.id_fiscale_iva.is_none() && customer.codice_fiscale.is_none() {
             report(
                 &mut errors,
@@ -278,37 +263,104 @@ pub fn validate_header(header: &FatturaElettronicaHeader) -> ValidationResult {
         );
     }
 
-    if let Some(party) = header
+    errors.extend(party_tax_errors(header, false));
+    ValidationResult { errors }
+}
+
+/// Check only Italian VAT numbers and fiscal codes present in the archived invoice.
+pub fn validate_italian_party_tax_ids(header: &FatturaElettronicaHeader) -> Vec<ValidationError> {
+    party_tax_errors(header, true)
+}
+
+fn party_tax_errors(header: &FatturaElettronicaHeader, italian_only: bool) -> Vec<ValidationError> {
+    let mut errors = Vec::new();
+    let mut check = |id: Option<&IdFiscale>,
+                     cf: Option<&str>,
+                     country: Option<&str>,
+                     path: &str,
+                     vat_code: &str,
+                     cf_code: &str| {
+        if let Some(id) = id
+            && (!italian_only || id.id_paese.eq_ignore_ascii_case("IT"))
+        {
+            errors.extend(
+                validate_tax_id(id, vat_code, &format!("{path}/IdFiscaleIVA"), false).err(),
+            );
+        }
+        let country = id
+            .map(|id| id.id_paese.as_str())
+            .or(country)
+            .unwrap_or("IT");
+        if country.eq_ignore_ascii_case("IT")
+            && let Some(cf) = cf
+        {
+            validate_codice_fiscale(cf, cf_code, path, &mut errors);
+        }
+    };
+
+    if let Some(party) = &header.cedente_prestatore
+        && let Some(data) = &party.dati_anagrafici
+    {
+        check(
+            data.id_fiscale_iva.as_ref(),
+            data.codice_fiscale.as_deref(),
+            party.sede.as_ref().map(|sede| sede.nazione.as_str()),
+            SUPPLIER,
+            "00301",
+            "00302",
+        );
+    }
+    if let Some(party) = &header.cessionario_committente {
+        if let Some(data) = &party.dati_anagrafici {
+            check(
+                data.id_fiscale_iva.as_ref(),
+                data.codice_fiscale.as_deref(),
+                party.sede.as_ref().map(|sede| sede.nazione.as_str()),
+                CUSTOMER,
+                "00305",
+                "00306",
+            );
+        }
+        if let Some(rep) = &party.rappresentante_fiscale {
+            check(
+                rep.id_fiscale_iva.as_ref(),
+                None,
+                None,
+                "Header/CessionarioCommittente/RappresentanteFiscale",
+                "00303",
+                "00304",
+            );
+        }
+    }
+    if let Some(data) = header
         .rappresentante_fiscale
         .as_ref()
         .and_then(|party| party.dati_anagrafici.as_ref())
     {
-        let path = "Header/RappresentanteFiscale/DatiAnagrafici";
-        if let Some(id) = &party.id_fiscale_iva {
-            errors
-                .extend(validate_tax_id(id, "00303", &format!("{path}/IdFiscaleIVA"), false).err());
-        }
-        if let Some(cf) = &party.codice_fiscale {
-            validate_codice_fiscale(cf, "00304", path, &mut errors);
-        }
-    }
-    if let Some(id) = header
-        .cessionario_committente
-        .as_ref()
-        .and_then(|party| party.rappresentante_fiscale.as_ref())
-        .and_then(|party| party.id_fiscale_iva.as_ref())
-    {
-        errors.extend(
-            validate_tax_id(
-                id,
-                "00303",
-                "Header/CessionarioCommittente/RappresentanteFiscale/IdFiscaleIVA",
-                false,
-            )
-            .err(),
+        check(
+            data.id_fiscale_iva.as_ref(),
+            data.codice_fiscale.as_deref(),
+            None,
+            "Header/RappresentanteFiscale/DatiAnagrafici",
+            "00303",
+            "00304",
         );
     }
-    ValidationResult { errors }
+    if let Some(data) = header
+        .terzo_intermediario_o_soggetto_emittente
+        .as_ref()
+        .and_then(|party| party.dati_anagrafici.as_ref())
+    {
+        check(
+            data.id_fiscale_iva.as_ref(),
+            data.codice_fiscale.as_deref(),
+            None,
+            "Header/TerzoIntermediarioOSoggettoEmittente/DatiAnagrafici",
+            "EATTURA-INTERMEDIARY-VAT",
+            "EATTURA-INTERMEDIARY-CF",
+        );
+    }
+    errors
 }
 
 fn valid_text(value: &str, max_length: usize) -> bool {
@@ -1186,7 +1238,7 @@ fn validate_codice_fiscale(value: &str, code: &str, path: &str, errors: &mut Vec
             path,
             "CodiceFiscale must contain 11 to 16 uppercase alphanumeric characters",
         );
-    } else if !valid_numeric_tax_id(value) && !valid_personal_tax_id(value) {
+    } else if !valid_italian_fiscal_code(value) {
         report(
             errors,
             code,
@@ -1196,7 +1248,13 @@ fn validate_codice_fiscale(value: &str, code: &str, path: &str, errors: &mut Vec
     }
 }
 
-fn valid_numeric_tax_id(value: &str) -> bool {
+/// Check the structure and control character of an Italian fiscal code.
+pub fn valid_italian_fiscal_code(value: &str) -> bool {
+    valid_numeric_tax_id(value) || valid_personal_tax_id(value)
+}
+
+/// Check the eleven digits and checksum of an Italian numeric tax identifier.
+pub fn valid_numeric_tax_id(value: &str) -> bool {
     let bytes = value.as_bytes();
     if bytes.len() != 11 || !bytes.iter().all(u8::is_ascii_digit) || value == "00000000000" {
         return false;

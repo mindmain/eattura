@@ -14,6 +14,8 @@ pub struct ClientSummary {
     pub id_paese: String,
     pub id_codice: String,
     pub comune: String,
+    #[serde(default)]
+    pub has_tax_id_error: bool,
     pub search_text: String,
     #[serde(default)]
     pub is_pa: bool,
@@ -82,6 +84,11 @@ fn resolve_tax_identifiers(
         .filter(|s| !s.is_empty())
         .map(str::to_ascii_uppercase);
 
+    if client.id_paese.trim().eq_ignore_ascii_case("IT") {
+        let vat = (!raw_id_codice.is_empty()).then_some(raw_id_codice);
+        validate_italian_tax_fields(vat, raw_cf.as_deref())?;
+    }
+
     let effective_id_codice = if !raw_id_codice.is_empty() {
         raw_id_codice.to_ascii_uppercase()
     } else if let Some(ref cf) = raw_cf {
@@ -91,6 +98,27 @@ fn resolve_tax_identifiers(
     };
 
     Ok((effective_id_codice, raw_cf))
+}
+
+pub(super) fn validate_italian_tax_fields(
+    vat: Option<&str>,
+    cf: Option<&str>,
+) -> Result<(), String> {
+    use common::validation::rules::{valid_italian_fiscal_code, valid_numeric_tax_id};
+
+    if vat.is_some_and(|value| !valid_numeric_tax_id(value)) {
+        return Err(
+            "Partita IVA italiana non valida. Controlla le 11 cifre e la cifra di controllo."
+                .into(),
+        );
+    }
+    if cf.is_some_and(|value| !valid_italian_fiscal_code(value)) {
+        return Err(
+            "Codice fiscale italiano non valido. Controlla il formato e il carattere di controllo."
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 /// List all clients from the local file store.
@@ -120,14 +148,25 @@ pub async fn list_clients_store(
             let is_pa = row
                 .get::<Option<bool>>("is_pa")
                 .unwrap_or_else(|| cd.as_deref().map(|c| c.trim().len() == 6).unwrap_or(false));
+            let country: String = row.get("id_paese");
+            let id: String = row.get("id_codice");
+            let cf: Option<String> = row.get("codice_fiscale");
+            let has_tax_id_error = country.eq_ignore_ascii_case("IT") && {
+                let cf_only = id.len() == 16 && id.bytes().any(|byte| byte.is_ascii_alphabetic());
+                let vat = (!cf_only).then_some(id.as_str());
+                let cf = cf.as_deref().filter(|value| !value.is_empty())
+                    .or_else(|| cf_only.then_some(id.as_str()));
+                validate_italian_tax_fields(vat, cf).is_err()
+            };
             ClientSummary {
                 id: row.get("id"),
                 search_text: row.get("search_text"),
                 denominazione: row.get("denominazione"),
                 nome: row.get("nome"),
                 cognome: row.get("cognome"),
-                id_paese: row.get("id_paese"),
-                id_codice: row.get("id_codice"),
+                id_paese: country,
+                id_codice: id,
+                has_tax_id_error,
                 comune: row.get("comune"),
                 is_pa,
             }
@@ -489,11 +528,11 @@ mod tests {
     #[tokio::test]
     async fn test_client_crud_lifecycle() {
         let (store, _dir) = test_store("crud");
-        let req = sample_client_request("12345678901", "Acme Srl");
+        let req = sample_client_request("12345678903", "Acme Srl");
 
         // 1. Create client
         let created = create_client_store(&store, req).await.unwrap();
-        let expected_id = digest::client_id("IT", "12345678901").unwrap();
+        let expected_id = digest::client_id("IT", "12345678903").unwrap();
         assert_eq!(created.id, expected_id);
         assert_eq!(created.denominazione.as_deref(), Some("Acme Srl"));
         assert_eq!(created.comune, "Roma");
@@ -510,7 +549,7 @@ mod tests {
         assert!(list[0].search_text.contains("acme"));
 
         // 4. Update client (same fiscal identity)
-        let mut update_req = sample_client_request("12345678901", "Acme SpA");
+        let mut update_req = sample_client_request("12345678903", "Acme SpA");
         update_req.comune = "Milano".to_string();
         let updated = update_client_store(&store, &created.id, update_req)
             .await
@@ -542,12 +581,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejects_italian_tax_id_typos_but_accepts_foreign_formats() {
+        let (store, _dir) = test_store("tax-ids");
+        let request = sample_client_request("12345678901", "Example");
+        let error = create_client_store(&store, request).await.unwrap_err();
+        assert!(error.contains("Partita IVA"));
+
+        let request = sample_client_request("12345678903", "Example");
+        let created = create_client_store(&store, request).await.unwrap();
+        let mut request = sample_client_request("12345678903", "Example");
+        request.codice_fiscale = Some("RSSMRA80A01H501V".into());
+        let error = update_client_store(&store, &created.id, request).await.unwrap_err();
+        assert!(error.contains("Codice fiscale"));
+
+        let mut request = sample_client_request("FOREIGN-VAT", "Foreign example");
+        request.id_paese = "DE".into();
+        create_client_store(&store, request).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn test_client_duplicate_fiscal_id_rejected() {
         let (store, _dir) = test_store("duplicate");
-        let req1 = sample_client_request("12345678901", "First Company");
+        let req1 = sample_client_request("12345678903", "First Company");
         create_client_store(&store, req1).await.unwrap();
 
-        let req2 = sample_client_request("12345678901", "Second Company");
+        let req2 = sample_client_request("12345678903", "Second Company");
         let err = create_client_store(&store, req2).await;
         assert!(err.is_err());
     }
@@ -555,10 +613,10 @@ mod tests {
     #[tokio::test]
     async fn test_delete_client_referenced_by_invoice_fails() {
         let (store, _dir) = test_store("ref-protect");
-        let seller = create_client_store(&store, sample_client_request("11111111111", "Seller"))
+        let seller = create_client_store(&store, sample_client_request("11111111115", "Seller"))
             .await
             .unwrap();
-        let buyer = create_client_store(&store, sample_client_request("22222222222", "Buyer"))
+        let buyer = create_client_store(&store, sample_client_request("22222222220", "Buyer"))
             .await
             .unwrap();
 
@@ -599,17 +657,17 @@ mod tests {
     async fn test_client_rekeying_when_tax_identity_changes() {
         let (store, _dir) = test_store("rekey");
         let original =
-            create_client_store(&store, sample_client_request("11111111111", "Original"))
+            create_client_store(&store, sample_client_request("11111111115", "Original"))
                 .await
                 .unwrap();
 
         // Update with new P.IVA
-        let update_req = sample_client_request("33333333333", "Renamed & Rekeyed");
+        let update_req = sample_client_request("33333333335", "Renamed & Rekeyed");
         let updated = update_client_store(&store, &original.id, update_req)
             .await
             .unwrap();
 
-        let new_expected_id = digest::client_id("IT", "33333333333").unwrap();
+        let new_expected_id = digest::client_id("IT", "33333333335").unwrap();
         assert_eq!(updated.id, new_expected_id);
         assert_ne!(updated.id, original.id);
 

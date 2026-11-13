@@ -22,25 +22,47 @@ pub fn decode(xml: &str) -> Result<FatturaElettronica, XmlError> {
 
 /// Decode from a reader, avoiding loading the full XML into memory.
 pub fn decode_from_reader<R: Read>(reader: R) -> Result<FatturaElettronica, XmlError> {
-    let buf_reader = BufReader::new(reader);
-    let mut r = Reader::from_reader(buf_reader);
-    r.config_mut().trim_text(true);
+    let mut reader = Reader::from_reader(BufReader::new(reader));
+    reader.config_mut().trim_text(true);
+    let mut buffer = Vec::new();
+    let root = read_root(&mut reader, &mut buffer)?;
+    read_fattura(&mut reader, &root)
+}
 
-    let mut buf = Vec::new();
-
-    // Skip to root element
+/// Read the invoice header without decoding lines or attachments.
+pub fn decode_header(xml: &str) -> Result<Option<FatturaElettronicaHeader>, XmlError> {
+    let mut reader = Reader::from_reader(xml.as_bytes());
+    reader.config_mut().trim_text(true);
+    let mut buffer = Vec::new();
+    read_root(&mut reader, &mut buffer)?;
+    buffer.clear();
     loop {
-        match r.read_event_into(&mut buf)? {
-            Event::Start(e) => {
-                let name = local_name(&e);
-                if name == "FatturaElettronica" {
-                    return read_fattura(&mut r, &e);
-                }
+        match reader.read_event_into(&mut buffer)? {
+            Event::Start(element) if local_name(&element) == "FatturaElettronicaHeader" => {
+                return read_header(&mut reader).map(Some);
+            }
+            Event::Start(_) => skip_element(&mut reader)?,
+            Event::End(_) => return Ok(None),
+            Event::Eof => return Err(XmlError::Deserialize("Unexpected EOF in FatturaElettronica".into())),
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
+fn read_root<R: BufRead>(
+    reader: &mut Reader<R>,
+    buffer: &mut Vec<u8>,
+) -> Result<quick_xml::events::BytesStart<'static>, XmlError> {
+    loop {
+        match reader.read_event_into(buffer)? {
+            Event::Start(element) if local_name(&element) == "FatturaElettronica" => {
+                return Ok(element.into_owned());
             }
             Event::Eof => return Err(XmlError::MissingElement("FatturaElettronica".into())),
             _ => {}
         }
-        buf.clear();
+        buffer.clear();
     }
 }
 

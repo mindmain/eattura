@@ -41,6 +41,13 @@ pub(super) fn search_text(value: &Value, fields: &[&str]) -> String {
         .to_lowercase()
 }
 
+pub(super) fn archived_tax_errors(invoice: &Record) -> Vec<common::validation::ValidationError> {
+    let xml = invoice.0["xml_content"].as_str();
+    xml.and_then(|xml| common::xml::decode::decode_header(xml).ok().flatten())
+        .map(|header| common::validation::rules::validate_italian_party_tax_ids(&header))
+        .unwrap_or_default()
+}
+
 impl Index {
     pub fn build(data: &Data, files: &BTreeMap<String, String>, auxiliary_file: String) -> Self {
         let mut index = Self {
@@ -103,6 +110,11 @@ impl Index {
                 .or_else(|| previous.and_then(|r| r.0["file"].as_str().map(str::to_owned)))
                 .expect("Invoice document path must exist");
             entry.0["file"] = json!(file);
+            entry.0["tax_id_errors"] = if data.dirty.contains(&id) {
+                json!(archived_tax_errors(invoice))
+            } else {
+                previous.map(|record| record.0["tax_id_errors"].clone()).unwrap_or(Value::Null)
+            };
             let line_terms = if data.dirty.contains(&id) {
                 items(data, "invoice_lines")
                     .iter()

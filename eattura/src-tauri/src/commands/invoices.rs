@@ -17,6 +17,8 @@ pub struct InvoiceSummary {
     pub cedente_denominazione: String,
     pub cessionario_denominazione: String,
     pub stato: String,
+    #[serde(default)]
+    pub tax_id_errors: Vec<ValidationErrorDto>,
     /// Relative to the configured owner company:
     /// `sale` (owner is cedente → income), `purchase` (owner is cessionario →
     /// cost), or `unknown` (owner not configured or on neither side).
@@ -161,6 +163,8 @@ pub struct InvoiceDetail {
     pub importo_totale: Option<f64>,
     pub total_calculated: bool,
     pub stato: String,
+    #[serde(default)]
+    pub tax_id_errors: Vec<ValidationErrorDto>,
     pub cedente_id: String,
     pub cessionario_id: String,
     pub cedente_denominazione: String,
@@ -539,12 +543,30 @@ pub struct ValidationResultDto {
 }
 
 /// A single validation error.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ValidationErrorDto {
     pub code: String,
     pub message: String,
     pub element_path: Option<String>,
+}
+
+impl From<common::validation::ValidationError> for ValidationErrorDto {
+    fn from(error: common::validation::ValidationError) -> Self {
+        Self {
+            code: error.code,
+            message: error.message,
+            element_path: error.element_path,
+        }
+    }
+}
+
+fn tax_id_errors(row: &crate::storage::Record) -> Vec<ValidationErrorDto> {
+    row.get::<Option<Vec<common::validation::ValidationError>>>("tax_id_errors")
+        .unwrap_or_default()
+        .into_iter()
+        .map(ValidationErrorDto::from)
+        .collect()
 }
 
 /// List all invoices from the local file store.
@@ -644,6 +666,7 @@ pub async fn list_invoices_store(
                 cedente_denominazione: row.get("cedente_denominazione"),
                 cessionario_denominazione: row.get("cessionario_denominazione"),
                 stato: row.get("stato"),
+                tax_id_errors: tax_id_errors(row),
                 direction,
                 is_signed: row.get::<Option<bool>>("is_signed").unwrap_or(false),
                 is_autofattura,
@@ -1432,11 +1455,7 @@ pub async fn validate_invoice_store(
         errors: result
             .errors
             .into_iter()
-            .map(|e| ValidationErrorDto {
-                code: e.code,
-                message: e.message,
-                element_path: e.element_path,
-            })
+            .map(ValidationErrorDto::from)
             .collect(),
     })
 }
@@ -2371,6 +2390,7 @@ pub(crate) async fn fetch_invoice_detail(
         total_calculated: declared_total.is_none() && inferred_total.is_some(),
         netto_a_pagare: displayed_netto,
         stato: invoice_row.get("stato"),
+        tax_id_errors: tax_id_errors(&names_row),
         cedente_id: invoice_row.get("cedente_id"),
         cessionario_id: invoice_row.get("cessionario_id"),
         cedente_denominazione: names_row.get("cedente_denominazione"),
@@ -3919,6 +3939,43 @@ mod tests {
                 .unwrap_err()
                 .contains("Illegal status transition: accepted → draft")
         );
+    }
+
+    #[tokio::test]
+    async fn archived_vat_warning_uses_the_original_xml_after_reopening_an_older_catalog() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("index.json");
+        let store = crate::storage::FileStore::open(path.clone()).unwrap();
+        let (seller, buyer) = setup_test_parties(&store).await;
+        let invoice = create_invoice_store(&store, sample_invoice_request(&seller, &buyer, "1"))
+            .await
+            .unwrap();
+        let mut document = build_fattura_from_store(&store, &invoice.id).await.unwrap();
+        document.header.as_mut().unwrap().cessionario_committente.as_mut().unwrap()
+            .dati_anagrafici.as_mut().unwrap().id_fiscale_iva.as_mut().unwrap()
+            .id_codice = "09876543210".into();
+        let xml = common::xml::encode::encode(&document).unwrap();
+        store.update("invoices", &invoice.id, json!({"stato": "imported", "xml_content": xml}))
+            .await.unwrap();
+        let listed = list_invoices_store(&store).await.unwrap();
+        assert_eq!(listed[0].tax_id_errors.len(), 1);
+        assert_eq!(listed[0].tax_id_errors[0].code, "00305");
+        drop(store);
+
+        let mut catalog: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        catalog["invoices"]["entities"][&invoice.id].as_object_mut().unwrap().remove("tax_id_errors");
+        let legacy_catalog = serde_json::to_vec(&catalog).unwrap();
+        std::fs::write(&path, &legacy_catalog).unwrap();
+
+        let reopened = crate::storage::FileStore::open(path.clone()).unwrap();
+        let listed = list_invoices_store(&reopened).await.unwrap();
+        assert_eq!(listed[0].tax_id_errors[0].code, "00305");
+        let detail = fetch_invoice_detail(&reopened, &invoice.id).await.unwrap();
+        assert_eq!(detail.stato, "imported");
+        assert_eq!(detail.tax_id_errors[0].code, "00305");
+        assert!(!validate_invoice_store(&reopened, &invoice.id).await.unwrap().valid);
+        assert!(set_invoice_status_store(&reopened, &invoice.id, "validated").await.is_err());
+        assert_eq!(std::fs::read(path).unwrap(), legacy_catalog);
     }
 
     #[tokio::test]

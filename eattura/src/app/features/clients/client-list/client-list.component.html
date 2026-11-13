@@ -31,7 +31,12 @@
               <span class="badge badge-pa ml-1">PA</span>
             }
           </td>
-          <td>{{ client.idPaese }}{{ client.idCodice }}</td>
+          <td>
+            {{ client.idPaese }}{{ client.idCodice }}
+            @if (client.hasTaxIdError) {
+              <span class="badge badge-rejected">Errore fiscale</span>
+            }
+          </td>
           <td>{{ client.comune }}</td>
           <td class="text-right actions-cell">
             <button class="btn-secondary btn-sm" (click)="navigateToEdit(client.id)">Modifica</button>

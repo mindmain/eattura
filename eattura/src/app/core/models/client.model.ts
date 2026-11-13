@@ -5,6 +5,7 @@ export interface ClientSummary {
   cognome: string | null;
   idPaese: string;
   idCodice: string;
+  hasTaxIdError?: boolean;
   comune: string;
   /** Searchable metadata from the in-memory desktop index. */
   searchText?: string;

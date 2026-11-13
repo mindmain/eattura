@@ -7,6 +7,7 @@ import { SettingsStore } from "../../core/stores/settings.store";
 import { InvoiceStore } from "../../core/stores/invoice.store";
 import { NotificationService } from "../../core/services/notification.service";
 import { signal } from "@angular/core";
+import { italianTaxIds } from "../../core/models/italian-tax-id";
 import { REGIME_FISCALE } from "../../core/models/sdi.model";
 import { ThemeService, type ThemePreference } from "../../core/services/theme.service";
 import { LucideAngularModule, Monitor, Moon, Sun } from "lucide-angular";
@@ -42,7 +43,7 @@ export class SettingsComponent implements OnInit {
     nome: [""],
     cognome: [""],
     idPaese: ["IT", Validators.required],
-    idCodice: ["", [Validators.required, Validators.pattern(/^[0-9]{11}$/)]],
+    idCodice: ["", Validators.required],
     codiceFiscale: [""],
     regimeFiscale: ["RF01"],
     indirizzo: ["", Validators.required],
@@ -54,7 +55,7 @@ export class SettingsComponent implements OnInit {
     telefono: [""],
     email: ["", Validators.email],
     pec: ["", Validators.email],
-  });
+  }, { validators: italianTaxIds });
 
   pecForm = this.fb.group({
     pecEmail: ["", Validators.email],
@@ -138,7 +139,7 @@ export class SettingsComponent implements OnInit {
   async saveCompany(): Promise<void> {
     if (this.companyForm.invalid) {
       this.companyForm.markAllAsTouched();
-      this.notify.error("Compila i campi obbligatori dei dati del cedente");
+      this.notify.error("Controlla i campi evidenziati nei dati del cedente");
       return;
     }
     const v = this.companyForm.getRawValue();
@@ -147,9 +148,9 @@ export class SettingsComponent implements OnInit {
         denominazione: this.subjectType() === "azienda" ? v.denominazione?.trim() || null : null,
         nome: this.subjectType() === "persona" ? v.nome?.trim() || null : null,
         cognome: this.subjectType() === "persona" ? v.cognome?.trim() || null : null,
-        id_paese: v.idPaese!,
-        id_codice: v.idCodice!,
-        codice_fiscale: v.codiceFiscale || null,
+        id_paese: v.idPaese!.trim().toUpperCase(),
+        id_codice: v.idCodice!.trim(),
+        codice_fiscale: v.codiceFiscale?.trim().toUpperCase() || null,
         regime_fiscale: v.regimeFiscale || "RF01",
         indirizzo: v.indirizzo!,
         numero_civico: v.numeroCivico || null,

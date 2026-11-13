@@ -1,4 +1,4 @@
-use super::{tests::minimal_invoice, validate};
+use super::{tests::minimal_invoice, validate, validate_italian_party_tax_ids};
 use crate::sdi::v1::*;
 
 fn check(invoice: &FatturaElettronica, expected: &[&str]) {
@@ -540,6 +540,26 @@ fn sdi_00300_to_00306_identify_the_role_of_invalid_italian_tax_ids() {
             "00300", "00301", "00302", "00303", "00304", "00305", "00306",
         ],
     );
+}
+
+#[test]
+fn italian_tax_checks_skip_foreign_identifiers_and_check_a_domestic_fiscal_code_without_vat() {
+    let mut invoice = minimal_invoice();
+    let buyer = customer(&mut invoice);
+    buyer.codice_fiscale = Some("FOREIGN-ID".into());
+    let vat = buyer.id_fiscale_iva.as_mut().unwrap();
+    vat.id_paese = "DE".into();
+    vat.id_codice = "FOREIGN-VAT".into();
+    check(&invoice, &[]);
+    assert!(validate_italian_party_tax_ids(invoice.header.as_ref().unwrap()).is_empty());
+
+    let buyer = customer(&mut invoice);
+    buyer.id_fiscale_iva = None;
+    buyer.codice_fiscale = Some("RSSMRA80A01H501V".into());
+    check(&invoice, &["00306"]);
+    let issues = validate_italian_party_tax_ids(invoice.header.as_ref().unwrap());
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].code, "00306");
 }
 
 #[test]

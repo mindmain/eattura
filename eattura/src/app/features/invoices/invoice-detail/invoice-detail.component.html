@@ -55,6 +55,19 @@
       </div>
     </div>
 
+    @if (inv.taxIdErrors?.length) {
+      <section class="sdi-pec-warning mb-2" aria-label="Errori negli identificativi fiscali">
+        <div>
+          <strong>Identificativi fiscali da verificare</strong>
+          <ul>
+            @for (error of inv.taxIdErrors; track error.elementPath) {
+              <li>{{ taxIdErrorLabel(error.elementPath) }}. Controlla il formato e il codice di controllo.</li>
+            }
+          </ul>
+        </div>
+      </section>
+    }
+
     @if (inv.pendingPecFilename; as filename) {
       <section class="card mb-2" aria-label="Verifica tentativo PEC">
         <p role="status">Verifica nella casella PEC l’esito del tentativo per <code>{{ filename }}</code> prima di riprovare.</p>

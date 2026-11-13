@@ -19,7 +19,7 @@ describe("SettingsComponent issuer identity", () => {
       ],
     });
     component = TestBed.runInInjectionContext(() => new SettingsComponent());
-    component.companyForm.patchValue({ idCodice: "12345678901", indirizzo: "Via Roma", cap: "00100", comune: "Roma" });
+    component.companyForm.patchValue({ idCodice: "12345678903", indirizzo: "Via Roma", cap: "00100", comune: "Roma" });
   });
 
   it("requires a company name for a business", async () => {
@@ -45,6 +45,26 @@ describe("SettingsComponent issuer identity", () => {
     expect(saveCompany).not.toHaveBeenCalled();
   });
 
+  it("blocks Italian VAT and fiscal code typos and rechecks when the country changes", async () => {
+    component.companyForm.patchValue({
+      denominazione: "Example",
+      idCodice: "12345678901",
+      codiceFiscale: "RSSMRA80A01H501V",
+    });
+
+    expect(component.companyForm.hasError("invalidVat")).toBe(true);
+    expect(component.companyForm.hasError("invalidFiscalCode")).toBe(true);
+    await component.saveCompany();
+    expect(saveCompany).not.toHaveBeenCalled();
+
+    component.companyForm.patchValue({ idCodice: "12345678903", codiceFiscale: "rssmra80a01h501u" });
+    expect(component.companyForm.valid).toBe(true);
+
+    component.companyForm.patchValue({ idPaese: "DE", idCodice: "Foreign VAT", codiceFiscale: "Foreign code" });
+    await component.saveCompany();
+    expect(saveCompany).toHaveBeenCalledWith(expect.objectContaining({ id_paese: "DE" }));
+  });
+
   it("restores a personal issuer when reopening settings", async () => {
     vi.mocked(TestBed.inject(SettingsStore).load).mockResolvedValueOnce({
       company: {
@@ -52,7 +72,7 @@ describe("SettingsComponent issuer identity", () => {
         nome: "Anna",
         cognome: "Verdi",
         id_paese: "IT",
-        id_codice: "12345678901",
+        id_codice: "12345678903",
         codice_fiscale: null,
         regime_fiscale: "RF19",
         indirizzo: "Via Roma",
