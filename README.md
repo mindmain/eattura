@@ -44,27 +44,44 @@ Full invoice documents live in `invoices/<revision>.json` and are loaded on dema
 
 ### Local MCP assistant
 
-The desktop app starts an authenticated MCP Streamable HTTP server at `http://127.0.0.1:18765/mcp`. **Open Eattura and keep it running before connecting your MCP client.** The server lives inside the desktop process: closing Eattura stops it; it is not a separate daemon. If a connection fails, open Eattura and retry. A port conflict or configuration error disables MCP without preventing the desktop app from opening; inspect the activity log and restart after resolving the problem.
+Eattura exposes MCP over **stdio**, using its installed executable with `--mcp-stdio`. **Open Eattura and keep it running before connecting your MCP client.** This mode starts no second GUI, archive, or PEC synchronization job. The desktop retains its shared in-memory store. Stdio processes connect to the running app through private OS IPC: Unix domain sockets on macOS/Linux, local named pipes on Windows. There is **no HTTP/TCP MCP listener**, public endpoint, tunnel, or external bridge dependency.
 
-In **Impostazioni app → Assistenti AI · MCP locale**, check the server status and explicitly reveal the client configuration. The same configuration is written to `~/.eattura/mcp.json`; its bearer token is stored in `~/.eattura/mcp-token`. Both files are created with owner-only permissions on Unix systems. Treat both as private credentials: do not commit, share or paste their contents into a conversation. To rotate the token, close Eattura, remove these two MCP files, reopen the app, and update your authorized clients with the new configuration.
+In **Impostazioni app → Assistenti AI · MCP locale**, check stdio status and optionally show client configuration, also written to `~/.eattura/mcp.json`. It contains only the executable path and arguments, not credentials. Internal IPC uses `~/.eattura/mcp-token` and runtime discovery in `~/.eattura/mcp-ipc.json`. Never share these internal files. Mutual nonce-based HMAC-SHA256 authentication prevents connections or impersonation without the secret. Files use owner-only permissions on Unix; sockets sit in random private directories. Windows pipes reject remote clients. There are up to 16 IPC sessions, ten-second authentication/initialization timeouts, 35-second forwarded requests, and 2 MiB MCP message/result limits. A process lock prevents duplicate MCP listeners for the same data directory. MCP failure does not prevent opening the app: inspect activity logs, resolve permissions or duplicate instances, and restart.
 
-The generated configuration uses the following shape; adapt it to the configuration format of your native MCP client:
+#### One-button local client setup
+
+Select **Cerca assistenti installati**. Only detected local applications appear; Gemini Web is excluded. Discovery is read-only, never launches clients, and reads standard user configuration files only (up to 1 MiB). Portable, Store, or custom installations may not be detected. Configuration presence does not prove connectivity; project/managed settings can override it.
+
+| Detected client | Direct stdio registration |
+| --- | --- |
+| Codex CLI / desktop | `command` and `args` in `~/.codex/config.toml`. |
+| Claude Code | A user-scoped stdio entry in `~/.claude.json`. |
+| Gemini CLI | `command` and `args` in `~/.gemini/settings.json`. |
+| Claude Desktop (macOS / Windows) | `command` and `args` in the user's `claude_desktop_config.json`. Automatic Linux setup is not currently supported. |
+| ChatGPT desktop | If detected, explains the remote requirement. **Stdio does not enable local MCP in ChatGPT.** No fake install button, guide, or tunnel is offered. |
+
+Read the access warning, close the client, and select **Installa MCP in …**. The single click writes registration directly, without guides or a second in-app confirmation. Every supported client launches the bundled `--mcp-stdio` mode; no tokens are copied into client configuration, and no packages are installed. Requested invoice/customer data may be processed by the client's AI provider. Restart the client, check MCP status, and keep Eattura open. Client-side permissions or enterprise policies may still require approval.
+
+An exact previously generated HTTP entry is migrated when its URL and token match the current app. Identical stdio registrations stay unchanged. Modified/conflicting entries, invalid/oversized files, and symlinks require manual review and are not overwritten. Unrelated settings, other servers, and TOML comments are preserved. Changed existing files receive private sibling `*.eattura-<id>.bak` backups; temporary/new files and backups use `0600` on Unix. Backups may contain old tokens or other secrets: keep them private. Writes compare the original before replacement and serialize Eattura setup operations; close the client to avoid external writers. Custom `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, or `GEMINI_CLI_HOME` values require manual setup. Only configuration paths within the current user's home are accepted.
+
+The registration key is `eattura-open-app-required`. Discovery/install commands are desktop IPC, **not MCP tools**. To undo setup, close the client and restore its backup. Moving Eattura requires reviewing the executable path. To rotate IPC credentials, close Eattura and its MCP clients, remove `~/.eattura/mcp-token`, reopen Eattura, and restart the clients; stdio registration needs no token update. Never automatically retry interrupted draft creation: check the app for a saved draft first.
+
+Implementation references: [Codex MCP](https://developers.openai.com/codex/mcp), [Claude Code MCP](https://code.claude.com/docs/en/mcp), [Claude Desktop configuration](https://github.com/modelcontextprotocol/docs/blob/main/quickstart/user.mdx), [Gemini CLI MCP](https://geminicli.com/docs/tools/mcp-server/), [ChatGPT remote requirements](https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt). Installation buttons do not redirect to these references.
+
+Example JSON (replace the executable path; Claude Code also uses `"type": "stdio"`; Codex uses equivalent TOML):
 
 ```json
 {
   "mcpServers": {
     "eattura-open-app-required": {
-      "type": "http",
-      "url": "http://127.0.0.1:18765/mcp",
-      "headers": {
-        "Authorization": "Bearer <copy the private token from Eattura settings>"
-      }
+      "command": "/absolute/path/to/eattura",
+      "args": ["--mcp-stdio"]
     }
   }
 }
 ```
 
-Client registration is manual: Eattura does not modify other applications' configuration files. Clients must support Streamable HTTP and a custom Authorization header. The endpoint binds only to IPv4 loopback, rejects browser Origin headers and unrecognized Host headers, limits request bodies to 2 MiB and requests to 30 seconds, and does not enable CORS. It is intended for trusted native clients on the same computer, not browser clients, remote/cloud connectors or other devices. Possession of the token authorizes access to the current desktop user's entire local invoice archive and creation of drafts; there are no separate per-client archive permissions.
+Authorization covers the current desktop user's invoice archive and draft creation; there are no per-client archive scopes. The stdio process never opens an archive independently. If the app is unavailable it fails with an instruction to open Eattura, without exposing secrets. Stdout is reserved for MCP messages.
 
 Available tools:
 
@@ -77,7 +94,7 @@ Available tools:
 | `create_draft` | Create a new draft using existing issuer/customer IDs and the desktop invoice request schema. |
 | `validate_invoice` | Report local validation errors without changing invoice status. |
 
-**MCP cannot send, issue, promote, edit or delete invoices, change their status, change settings, or access PEC credentials.** New drafts appear in the app through a desktop event. The user must review the draft and personally validate and send it in Eattura. Local validation is not an SDI submission or acceptance. The server's initialization description, title and instructions explicitly state the open-app requirement and the no-transmission policy. When the app is closed, the endpoint cannot return instructions; the visible registration name and this setup guidance remind the user to open it.
+**MCP cannot send, issue, promote, edit or delete invoices, change their status, change settings, or access PEC credentials.** New drafts appear in the app through a desktop event. The user must review the draft and personally validate and send it in Eattura. Local validation is not an SDI submission or acceptance. The server's initialization description, title and instructions explicitly state the open-app requirement and the no-transmission policy. When the app is closed, the stdio process cannot connect; the visible registration name and this setup guidance remind the user to open it.
 
 ### Definizioni Protobuf
 

@@ -8,10 +8,22 @@ import { AppLogService } from "./app-log.service";
 
 export interface McpStatus {
   running: boolean;
-  endpoint: string;
+  transport: "stdio";
   configPath: string;
   description: string;
   error: string | null;
+}
+
+export type McpClientId = "codex" | "claude-code" | "gemini-cli" | "claude-desktop" | "chatgpt";
+
+export interface McpClient {
+  id: McpClientId;
+  name: string;
+  installed: boolean;
+  configured: boolean;
+  canInstall: boolean;
+  configPath: string | null;
+  detail: string;
 }
 
 @Injectable({ providedIn: "root" })
@@ -31,6 +43,15 @@ export class McpService {
   async clientConfig(): Promise<string> {
     const config = await this.tauri.invoke<unknown>("get_mcp_client_config");
     return JSON.stringify(config, null, 2);
+  }
+
+  async scanClients(): Promise<McpClient[]> {
+    return isTauri() ? this.tauri.invoke<McpClient[]>("scan_mcp_clients") : [];
+  }
+
+  async installClient(clientId: McpClientId): Promise<McpClient> {
+    if (!isTauri()) throw new Error("Apri Eattura per collegare un client MCP.");
+    return this.tauri.invoke<McpClient>("install_mcp_client", { clientId });
   }
 
   async start(): Promise<void> {

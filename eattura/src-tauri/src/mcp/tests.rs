@@ -1,9 +1,6 @@
-use axum::{
-    body::{Body, to_bytes},
-    http::{Request, StatusCode},
-};
+use rmcp::{ServiceExt, model::ClientRequest};
+use secrecy::ExposeSecret;
 use serde_json::{Value, json};
-use tower::ServiceExt;
 
 use super::*;
 use crate::commands::{clients, invoices};
@@ -11,7 +8,7 @@ use crate::commands::{clients, invoices};
 struct Fixture {
     _dir: tempfile::TempDir,
     store: FileStore,
-    app: Router,
+    app: InvoiceServer,
     token: Arc<SecretString>,
     drafts: Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -23,10 +20,7 @@ impl Fixture {
         let token = Arc::new(load_token(&dir.path().join("mcp-token")).unwrap());
         let drafts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counter = drafts.clone();
-        let app = router(
-            store.clone(),
-            AppLog::memory(),
-            token.clone(),
+        let app = InvoiceServer::new(store.clone(), AppLog::memory()).with_draft_callback(
             Arc::new(move || {
                 counter.fetch_add(1, Ordering::Relaxed);
             }),
@@ -40,36 +34,29 @@ impl Fixture {
         }
     }
 
-    fn request(&self, message: Value) -> Request<Body> {
-        Request::builder()
-            .method("POST")
-            .uri("/mcp")
-            .header("host", format!("127.0.0.1:{PORT}"))
-            .header("content-type", "application/json")
-            .header("accept", "application/json, text/event-stream")
-            .header("mcp-protocol-version", "2025-11-25")
-            .header(
-                "authorization",
-                format!("Bearer {}", self.token.expose_secret()),
-            )
-            .body(Body::from(message.to_string()))
-            .unwrap()
-    }
-
     async fn rpc(&self, method: &str, params: Value) -> Value {
-        let response = self
-            .app
-            .clone()
-            .oneshot(self.request(json!({
-                "jsonrpc": "2.0", "id": 1, "method": method, "params": params
-            })))
+        let (mut client_io, server_io) = tokio::io::duplex(16 * 1024);
+        let app = self.app.clone();
+        let token = self.token.clone();
+        let task = tokio::spawn(async move { serve_connection(server_io, &token, app).await });
+        ipc::authenticate_client(&mut client_io, &self.token)
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        let bytes = to_bytes(response.into_body(), 4 * 1024 * 1024)
-            .await
-            .unwrap();
-        serde_json::from_slice(&bytes).unwrap()
+        let client = ().serve(client_io).await.unwrap();
+        let response = if method == "initialize" {
+            json!({"result": client.peer_info()})
+        } else {
+            let request: ClientRequest =
+                serde_json::from_value(json!({"method": method, "params": params})).unwrap();
+            match client.send_request(request).await {
+                Ok(result) => json!({"result": result}),
+                Err(_) => json!({"error": "Request rejected"}),
+            }
+        };
+        let _ = client.cancel().await;
+        task.abort();
+        let _ = task.await;
+        response
     }
 
     async fn call(&self, name: &str, arguments: Value) -> Value {
@@ -158,46 +145,6 @@ async fn initialize_describes_open_app_requirement_and_tool_allowlist() {
             tool["name"] != "create_draft"
         );
         assert_eq!(tool["annotations"]["openWorldHint"], false);
-    }
-}
-
-#[tokio::test]
-async fn credentials_are_required_and_other_user_tokens_are_rejected() {
-    let fixture = Fixture::new();
-    let other = Fixture::new();
-    for authorization in [
-        None,
-        Some(format!("Bearer {}", other.token.expose_secret())),
-    ] {
-        let mut request =
-            fixture.request(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}));
-        request.headers_mut().remove("authorization");
-        if let Some(value) = authorization {
-            request
-                .headers_mut()
-                .insert("authorization", value.parse().unwrap());
-        }
-        let response = fixture.app.clone().oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        let text = String::from_utf8(to_bytes(response.into_body(), 4096).await.unwrap().to_vec())
-            .unwrap();
-        assert!(!text.contains(fixture.token.expose_secret()));
-    }
-}
-
-#[tokio::test]
-async fn foreign_origins_and_rebinding_hosts_are_rejected() {
-    let fixture = Fixture::new();
-    for (header, value) in [
-        ("origin", "https://untrusted.example"),
-        ("origin", "null"),
-        ("host", "untrusted.example:18765"),
-    ] {
-        let mut request =
-            fixture.request(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}));
-        request.headers_mut().insert(header, value.parse().unwrap());
-        let response = fixture.app.clone().oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }
 
@@ -354,13 +301,15 @@ fn token_and_client_configuration_are_stable_and_private() {
     let second = load_token(&token_path).unwrap();
     assert_eq!(first.expose_secret(), second.expose_secret());
     let config_path = dir.path().join("mcp.json");
-    write_config(&config_path, &first).unwrap();
-    write_config(&config_path, &first).unwrap();
+    write_json(&config_path, &client_config().unwrap()).unwrap();
+    write_json(&config_path, &client_config().unwrap()).unwrap();
     let config: Value = serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
-    assert_eq!(config, client_config(&first));
+    assert_eq!(config, client_config().unwrap());
+    assert!(!config.to_string().contains(first.expose_secret()));
+    assert!(!config.to_string().contains("Authorization"));
     assert_eq!(
-        config["mcpServers"]["eattura-open-app-required"]["url"],
-        ENDPOINT
+        config["mcpServers"]["eattura-open-app-required"]["args"],
+        json!(["--mcp-stdio"])
     );
     #[cfg(unix)]
     {
@@ -379,14 +328,34 @@ fn token_and_client_configuration_are_stable_and_private() {
 #[tokio::test]
 async fn oversized_requests_are_rejected() {
     let fixture = Fixture::new();
-    let response = fixture
-        .app
-        .clone()
-        .oneshot(fixture.request(json!({
-            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": {"name": "list_invoices", "arguments": {"query": "x".repeat(2 * 1024 * 1024)}}
-        })))
+    let (mut client_io, server_io) = tokio::io::duplex(16 * 1024);
+    let app = fixture.app.clone();
+    let token = fixture.token.clone();
+    let task = tokio::spawn(async move { serve_connection(server_io, &token, app).await });
+    ipc::authenticate_client(&mut client_io, &fixture.token)
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let client = ().serve(client_io).await.unwrap();
+    let arguments = serde_json::from_value(json!({"query": "x".repeat(MAX_MESSAGE_SIZE)})).unwrap();
+    let oversized =
+        rmcp::model::CallToolRequestParams::new("list_invoices").with_arguments(arguments);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), client.call_tool(oversized))
+            .await
+            .is_err()
+    );
+    let healthy = tokio::time::timeout(Duration::from_secs(1), client.list_tools(None))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(healthy.tools.len(), 7);
+    assert!(
+        invoices::list_invoices_store(&fixture.store)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let _ = client.cancel().await;
+    task.abort();
+    let _ = task.await;
 }

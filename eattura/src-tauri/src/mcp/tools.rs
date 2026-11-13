@@ -60,12 +60,15 @@ pub struct DraftParams {
 
 fn result<T: Serialize>(value: Result<T, String>) -> CallToolResult {
     match value.and_then(|value| serde_json::to_value(value).map_err(|error| error.to_string())) {
-        Ok(value) => match serde_json::to_vec(&value) {
-            Ok(bytes) if bytes.len() <= 2 * 1024 * 1024 => CallToolResult::structured(value),
-            _ => CallToolResult::error(vec![ContentBlock::text(
-                "Result too large; narrow the request or open the invoice in Eattura",
-            )]),
-        },
+        Ok(value) => {
+            let response = CallToolResult::structured(value);
+            match serde_json::to_vec(&response) {
+                Ok(bytes) if bytes.len() <= super::MAX_MESSAGE_SIZE - 4096 => response,
+                _ => CallToolResult::error(vec![ContentBlock::text(
+                    "Result too large; narrow the request or open the invoice in Eattura",
+                )]),
+            }
+        }
         Err(error) => CallToolResult::error(vec![ContentBlock::text(error)]),
     }
 }
@@ -253,5 +256,22 @@ impl ServerHandler for InvoiceServer {
                     .with_description(DESCRIPTION),
             )
             .with_instructions(INSTRUCTIONS)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn size_limit_includes_text_and_structured_content_with_rpc_headroom() {
+        let response = result(Ok(
+            json!({"text": "x".repeat(super::super::MAX_MESSAGE_SIZE / 2)}),
+        ));
+        assert_eq!(response.is_error, Some(true));
+        assert!(serde_json::to_vec(&response).unwrap().len() < super::super::MAX_MESSAGE_SIZE);
+        let response = result(Ok(json!({"text": "small"})));
+        assert_eq!(response.is_error, Some(false));
+        assert_eq!(response.structured_content.unwrap()["text"], "small");
     }
 }

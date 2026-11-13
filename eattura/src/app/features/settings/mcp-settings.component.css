@@ -1,5 +1,10 @@
 section { margin: 0 0 2.5rem; padding: 1.25rem; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface-soft); }
 h2 { font-size: 1.1rem; margin: 0 0 0.75rem; }
+h3 { margin-top: 1.5rem; font-size: 1rem; }
+h4 { margin: 0; font-size: 0.95rem; }
+.clients { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); gap: 1rem; margin: 1rem 0; }
+.client { padding: 1rem; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-solid); }
+.config-path { overflow-wrap: anywhere; }
 p, dt, dd { font-size: 0.9rem; line-height: 1.6; }
 p { color: var(--text-secondary); margin: 0.75rem 0; }
 dt { color: var(--text-muted); margin-top: 0.5rem; }

@@ -33,6 +33,8 @@ describe("McpService", () => {
   it("does not attempt a desktop connection in a browser", async () => {
     runtime.desktop = false;
     expect(await service.status()).toBeNull();
+    expect(await service.scanClients()).toEqual([]);
+    await expect(service.installClient("codex")).rejects.toThrow("Apri Eattura");
     await service.start();
     expect(invoke).not.toHaveBeenCalled();
     expect(runtime.listen).not.toHaveBeenCalled();
@@ -75,6 +77,16 @@ describe("McpService", () => {
     invoke.mockResolvedValue({ mcpServers: {} });
     expect(await service.clientConfig()).toBe(JSON.stringify({ mcpServers: {} }, null, 2));
     expect(invoke).toHaveBeenLastCalledWith("get_mcp_client_config");
+  });
+
+  it("uses dedicated discovery and installation IPC without fetching configuration", async () => {
+    invoke.mockResolvedValue([]);
+    expect(await service.scanClients()).toEqual([]);
+    expect(invoke).toHaveBeenLastCalledWith("scan_mcp_clients");
+    invoke.mockResolvedValue({ id: "codex", configured: true });
+    expect(await service.installClient("codex")).toEqual({ id: "codex", configured: true });
+    expect(invoke).toHaveBeenLastCalledWith("install_mcp_client", { clientId: "codex" });
+    expect(invoke).not.toHaveBeenCalledWith("get_mcp_client_config");
   });
 
   it("does not retain an old registration when stopped and restarted before it resolves", async () => {

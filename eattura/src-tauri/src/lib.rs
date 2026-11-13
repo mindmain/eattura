@@ -16,6 +16,13 @@ use state::TauriState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--mcp-stdio")) {
+        if mcp::bridge::run().is_err() {
+            eprintln!("MCP unavailable. Open Eattura, keep it running and reconnect the MCP client.");
+            std::process::exit(1);
+        }
+        return;
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -76,6 +83,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             mcp::get_mcp_status,
             mcp::get_mcp_client_config,
+            mcp::clients::scan_mcp_clients,
+            mcp::clients::install_mcp_client,
             app_log::get_app_logs,
             app_log::write_app_log,
             app_log::open_app_log_directory,

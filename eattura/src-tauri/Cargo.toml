@@ -18,17 +18,17 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+dirs = "6"
+toml_edit = "0.23.10"
 sha2 = "0.10"
+hmac = "0.12"
 base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
-axum = "0.8.8"
-rmcp = { version = "3.8.0", features = ["transport-streamable-http-server"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+rmcp = { version = "3.8.0", features = ["client", "transport-io"] }
 schemars = "1"
 secrecy = "0.10"
-subtle = "2"
-tower-http = { version = "0.6.8", features = ["timeout"] }
 
 # PEC transport (SMTP send + IMAP receive), MIME parsing, and OS keyring.
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-native-tls"] }
@@ -45,4 +45,3 @@ tauri-build = { version = "2", features = [] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
-tower = { version = "0.5", features = ["util"] }
