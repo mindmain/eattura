@@ -137,13 +137,17 @@ async fn initialize_describes_open_app_requirement_and_tool_allowlist() {
             "list_clients",
             "list_invoices",
             "update_draft",
+            "update_draft_lines",
             "validate_invoice"
         ]
     );
     for tool in tools {
         assert_eq!(
             tool["annotations"]["readOnlyHint"],
-            tool["name"] != "create_draft" && tool["name"] != "update_draft"
+            !matches!(
+                tool["name"].as_str(),
+                Some("create_draft" | "update_draft" | "update_draft_lines")
+            )
         );
         assert_eq!(tool["annotations"]["openWorldHint"], false);
     }
@@ -278,6 +282,96 @@ async fn draft_updates_require_current_revision_and_preserve_attachments() {
         draft.linee[0].data_fine_periodo.as_deref(),
         Some("2026-03-31")
     );
+}
+
+#[tokio::test]
+async fn line_patches_preserve_draft_parties_and_unrelated_fields() {
+    let fixture = Fixture::new();
+    let (issuer, customer) = fixture.parties().await;
+    let mut request = draft(&issuer, &customer);
+    request["invoice"]["linee"][0]["dataInizioPeriodo"] = json!("2026-10-01");
+    request["invoice"]["linee"][0]["dataFinePeriodo"] = json!("2026-10-31");
+    request["invoice"]["linee"][0]["codiceArticolo"] =
+        json!([{"codiceTipo": "SKU", "codiceValore": "SVC"}]);
+    request["invoice"]["linee"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"descrizione":"Second", "prezzoUnitario": 200, "aliquotaIva": 22}));
+    let created = fixture.call("create_draft", request).await;
+    let created = &created["result"]["structuredContent"];
+    let id = created["id"].as_str().unwrap();
+    let revision = &created["revision"];
+    let mut replace = draft(&issuer, &customer);
+    replace["id"] = json!(id);
+    replace["expectedRevision"] = revision.clone();
+    for field in ["cedenteId", "cessionarioId", "soggettoEmittente"] {
+        let mut attempt = replace.clone();
+        attempt["invoice"][field] = json!(if field == "cedenteId" {
+            &customer
+        } else if field == "cessionarioId" {
+            &issuer
+        } else {
+            "CC"
+        });
+        assert!(failed(&fixture.call("update_draft", attempt).await));
+    }
+    for linee in [
+        json!([{"numeroLinea": 1, "descrizione":"Must not persist"}, {"numeroLinea": 2, "dataFinePeriodo":"bad"}]),
+        json!([{"numeroLinea": 1, "dataFinePeriodo":"2026-09-30"}]),
+        json!([{"numeroLinea": 1, "descrizione":"First"}, {"numeroLinea": 1, "descrizione":"Duplicate"}]),
+        json!([{"numeroLinea": 99, "descrizione":"Missing"}]),
+        json!([{"numeroLinea": 1, "cedenteId": customer}]),
+    ] {
+        assert!(failed(
+            &fixture
+                .call(
+                    "update_draft_lines",
+                    json!({"id":id, "expectedRevision":revision, "linee":linee})
+                )
+                .await
+        ));
+    }
+    let before = fixture.call("get_invoice", json!({"id":id})).await;
+    let before = &before["result"]["structuredContent"];
+    assert_eq!(before["revision"], *revision);
+    assert_eq!(before["linee"][0]["descrizione"], "Consulting");
+    let update = json!({"id":id, "expectedRevision":revision, "linee":[
+        {"numeroLinea":1,"descrizione":"October support","dataInizioPeriodo":null},
+        {"numeroLinea":2,"dataInizioPeriodo":"2026-11-01","dataFinePeriodo":"2026-11-30"}
+    ]});
+    let saved = fixture.call("update_draft_lines", update.clone()).await;
+    assert!(!failed(&saved), "{saved}");
+    assert_eq!(saved["result"]["structuredContent"]["id"], id);
+    assert_eq!(fixture.drafts.load(Ordering::Relaxed), 2);
+    assert!(failed(&fixture.call("update_draft_lines", update).await));
+
+    let reopened = FileStore::open(fixture._dir.path().join("eattura.json")).unwrap();
+    let detail = invoices::fetch_invoice_detail(&reopened, id).await.unwrap();
+    assert_eq!(detail.cedente_id, issuer);
+    assert_eq!(detail.cessionario_id, customer);
+    assert_eq!(detail.importo_totale, Some(366.0));
+    assert_eq!(
+        detail.linee[0].fields.codice_articolo[0].codice_valore,
+        "SVC"
+    );
+    let xml = invoices::export_invoice_xml_store(&reopened, id)
+        .await
+        .unwrap();
+    assert!(xml.contains("<Descrizione>October support</Descrizione>"));
+    assert!(!xml.contains("<DataInizioPeriodo>2026-10-01</DataInizioPeriodo>"));
+    assert!(xml.contains("<DataFinePeriodo>2026-10-31</DataFinePeriodo>"));
+    assert!(xml.contains("<DataInizioPeriodo>2026-11-01</DataInizioPeriodo>"));
+    assert!(xml.contains("<DataFinePeriodo>2026-11-30</DataFinePeriodo>"));
+
+    fixture
+        .store
+        .update("invoices", id, json!({"stato": "validated"}))
+        .await
+        .unwrap();
+    let detail = invoices::fetch_invoice_detail(&fixture.store, id)
+        .await
+        .unwrap();
+    assert!(failed(&fixture.call("update_draft_lines", json!({"id":id, "expectedRevision":detail.revision, "linee":[{"numeroLinea":1,"descrizione":"Blocked"}]})).await));
 }
 
 #[tokio::test]

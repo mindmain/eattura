@@ -26,6 +26,7 @@ const TOOL_NAMES: &[&str] = &[
     "get_client",
     "create_draft",
     "update_draft",
+    "update_draft_lines",
     "validate_invoice",
 ];
 

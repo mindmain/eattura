@@ -92,8 +92,11 @@ Available tools:
 | `get_invoice` | Read invoice details, payments and notification summaries; omit attachment bytes and raw receipt XML. |
 | `list_clients` / `get_client` | Find and read existing local client records. |
 | `create_draft` | Create a new draft using existing issuer/customer IDs and the desktop invoice request schema. |
-| `update_draft` | Update a saved draft using its ID and the current `revision` from `get_invoice` as `expectedRevision`. Supply the complete editable invoice and omit `allegati` to keep existing attachments. Use the ID and revision returned by the update for subsequent calls. |
+| `update_draft` | Replace editable draft content. Keep the issuer, customer and issuing subject unchanged. Omit `allegati` to keep existing attachments. |
+| `update_draft_lines` | Change descriptions and service period dates on existing draft lines in a single transaction. Supply only the fields to change. Use `null` to clear a period date. |
 | `validate_invoice` | Report local validation errors without changing invoice status. |
+
+For either update tool, read the draft with `get_invoice` first. Pass its ID and `revision` as `expectedRevision`, and use the returned ID and revision for later calls. For a targeted line update, pass a `linee` array such as `[{"numeroLinea":1,"descrizione":"October support","dataInizioPeriodo":"2026-10-01","dataFinePeriodo":"2026-10-31"}]`.
 
 Drafts are stored locally and appear in the app after creation or editing through MCP. The desktop user reviews the draft, promotes it to validated and initiates any transmission. Use the SdI receipt to check the outcome. If SMTP or the local write leaves an uncertain result, open the invoice and verify the indicated file in the PEC mailbox. A matching SdI receipt can reconcile the pending attempt automatically.
 

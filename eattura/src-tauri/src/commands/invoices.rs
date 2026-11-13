@@ -441,19 +441,37 @@ async fn insert_draft_lines(
     Ok(())
 }
 
+fn parse_line_date(number: usize, value: &str, field: &str) -> Result<chrono::NaiveDate, String> {
+    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .ok()
+        .filter(|date| date.format("%Y-%m-%d").to_string() == value && value.len() == 10)
+        .ok_or_else(|| {
+            format!(
+                "Line {}: {field} must be a date in YYYY-MM-DD format",
+                number
+            )
+        })
+}
+
+fn check_line_period(number: usize, start: Option<&str>, end: Option<&str>) -> Result<(), String> {
+    let start = start
+        .map(|value| parse_line_date(number, value, "dataInizioPeriodo"))
+        .transpose()?;
+    let end = end
+        .map(|value| parse_line_date(number, value, "dataFinePeriodo"))
+        .transpose()?;
+    if let (Some(start), Some(end)) = (start, end)
+        && start > end
+    {
+        return Err(format!(
+            "Line {number}: dataFinePeriodo precedes dataInizioPeriodo"
+        ));
+    }
+    Ok(())
+}
+
 fn check_draft_lines(lines: &[CreateLineRequest]) -> Result<(), String> {
     for (index, line) in lines.iter().enumerate() {
-        let parse = |value: &str, field: &str| {
-            chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
-                .ok()
-                .filter(|date| date.format("%Y-%m-%d").to_string() == value && value.len() == 10)
-                .ok_or_else(|| {
-                    format!(
-                        "Line {}: {field} must be a date in YYYY-MM-DD format",
-                        index + 1
-                    )
-                })
-        };
         use common::xml::enum_map::*;
         let fields = &line.fields;
         if fields
@@ -479,27 +497,14 @@ fn check_draft_lines(lines: &[CreateLineRequest]) -> Result<(), String> {
         }
         for item in &fields.altri_dati_gestionali {
             if let Some(date) = &item.riferimento_data {
-                parse(date, "riferimentoData")?;
+                parse_line_date(index + 1, date, "riferimentoData")?;
             }
         }
-        let start = line
-            .data_inizio_periodo
-            .as_deref()
-            .map(|value| parse(value, "dataInizioPeriodo"))
-            .transpose()?;
-        let end = line
-            .data_fine_periodo
-            .as_deref()
-            .map(|value| parse(value, "dataFinePeriodo"))
-            .transpose()?;
-        if let (Some(start), Some(end)) = (start, end)
-            && start > end
-        {
-            return Err(format!(
-                "Line {}: dataFinePeriodo precedes dataInizioPeriodo",
-                index + 1
-            ));
-        }
+        check_line_period(
+            index + 1,
+            line.data_inizio_periodo.as_deref(),
+            line.data_fine_periodo.as_deref(),
+        )?;
     }
     Ok(())
 }
@@ -935,15 +940,25 @@ pub async fn update_invoice(
     .await
 }
 
-pub async fn update_invoice_store(
-    store: &crate::storage::FileStore,
-    id: &str,
-    mut invoice: CreateInvoiceRequest,
-    expected_revision: Option<&str>,
-    preserve_attachments: bool,
-) -> Result<InvoiceDetail, String> {
-    let mut tx = store.begin().await.map_err(|e| e.to_string())?;
+fn effective_issuing_subject(invoice: &CreateInvoiceRequest) -> Option<String> {
+    invoice
+        .soggetto_emittente
+        .clone()
+        .or_else(|| is_autofattura_type(&invoice.tipo_documento).then(|| "CC".to_owned()))
+}
 
+fn is_autofattura_type(tipo_documento: &str) -> bool {
+    matches!(
+        tipo_documento,
+        "TD16" | "TD17" | "TD18" | "TD19" | "TD20" | "TD21" | "TD27"
+    )
+}
+
+async fn editable_draft(
+    tx: &crate::storage::Transaction,
+    id: &str,
+    expected_revision: Option<&str>,
+) -> Result<crate::storage::Record, String> {
     let row = tx
         .read("invoices", "invoice_views", vec![serde_json::json!(id)], "")
         .fetch_optional()
@@ -960,7 +975,132 @@ pub async fn update_invoice_store(
     {
         return Err("Draft changed. Reload the invoice before editing.".into());
     }
-    if preserve_attachments && invoice.allegati.is_none() {
+    Ok(row)
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DraftLinePatch {
+    #[schemars(range(min = 1, max = 9999))]
+    numero_linea: i32,
+    #[schemars(length(min = 1, max = 1000))]
+    descrizione: Option<String>,
+    /// Omit to preserve the start date. Use null to clear it.
+    #[serde(default, deserialize_with = "present_value")]
+    #[schemars(with = "Option<String>")]
+    data_inizio_periodo: Option<Option<String>>,
+    /// Omit to preserve the end date. Use null to clear it.
+    #[serde(default, deserialize_with = "present_value")]
+    #[schemars(with = "Option<String>")]
+    data_fine_periodo: Option<Option<String>>,
+}
+
+fn present_value<'de, D: serde::Deserializer<'de>>(
+    value: D,
+) -> Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(value).map(Some)
+}
+
+pub(crate) async fn update_draft_lines(
+    store: &crate::storage::FileStore,
+    id: &str,
+    expected_revision: &str,
+    patches: Vec<DraftLinePatch>,
+) -> Result<InvoiceDetail, String> {
+    if !(1..=9999).contains(&patches.len()) {
+        return Err("Supply between 1 and 9999 line updates.".into());
+    }
+    let mut tx = store.begin().await?;
+    editable_draft(&tx, id, Some(expected_revision)).await?;
+    let snapshot = tx.snapshot();
+    let rows = snapshot
+        .read(
+            "invoice_lines",
+            "invoice_children",
+            vec![serde_json::json!(id)],
+            "line",
+        )
+        .await
+        .fetch_all()
+        .await?;
+    let mut seen = std::collections::HashSet::new();
+    let mut updates = Vec::with_capacity(patches.len());
+
+    for patch in patches {
+        let number = patch.numero_linea;
+        if !seen.insert(number) {
+            return Err(format!("Line {number}: supply only one update per line."));
+        }
+        let row = rows
+            .iter()
+            .find(|row| row.get::<i32>("numero_linea") == number)
+            .ok_or_else(|| format!("Line {number} does not exist in this draft."))?;
+        let mut values = serde_json::Map::new();
+        if let Some(description) = patch.descrizione {
+            if description.trim().is_empty() || description.chars().count() > 1000 {
+                return Err(format!(
+                    "Line {number}: description must contain 1 to 1000 characters."
+                ));
+            }
+            values.insert("descrizione".into(), serde_json::json!(description));
+        }
+        if patch.data_inizio_periodo.is_some() || patch.data_fine_periodo.is_some() {
+            let start = patch
+                .data_inizio_periodo
+                .unwrap_or_else(|| row.get("data_inizio_periodo"));
+            let end = patch
+                .data_fine_periodo
+                .unwrap_or_else(|| row.get("data_fine_periodo"));
+            check_line_period(number as usize, start.as_deref(), end.as_deref())?;
+            values.insert("data_inizio_periodo".into(), serde_json::json!(start));
+            values.insert("data_fine_periodo".into(), serde_json::json!(end));
+        }
+        if values.is_empty() {
+            return Err(format!(
+                "Line {number}: supply a description or period date."
+            ));
+        }
+        updates.push((row.get::<String>("id"), serde_json::Value::Object(values)));
+    }
+
+    // Updating the header hydrates the document and marks it for persistence.
+    tx.update(
+        "invoices",
+        id,
+        serde_json::json!({"xml_content": null, "imported_from_xml": false}),
+    )
+    .await?;
+    for (line_id, values) in updates {
+        tx.update("invoice_lines", &line_id, values).await?;
+    }
+    tx.commit().await?;
+    fetch_invoice_detail(store, id).await
+}
+
+pub async fn update_invoice_store(
+    store: &crate::storage::FileStore,
+    id: &str,
+    mut invoice: CreateInvoiceRequest,
+    expected_revision: Option<&str>,
+    via_mcp: bool,
+) -> Result<InvoiceDetail, String> {
+    let mut tx = store.begin().await.map_err(|e| e.to_string())?;
+
+    let row = editable_draft(&tx, id, expected_revision).await?;
+    if via_mcp
+        && (row.get::<String>("cedente_id") != invoice.cedente_id
+            || row.get::<String>("cessionario_id") != invoice.cessionario_id
+            || is_autofattura_type(&row.get::<String>("tipo_documento"))
+                != is_autofattura_type(&invoice.tipo_documento)
+            || row.get::<Option<String>>("soggetto_emittente")
+                != effective_issuing_subject(&invoice))
+    {
+        return Err(
+            "MCP cannot change the issuer, customer or issuing subject of an existing draft."
+                .into(),
+        );
+    }
+    if via_mcp && invoice.allegati.is_none() {
         invoice.allegati =
             row.get::<Option<Vec<AttachmentDetail>>>("allegati")
                 .map(|attachments| {
@@ -995,18 +1135,8 @@ pub async fn update_invoice_store(
         is_split_payment,
     );
 
-    let is_autofattura = matches!(
-        invoice.tipo_documento.as_str(),
-        "TD16" | "TD17" | "TD18" | "TD19" | "TD20" | "TD21" | "TD27"
-    );
-    let soggetto_emittente = if is_autofattura {
-        invoice
-            .soggetto_emittente
-            .clone()
-            .or_else(|| Some("CC".to_string()))
-    } else {
-        invoice.soggetto_emittente.clone()
-    };
+    let is_autofattura = is_autofattura_type(&invoice.tipo_documento);
+    let soggetto_emittente = effective_issuing_subject(&invoice);
     let esigibilita_iva = if is_split_payment {
         Some("S".to_string())
     } else {
