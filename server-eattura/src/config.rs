@@ -3,12 +3,10 @@
 /// Expected env vars:
 /// - `HOST`: Bind address (default: "0.0.0.0")
 /// - `PORT`: Bind port (default: 3000)
-/// - `API_KEY`: Optional secret key required in `X-Api-Key` header
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
-    pub api_key: Option<String>,
 }
 
 impl ServerConfig {
@@ -20,13 +18,7 @@ impl ServerConfig {
             .ok()
             .and_then(|p| p.parse().ok())
             .unwrap_or(3000);
-        let api_key = std::env::var("API_KEY").ok();
-
-        Ok(Self {
-            host,
-            port,
-            api_key,
-        })
+        Ok(Self { host, port })
     }
 }
 
@@ -35,7 +27,6 @@ impl Default for ServerConfig {
         Self {
             host: "0.0.0.0".to_string(),
             port: 3000,
-            api_key: None,
         }
     }
 }

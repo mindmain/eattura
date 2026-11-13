@@ -35,9 +35,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/tools/convert/xml-to-json", post(tools::xml_to_json))
         .route("/api/tools/convert/json-to-xml", post(tools::json_to_xml))
         .route("/api/tools/render-pdf", post(tools::render_pdf))
-        .layer(axum::middleware::from_fn(
-            crate::middleware::require_api_key,
-        ))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state)

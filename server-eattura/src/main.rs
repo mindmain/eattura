@@ -4,7 +4,7 @@ use server_eattura::{config, router, state};
 ///
 /// Initializes:
 /// 1. Tracing subscriber for structured logging
-/// 2. Server configuration from environment variables (HOST, PORT, API_KEY)
+/// 2. Server configuration from environment variables (HOST and PORT)
 /// 3. In-memory ephemeral relay state and HTTP router
 /// 4. Binds to configured host:port and serves requests
 #[tokio::main]
@@ -38,7 +38,5 @@ async fn main() {
 
     tracing::info!("Stateless server listening on {addr}");
 
-    axum::serve(listener, app)
-        .await
-        .expect("Server error");
+    axum::serve(listener, app).await.expect("Server error");
 }

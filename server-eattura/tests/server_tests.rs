@@ -67,23 +67,19 @@ fn test_config_env_loading() {
     unsafe {
         std::env::set_var("HOST", "127.0.0.1");
         std::env::set_var("PORT", "9090");
-        std::env::set_var("API_KEY", "secret-test-key");
     }
     let config = server_eattura::config::ServerConfig::from_env().unwrap();
     assert_eq!(config.host, "127.0.0.1");
     assert_eq!(config.port, 9090);
-    assert_eq!(config.api_key.as_deref(), Some("secret-test-key"));
 
     // 2. Defaults for HOST and PORT
     unsafe {
         std::env::remove_var("HOST");
         std::env::remove_var("PORT");
-        std::env::remove_var("API_KEY");
     }
     let config = server_eattura::config::ServerConfig::from_env().unwrap();
     assert_eq!(config.host, "0.0.0.0");
     assert_eq!(config.port, 3000);
-    assert_eq!(config.api_key, None);
 }
 
 #[tokio::test]
