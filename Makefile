@@ -1,7 +1,7 @@
-dev:
-	buf export buf.build/bufbuild/protovalidate --output proto/vendor
-	cargo run --bin eattura
+TASK ?= task
+.DEFAULT_GOAL := dev
 
-build:
-	buf export buf.build/bufbuild/protovalidate --output proto/vendor
-	cargo build --release
+.PHONY: install proto dev test build ci
+
+install proto dev test build ci:
+	$(TASK) $@

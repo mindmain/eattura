@@ -15,19 +15,31 @@ tasks:
     cmds:
       - task: dev
   install:
-    desc: "Install all dependencies for the project (Bun + Cargo)"
+    desc: "Install locked app dependencies and prepare protobuf definitions"
     cmds:
-      - echo "📦 Installing Bun dependencies..."
-      - cd {{.APP_DIR}} && {{.BUN}} install
-      - echo "🦀 Fetching Rust dependencies..."
-      - cargo fetch
+      - task: install:submodules
+      - task: install:frontend
+      - cargo fetch --locked
+      - task: proto
+  install:submodules:
+    internal: true
+    status:
+      - test -f proto/eattura/sdi/v1/invoice.proto
+      - git diff --quiet --ignore-submodules=dirty HEAD -- proto
+    cmds:
+      - git submodule update --init --recursive
+  install:frontend:
+    internal: true
+    dir: "{{.APP_DIR}}"
+    cmds:
+      - "{{.BUN}} install --frozen-lockfile"
   proto:
     desc: "Download and prepare protobuf dependencies"
     cmds:
       - echo "📜 Exporting proto dependencies..."
       - "{{.BUN}} scripts/release.mjs proto"
     status:
-      - test -d proto/vendor
+      - test -f proto/vendor/buf/validate/validate.proto
 
   # --- DEVELOPMENT ---
   dev:
@@ -35,7 +47,23 @@ tasks:
     deps: [proto] # Ensure proto files are ready before starting
     dir: "{{.APP_DIR}}"
     cmds:
-      - "../scripts/run-tauri-dev.sh"
+      - cmd: 'sh ../scripts/run-tauri-dev.sh {{.CLI_ARGS}}'
+        platforms: [darwin]
+      - cmd: '{{.BUN}} run tauri dev {{.CLI_ARGS}}'
+        platforms: [linux, windows]
+
+  test:
+    desc: "Run Rust and Angular tests"
+    deps: [proto]
+    cmds:
+      - cargo test --workspace --locked
+      - task: test:frontend
+  test:frontend:
+    internal: true
+    dir: "{{.APP_DIR}}"
+    cmds:
+      - "{{.BUN}} run tsc --noEmit -p tsconfig.spec.json"
+      - "{{.BUN}} run test"
 
   server:
     desc: "Run the Backend Server (separately from the UI)"
@@ -49,8 +77,19 @@ tasks:
     deps: [proto]
     dir: "{{.APP_DIR}}"
     cmds:
-      - echo "🔨 Building App..."
-      - "{{.BUN}} run tauri build"
+      - '{{.BUN}} run tauri build {{if .BUILD_TARGET}}--target "{{.BUILD_TARGET}}"{{end}} {{if .BUILD_BUNDLES}}--bundles "{{.BUILD_BUNDLES}}"{{end}} {{.CLI_ARGS}} -- --locked'
+
+  ci:
+    desc: "Install dependencies, test, and build installers on the current runner"
+    env:
+      CI: "true"
+      APPIMAGE_EXTRACT_AND_RUN: "1"
+    cmds:
+      - task: install
+      - task: test
+      - task: build
+        vars:
+          CLI_ARGS: --ci
 
   # --- UTILITIES ---
   icons:

@@ -124,27 +124,41 @@ La cartella `proto/` è un git submodule ([`github.com/mindmain/eattura-proto`](
 | `errors.proto`  | 50+ codici di errore SDI                             |
 | `options.proto` | Opzioni protobuf custom per i metadati SDI           |
 
-## Requisiti
+## Development prerequisites
 
-- [Rust](https://www.rust-lang.org/) (edition 2024)
-- [Bun](https://bun.sh/)
-- [Buf](https://buf.build/) (toolchain protobuf)
-- [Task](https://taskfile.dev/)
+Install Git, [Rust](https://www.rust-lang.org/), [Bun](https://bun.sh/), [Buf](https://buf.build/) and [Task](https://taskfile.dev/). Install GNU Make to use the Makefile. Use a native runner for each operating system.
 
-## Avvio rapido
+- macOS uses Xcode Command Line Tools. Run `xcode-select --install` if they are missing.
+- Ubuntu 24.04 uses the same packages as the release runner. Run `sudo apt-get update` followed by `sudo apt-get install --no-install-recommends -y build-essential pkg-config libwebkit2gtk-4.1-dev libssl-dev libdbus-1-dev libayatana-appindicator3-dev librsvg2-dev patchelf`.
+- Windows uses the Microsoft C++ Build Tools with the Desktop development with C++ workload and the WebView2 Runtime. Enable the **VBScript** optional feature for MSI builds. [Tauri Windows installer](https://v2.tauri.app/distribute/windows-installer/)
 
-Tutti i comandi usano [Task](https://taskfile.dev/):
+[Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/)
+
+## Run locally
+
+Run these commands from the repository root on macOS, Linux or Windows.
 
 ```sh
-task install   # Installa le dipendenze Bun + Cargo
-task proto     # Esporta le dipendenze protobuf tramite buf
-task dev       # Avvia l'app desktop con hot reload
-task server    # Avvia il server backend
-task build     # Crea la distribuzione di produzione
-task icons     # Genera le icone dell'app da un PNG
-task clean     # Rimuove gli artefatti di build
-task pull      # Aggiorna il git submodule dei proto
+task install   # Initialize submodules, install locked dependencies and prepare protobuf
+task test      # Run Rust tests, TypeScript checks and Angular tests
+task dev       # Open the native desktop app with hot reload
+task build     # Create production installers for this platform
 ```
+
+Use `make install`, `make test`, `make dev` and `make build` for the same operations. For a manual check, open the app, create and save a draft, then reopen the app and find it under **Fatture → Bozza**.
+
+## Build in CI with Make
+
+Run one command per native runner. Install the Rust target on that runner with `rustup target add <target>` if needed. The `ci` task runs installation, tests and the Tauri bundler in sequence.
+
+| Runner | Command |
+| --- | --- |
+| macOS Apple Silicon | `make ci BUILD_TARGET=aarch64-apple-darwin BUILD_BUNDLES=dmg` |
+| macOS Intel | `make ci BUILD_TARGET=x86_64-apple-darwin BUILD_BUNDLES=dmg` |
+| Linux x64 | `make ci BUILD_TARGET=x86_64-unknown-linux-gnu BUILD_BUNDLES=deb,appimage` |
+| Windows x64 | `make ci BUILD_TARGET=x86_64-pc-windows-msvc BUILD_BUNDLES=nsis,msi` |
+
+The installers appear under `target/<target>/release/bundle/` when a target is set. With the default Cargo output path and no explicit target, use `target/release/bundle/`. The existing release workflow handles artifact collection and publishing.
 
 ## Licenza
 
