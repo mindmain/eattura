@@ -139,7 +139,7 @@ pub fn progressivo_from_id(id: &str) -> String {
 pub enum SdiMessageType {
     /// RC — RicevutaConsegna: the invoice was delivered to the recipient.
     RicevutaConsegna,
-    /// NS — NotificaScarto: the invoice was rejected by SDI.
+    /// NS — NotificaScarto (PA) or RicevutaScarto (B2B/B2C).
     NotificaScarto,
     /// MC — NotificaMancataConsegna: SDI accepted but could not deliver yet.
     NotificaMancataConsegna,
@@ -159,7 +159,7 @@ impl SdiMessageType {
     fn from_root(name: &str) -> Self {
         match name {
             "RicevutaConsegna" => SdiMessageType::RicevutaConsegna,
-            "NotificaScarto" => SdiMessageType::NotificaScarto,
+            "NotificaScarto" | "RicevutaScarto" => SdiMessageType::NotificaScarto,
             "NotificaMancataConsegna" => SdiMessageType::NotificaMancataConsegna,
             "NotificaEsito" | "NotificaEsitoCommittente" => SdiMessageType::NotificaEsito,
             "NotificaDecorrenzaTermini" | "DecorrenzaTermini" => {
@@ -192,6 +192,8 @@ impl SdiMessageType {
 pub struct SdiError {
     pub codice: String,
     pub descrizione: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggerimento: Option<String>,
 }
 
 /// A parsed SDI notification with the fields relevant to invoice lifecycle.
@@ -294,6 +296,7 @@ pub fn parse_notification(xml: &str) -> Result<ParsedNotification, XmlError> {
     // Scratch state for the current Errore being read.
     let mut cur_codice: Option<String> = None;
     let mut cur_descrizione: Option<String> = None;
+    let mut cur_suggerimento: Option<String> = None;
     let mut in_errore = false;
 
     let mut buf = Vec::new();
@@ -309,6 +312,7 @@ pub fn parse_notification(xml: &str) -> Result<ParsedNotification, XmlError> {
                         in_errore = true;
                         cur_codice = None;
                         cur_descrizione = None;
+                        cur_suggerimento = None;
                     }
                     "IdentificativoSdI" => {
                         identificativo_sdi = Some(read_text(&mut reader)?);
@@ -341,6 +345,9 @@ pub fn parse_notification(xml: &str) -> Result<ParsedNotification, XmlError> {
                     "Descrizione" if in_errore => {
                         cur_descrizione = Some(read_text(&mut reader)?);
                     }
+                    "Suggerimento" if in_errore => {
+                        cur_suggerimento = Some(read_text(&mut reader)?);
+                    }
                     _ => {}
                 }
             }
@@ -349,6 +356,7 @@ pub fn parse_notification(xml: &str) -> Result<ParsedNotification, XmlError> {
                     errors.push(SdiError {
                         codice: cur_codice.take().unwrap_or_default(),
                         descrizione: cur_descrizione.take().unwrap_or_default(),
+                        suggerimento: cur_suggerimento.take(),
                     });
                     in_errore = false;
                 }

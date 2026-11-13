@@ -4038,31 +4038,37 @@ mod tests {
             .await
             .unwrap();
 
-        // Simulate receiving a NotificaScarto (NS)
-        let scarto_xml = r#"<NotificaScarto>
+        // Process a B2B/B2C rejection through the same path as a PEC sync.
+        let scarto_xml = r#"<sdi:RicevutaScarto versione="1.0" xmlns:sdi="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fattura/messaggi/v1.0">
             <IdentificativoSdI>777888</IdentificativoSdI>
             <NomeFile>IT01234567890_00003.xml</NomeFile>
             <DataOraRicezione>2026-01-18T10:00:00</DataOraRicezione>
             <ListaErrori>
                 <Errore>
                     <Codice>00400</Codice>
-                    <Descrizione>Aliquota IVA non coerente con la Natura</Descrizione>
+                    <Descrizione>Natura mancante</Descrizione>
+                    <Suggerimento>Indicare la Natura per aliquota IVA pari a zero</Suggerimento>
                 </Errore>
             </ListaErrori>
-        </NotificaScarto>"#
-            .to_string();
+        </sdi:RicevutaScarto>"#;
 
-        let notif = common::pec::parse_notification(&scarto_xml).unwrap();
-        let (linked_id, new_status) = crate::commands::pec::attach_sdi_notification(
-            &store,
-            &notif,
-            &scarto_xml,
-            Some(&detail.id),
-        )
-        .await
-        .unwrap();
-        assert_eq!(linked_id.as_deref(), Some(detail.id.as_str()));
-        assert_eq!(new_status.as_deref(), Some("rejected"));
+        let messages = [crate::pec::PecMessage {
+            uid: 1,
+            subject: "Ricevuta di scarto".into(),
+            from: "sdi01@pec.fatturapa.it".into(),
+            sdi_sender: Some("sdi01@pec.fatturapa.it".into()),
+            sdi_fallback: None,
+            attachments: vec![crate::pec::PecAttachment {
+                filename: "IT01234567890_00003_NS_001.xml".into(),
+                data: scarto_xml.as_bytes().to_vec(),
+            }],
+        }];
+        let (summaries, _) = crate::commands::pec::process_inbox_messages(&store, &messages)
+            .await
+            .unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].invoice_id.as_deref(), Some(detail.id.as_str()));
+        assert_eq!(summaries[0].new_status.as_deref(), Some("rejected"));
 
         // Fetch invoice detail: should now be rejected and contain 1 notification
         let updated = fetch_invoice_detail(&store, &detail.id).await.unwrap();
@@ -4071,6 +4077,10 @@ mod tests {
         assert_eq!(updated.notifications[0].tipo, "NS");
         assert_eq!(updated.notifications[0].errori.len(), 1);
         assert_eq!(updated.notifications[0].errori[0].codice, "00400");
+        assert_eq!(
+            updated.notifications[0].errori[0].suggerimento.as_deref(),
+            Some("Indicare la Natura per aliquota IVA pari a zero")
+        );
 
         // Rectify rejected invoice: resets status back to draft for 5-day correction
         let rectified = rectify_rejected_invoice_store(&store, &detail.id)

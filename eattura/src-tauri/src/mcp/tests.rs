@@ -462,13 +462,28 @@ async fn invoice_details_omit_attachment_bytes_and_raw_receipt_xml() {
         .as_str()
         .unwrap();
     fixture.store.insert("sdi_notifications", json!({
-        "id": "receipt", "tipo": "RC", "invoice_id": id, "raw_xml": "<private-receipt/>", "errori": "[]"
+        "id": "receipt", "tipo": "NS", "invoice_id": id, "raw_xml": "<private-receipt/>",
+        "errori": json!([
+            {"codice": "00404", "descrizione": "Duplicate invoice", "suggerimento": "Check the previous transmission"},
+            {"codice": "99999", "descrizione": "Unlisted error"}
+        ]).to_string()
     })).await.unwrap();
     let response = fixture.call("get_invoice", json!({"id": id})).await;
     assert!(!failed(&response), "{response}");
     let invoice = &response["result"]["structuredContent"];
     assert_eq!(invoice["allegati"][0]["nomeAttachment"], "details.txt");
-    assert_eq!(invoice["notifications"][0]["tipo"], "RC");
+    assert_eq!(invoice["notifications"][0]["tipo"], "NS");
+    let errors = &invoice["notifications"][0]["errori"];
+    assert_eq!(errors[0]["codice"], "00404");
+    assert_eq!(errors[0]["descrizione"], "Duplicate invoice");
+    assert_eq!(errors[0]["suggerimento"], "Check the previous transmission");
+    assert_eq!(errors[0]["documentazione"]["version"], "1.9");
+    assert!(errors[0]["documentazione"]["url"]
+        .as_str().unwrap().ends_with("#tabella-codici-errore"));
+    assert!(errors[0]["documentazione"]["descriptions"][0]
+        .as_str().unwrap().contains("Fattura duplicata"));
+    assert_eq!(errors[1]["descrizione"], "Unlisted error");
+    assert_eq!(errors[1]["documentazione"]["descriptions"], json!([]));
     assert!(invoice["allegati"][0].get("attachmentBase64").is_none());
     assert!(invoice["notifications"][0].get("rawXml").is_none());
     let text = response.to_string();

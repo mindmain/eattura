@@ -820,14 +820,7 @@ pub async fn attach_sdi_notification(
         }
     }
 
-    let errori_json = serde_json::to_string(
-        &notification
-            .errors
-            .iter()
-            .map(|e| serde_json::json!({"codice": e.codice, "descrizione": e.descrizione}))
-            .collect::<Vec<_>>(),
-    )
-    .unwrap_or_else(|_| "[]".to_string());
+    let errori_json = serde_json::to_string(&notification.errors).map_err(|e| e.to_string())?;
 
     let notification_record = serde_json::json!({
         "id": receipt_id,
