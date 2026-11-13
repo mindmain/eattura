@@ -39,7 +39,7 @@ function setup(records: InvoiceSummary[]) {
 }
 
 describe("Dashboard invoice totals", () => {
-  it("counts only accepted sales as revenue and tracks sent sales separately", () => {
+  it("includes accepted and imported sales in revenue and reports pending sales separately", () => {
     const { component } = setup([
       invoice("accepted", 100),
       invoice("accepted", 20, { tipoDocumento: "TD04" }),
@@ -54,13 +54,12 @@ describe("Dashboard invoice totals", () => {
 
     const march = 2;
     const monthly = component.monthlyByYear().get(component.selectedYear());
-    expect(monthly?.income[march]).toBe(80);
+    expect(monthly?.income[march]).toBe(380);
     expect(monthly?.pendingIncome[march]).toBe(40);
-    expect(component.yearIncome()).toBe(80);
+    expect(component.yearIncome()).toBe(380);
     expect(component.yearPendingIncome()).toBe(40);
     expect(component.yearCost()).toBe(30);
-    expect(component.annualIncome().accepted.at(-1)).toBe(80);
-    expect(component.annualIncome().pending.at(-1)).toBe(40);
+    expect(component.annualIncome().at(-1)).toBe(380);
   });
 
   it("updates both totals when sent invoices receive an SdI outcome", () => {
@@ -71,7 +70,13 @@ describe("Dashboard invoice totals", () => {
     expect(component.yearIncome()).toBe(0);
     expect(component.yearPendingIncome()).toBe(150);
 
-    invoices.set([{ ...accepted, stato: "accepted" }, { ...rejected, stato: "rejected" }]);
+    const confirmed = { ...accepted, stato: "accepted" } as const;
+    invoices.set([confirmed, rejected]);
+
+    expect(component.yearIncome()).toBe(100);
+    expect(component.yearPendingIncome()).toBe(50);
+
+    invoices.set([confirmed, { ...rejected, stato: "rejected" }]);
 
     expect(component.yearIncome()).toBe(100);
     expect(component.yearPendingIncome()).toBe(0);

@@ -27,7 +27,7 @@
     </div>
     <p class="chart-hint mt-1">Clicca un punto per vedere le fatture di quell’anno.</p>
     <div class="chart-container annual-chart-container mt-2">
-      <canvas #annualChart role="img" aria-label="Fatturato e importi in attesa di esito SdI negli ultimi otto anni"></canvas>
+      <canvas #annualChart role="img" aria-label="Fatturato totale negli ultimi otto anni"></canvas>
     </div>
   </div>
 
@@ -46,7 +46,7 @@
       @if (years().length > 0) {
         <div class="year-totals">
           <div class="total-item income">
-            <span class="total-label">Fatturato</span>
+            <span class="total-label">Fatturato totale</span>
             <span class="total-value">{{ yearIncome() | appCurrency }}</span>
           </div>
           <div class="total-item pending-income">
