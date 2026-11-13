@@ -30,6 +30,7 @@ import type {
   DatiRitenutaDetail,
   DatiBolloDetail,
   InvoiceDetail,
+  InvoiceLineFields,
 } from "../../../core/models/invoice.model";
 import { TipoDocumentoPipe } from "../../../shared/pipes/tipo-documento.pipe";
 import { ModalitaPagamentoPipe } from "../../../shared/pipes/modalita-pagamento.pipe";
@@ -43,9 +44,20 @@ interface LineItemFormValue {
   descrizione: string;
   quantita: number | null;
   unitaMisura: string;
+  dataInizioPeriodo: string;
+  dataFinePeriodo: string;
   prezzoUnitario: number;
   aliquotaIva: number;
   natura: string;
+  fields: InvoiceLineFields;
+}
+
+function lineAmount(line: Pick<LineItemFormValue, "quantita" | "prezzoUnitario" | "fields">): number {
+  const base = (line.quantita ?? 1) * (Number(line.prezzoUnitario) || 0);
+  return (line.fields?.scontoMaggiorazione ?? []).reduce((total, item) => {
+    const amount = item.percentuale != null ? total * item.percentuale / 100 : (item.importo ?? 0);
+    return total + (item.tipo === "SC" ? -amount : amount);
+  }, base);
 }
 
 @Component({
@@ -166,11 +178,7 @@ export class InvoiceFormComponent implements OnInit {
   readonly runningTotal = computed(() => {
     const state = this.formState();
     if (!state.linee) return 0;
-    return (state.linee as LineItemFormValue[]).reduce((acc, line) => {
-      const qty = Number(line?.quantita) || 1;
-      const price = Number(line?.prezzoUnitario) || 0;
-      return acc + qty * price;
-    }, 0);
+    return (state.linee as LineItemFormValue[]).reduce((acc, line) => acc + lineAmount(line), 0);
   });
 
   /** Computed real-time breakdown of compensi, casse, iva, bollo, ritenute, and netto a pagare */
@@ -183,9 +191,7 @@ export class InvoiceFormComponent implements OnInit {
     const ivaMap = new Map<number, number>();
 
     for (const line of rawLinee) {
-      const qty = Number(line?.quantita) || 1;
-      const price = Number(line?.prezzoUnitario) || 0;
-      const tot = qty * price;
+      const tot = lineAmount(line);
       imponibileLinee += tot;
 
       const al = Number(line?.aliquotaIva) || 0;
@@ -320,11 +326,14 @@ export class InvoiceFormComponent implements OnInit {
           this.linee.push(
             this.fb.group({
               descrizione: [line.descrizione, Validators.required],
-              quantita: [line.quantita ?? 1],
+              quantita: [line.quantita],
               unitaMisura: [line.unitaMisura ?? ""],
+              dataInizioPeriodo: [line.dataInizioPeriodo ?? ""],
+              dataFinePeriodo: [line.dataFinePeriodo ?? ""],
               prezzoUnitario: [line.prezzoUnitario, Validators.required],
               aliquotaIva: [line.aliquotaIva, Validators.required],
               natura: [line.natura ?? ""],
+              fields: [this.lineFields(line)],
             })
           );
         }
@@ -592,14 +601,28 @@ export class InvoiceFormComponent implements OnInit {
       this.linee.push(
         this.fb.group({
           descrizione: [l.descrizione, Validators.required],
-          quantita: [l.quantita ?? 1],
+          quantita: [l.quantita],
           unitaMisura: [l.unitaMisura ?? ""],
+          dataInizioPeriodo: [l.dataInizioPeriodo ?? ""],
+          dataFinePeriodo: [l.dataFinePeriodo ?? ""],
           prezzoUnitario: [l.prezzoUnitario, Validators.required],
           aliquotaIva: [l.aliquotaIva, Validators.required],
           natura: [l.natura ?? ""],
+          fields: [this.lineFields(l)],
         })
       );
     }
+  }
+
+  private lineFields(line: InvoiceLineFields): InvoiceLineFields {
+    return {
+      tipoCessionePrestazione: line.tipoCessionePrestazione,
+      codiceArticolo: line.codiceArticolo,
+      scontoMaggiorazione: line.scontoMaggiorazione,
+      ritenuta: line.ritenuta,
+      riferimentoAmministrazione: line.riferimentoAmministrazione,
+      altriDatiGestionali: line.altriDatiGestionali,
+    };
   }
 
   addLine(): void {
@@ -608,9 +631,12 @@ export class InvoiceFormComponent implements OnInit {
         descrizione: ["", Validators.required],
         quantita: [1],
         unitaMisura: ["pz"],
+        dataInizioPeriodo: [""],
+        dataFinePeriodo: [""],
         prezzoUnitario: [0, Validators.required],
         aliquotaIva: [22, Validators.required],
         natura: [""],
+        fields: [this.lineFields({})],
       })
     );
   }
@@ -621,9 +647,7 @@ export class InvoiceFormComponent implements OnInit {
 
   lineTotal(index: number): number {
     const line = this.linee.at(index) as FormGroup;
-    const qty = Number(line.get("quantita")?.value) || 1;
-    const price = Number(line.get("prezzoUnitario")?.value) || 0;
-    return qty * price;
+    return lineAmount(line.getRawValue() as LineItemFormValue);
   }
 
   computeTotal(): number {
@@ -683,9 +707,12 @@ export class InvoiceFormComponent implements OnInit {
     const orig = this.loadedInvoice();
     const rawLinee = (val.linee ?? []) as LineItemFormValue[];
     const linee: CreateLineRequest[] = rawLinee.map((l) => ({
+      ...l.fields,
       descrizione: l.descrizione,
-      quantita: l.quantita || null,
+      quantita: l.quantita ?? null,
       unitaMisura: l.unitaMisura || null,
+      dataInizioPeriodo: l.dataInizioPeriodo || null,
+      dataFinePeriodo: l.dataFinePeriodo || null,
       prezzoUnitario: Number(l.prezzoUnitario),
       aliquotaIva: Number(l.aliquotaIva),
       natura: l.natura || null,

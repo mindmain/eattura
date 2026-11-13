@@ -503,7 +503,12 @@
           @for (line of inv.linee; track line.numeroLinea) {
             <tr>
               <td>{{ line.numeroLinea }}</td>
-              <td>{{ line.descrizione }}</td>
+              <td>
+                {{ line.descrizione }}
+                @if (line.dataInizioPeriodo || line.dataFinePeriodo) {
+                  <div class="text-muted">Periodo {{ line.dataInizioPeriodo || '—' }} / {{ line.dataFinePeriodo || '—' }}</div>
+                }
+              </td>
               <td class="text-right">{{ line.quantita ?? "-" }}</td>
               <td>{{ line.unitaMisura ?? "-" }}</td>
               <td class="text-right">{{ line.prezzoUnitario | appCurrency }}</td>

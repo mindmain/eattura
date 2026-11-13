@@ -234,6 +234,8 @@
                   <th>Descrizione</th>
                   <th>Qta</th>
                   <th>U.M.</th>
+                  <th>Inizio periodo</th>
+                  <th>Fine periodo</th>
                   <th>Prezzo Unit.</th>
                   <th>IVA %</th>
                   <th>Natura</th>
@@ -247,6 +249,8 @@
                     <td><input type="text" formControlName="descrizione" placeholder="Descrizione" /></td>
                     <td class="col-sm"><input type="number" formControlName="quantita" min="0" step="0.01" /></td>
                     <td class="col-sm"><input type="text" formControlName="unitaMisura" /></td>
+                    <td><input type="date" formControlName="dataInizioPeriodo" [attr.aria-label]="'Inizio periodo riga ' + (i + 1)" /></td>
+                    <td><input type="date" formControlName="dataFinePeriodo" [attr.aria-label]="'Fine periodo riga ' + (i + 1)" /></td>
                     <td class="col-md"><input type="number" formControlName="prezzoUnitario" min="0" step="0.01" /></td>
                     <td class="col-sm"><input type="number" formControlName="aliquotaIva" min="0" max="100" step="0.01" /></td>
                     <td class="col-md">

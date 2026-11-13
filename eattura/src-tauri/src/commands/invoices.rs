@@ -222,10 +222,16 @@ pub struct InvoiceLineDetail {
     pub descrizione: String,
     pub quantita: Option<f64>,
     pub unita_misura: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_inizio_periodo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_fine_periodo: Option<String>,
     pub prezzo_unitario: f64,
     pub prezzo_totale: f64,
     pub aliquota_iva: f64,
     pub natura: Option<String>,
+    #[serde(flatten)]
+    pub fields: LineFields,
 }
 
 /// Detail of a single payment entry.
@@ -289,9 +295,213 @@ pub struct CreateLineRequest {
     pub descrizione: String,
     pub quantita: Option<f64>,
     pub unita_misura: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_inizio_periodo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_fine_periodo: Option<String>,
     pub prezzo_unitario: f64,
     pub aliquota_iva: f64,
     pub natura: Option<String>,
+    #[serde(flatten)]
+    pub fields: LineFields,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LineFields {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tipo_cessione_prestazione: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub codice_articolo: Vec<LineArticleCode>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sconto_maggiorazione: Vec<LineAdjustment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ritenuta: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub riferimento_amministrazione: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub altri_dati_gestionali: Vec<LineManagementData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LineArticleCode {
+    pub codice_tipo: String,
+    pub codice_valore: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LineAdjustment {
+    pub tipo: String,
+    pub percentuale: Option<f64>,
+    pub importo: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LineManagementData {
+    pub tipo_dato: String,
+    pub riferimento_testo: Option<String>,
+    pub riferimento_numero: Option<f64>,
+    pub riferimento_data: Option<String>,
+}
+
+impl LineFields {
+    fn adjustments(&self) -> Vec<common::sdi::v1::ScontoMaggiorazione> {
+        self.sconto_maggiorazione
+            .iter()
+            .filter_map(|item| {
+                Some(common::sdi::v1::ScontoMaggiorazione {
+                    tipo: common::xml::enum_map::tipo_sconto_maggiorazione_from_sdi(&item.tipo)?,
+                    percentuale: item.percentuale,
+                    importo: item.importo,
+                })
+            })
+            .collect()
+    }
+
+    fn from_document(line: &common::sdi::v1::DettaglioLinee) -> Self {
+        use common::xml::enum_map::*;
+        Self {
+            tipo_cessione_prestazione: line
+                .tipo_cessione_prestazione
+                .and_then(tipo_cessione_prestazione_to_sdi)
+                .map(str::to_owned),
+            codice_articolo: line
+                .codice_articolo
+                .iter()
+                .map(|item| LineArticleCode {
+                    codice_tipo: item.codice_tipo.clone(),
+                    codice_valore: item.codice_valore.clone(),
+                })
+                .collect(),
+            sconto_maggiorazione: line
+                .sconto_maggiorazione
+                .iter()
+                .filter_map(|item| {
+                    Some(LineAdjustment {
+                        tipo: tipo_sconto_maggiorazione_to_sdi(item.tipo)?.to_owned(),
+                        percentuale: item.percentuale,
+                        importo: item.importo,
+                    })
+                })
+                .collect(),
+            ritenuta: line.ritenuta.and_then(ritenuta_to_sdi).map(str::to_owned),
+            riferimento_amministrazione: line.riferimento_amministrazione.clone(),
+            altri_dati_gestionali: line
+                .altri_dati_gestionali
+                .iter()
+                .map(|item| LineManagementData {
+                    tipo_dato: item.tipo_dato.clone(),
+                    riferimento_testo: item.riferimento_testo.clone(),
+                    riferimento_numero: item.riferimento_numero,
+                    riferimento_data: item.riferimento_data.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl CreateLineRequest {
+    fn total(&self) -> f64 {
+        common::validation::rules::apply_sconto_maggiorazione(
+            self.prezzo_unitario * self.quantita.unwrap_or(1.0),
+            &self.fields.adjustments(),
+        )
+    }
+}
+
+async fn insert_draft_lines(
+    tx: &mut crate::storage::Transaction,
+    invoice_id: &str,
+    lines: &[CreateLineRequest],
+) -> Result<(), String> {
+    for (index, line) in lines.iter().enumerate() {
+        tx.insert(
+            "invoice_lines",
+            serde_json::json!({
+                "id": uuid::Uuid::new_v4().to_string(),
+                "invoice_id": invoice_id,
+                "numero_linea": index + 1,
+                "descrizione": line.descrizione,
+                "quantita": line.quantita,
+                "unita_misura": line.unita_misura,
+                "data_inizio_periodo": line.data_inizio_periodo,
+                "data_fine_periodo": line.data_fine_periodo,
+                "prezzo_unitario": line.prezzo_unitario,
+                "prezzo_totale": line.total(),
+                "aliquota_iva": line.aliquota_iva,
+                "natura": line.natura,
+                "line_fields": line.fields,
+            }),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+fn check_draft_lines(lines: &[CreateLineRequest]) -> Result<(), String> {
+    for (index, line) in lines.iter().enumerate() {
+        let parse = |value: &str, field: &str| {
+            chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+                .ok()
+                .filter(|date| date.format("%Y-%m-%d").to_string() == value && value.len() == 10)
+                .ok_or_else(|| {
+                    format!(
+                        "Line {}: {field} must be a date in YYYY-MM-DD format",
+                        index + 1
+                    )
+                })
+        };
+        use common::xml::enum_map::*;
+        let fields = &line.fields;
+        if fields
+            .tipo_cessione_prestazione
+            .as_deref()
+            .is_some_and(|code| tipo_cessione_prestazione_from_sdi(code).is_none())
+            || fields
+                .ritenuta
+                .as_deref()
+                .is_some_and(|code| ritenuta_from_sdi(code).is_none())
+            || fields.sconto_maggiorazione.iter().any(|item| {
+                tipo_sconto_maggiorazione_from_sdi(&item.tipo).is_none()
+                    || (item.percentuale.is_none() && item.importo.is_none())
+                    || item
+                        .percentuale
+                        .is_some_and(|pct| !(0.0..=100.0).contains(&pct))
+            })
+        {
+            return Err(format!(
+                "Line {}: invalid transaction type, withholding or adjustment",
+                index + 1
+            ));
+        }
+        for item in &fields.altri_dati_gestionali {
+            if let Some(date) = &item.riferimento_data {
+                parse(date, "riferimentoData")?;
+            }
+        }
+        let start = line
+            .data_inizio_periodo
+            .as_deref()
+            .map(|value| parse(value, "dataInizioPeriodo"))
+            .transpose()?;
+        let end = line
+            .data_fine_periodo
+            .as_deref()
+            .map(|value| parse(value, "dataFinePeriodo"))
+            .transpose()?;
+        if let (Some(start), Some(end)) = (start, end)
+            && start > end
+        {
+            return Err(format!(
+                "Line {}: dataFinePeriodo precedes dataInizioPeriodo",
+                index + 1
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Request to create a single payment entry.
@@ -496,7 +706,7 @@ pub async fn get_invoice(
 
 /// Create a new invoice with its lines and payments in a single transaction.
 ///
-/// Line totals are auto-computed as `prezzo_unitario * quantita` when quantita is provided.
+/// Line totals include quantity and line discounts or surcharges.
 /// The overall invoice total is the sum of all line totals.
 #[tauri::command]
 pub async fn create_invoice(
@@ -519,10 +729,7 @@ fn compute_invoice_financials(
     let mut iva_map: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
 
     for line in linee {
-        let pt = match line.quantita {
-            Some(q) => line.prezzo_unitario * q,
-            None => line.prezzo_unitario,
-        };
+        let pt = line.total();
         imponibile_linee += pt;
         if line.aliquota_iva > 0.0 {
             let k = format!("{:.2}", line.aliquota_iva);
@@ -583,6 +790,7 @@ pub async fn create_invoice_store(
     store: &crate::storage::FileStore,
     invoice: CreateInvoiceRequest,
 ) -> Result<InvoiceDetail, String> {
+    check_draft_lines(&invoice.linee)?;
     let invoice_id =
         digest::content_id(&serde_json::json!({"kind":"created_invoice","document":&invoice}))?;
 
@@ -681,17 +889,7 @@ pub async fn create_invoice_store(
     .map_err(|e| e.to_string())?;
 
     // Insert line items.
-    for (i, line) in invoice.linee.iter().enumerate() {
-        let line_id = uuid::Uuid::new_v4().to_string();
-        let numero_linea = (i + 1) as i32;
-        let prezzo_totale = match line.quantita {
-            Some(q) => line.prezzo_unitario * q,
-            None => line.prezzo_unitario,
-        };
-
-        tx.insert("invoice_lines", serde_json::json!({"id": &line_id, "invoice_id": &invoice_id, "numero_linea": numero_linea, "descrizione": &line.descrizione, "quantita": line.quantita, "unita_misura": &line.unita_misura, "prezzo_unitario": line.prezzo_unitario, "prezzo_totale": prezzo_totale, "aliquota_iva": line.aliquota_iva, "natura": &line.natura})).await
-        .map_err(|e| e.to_string())?;
-    }
+    insert_draft_lines(&mut tx, &invoice_id, &invoice.linee).await?;
 
     // Insert payment entries.
     for payment in &invoice.pagamenti {
@@ -779,6 +977,7 @@ pub async fn update_invoice_store(
                 });
     }
 
+    check_draft_lines(&invoice.linee)?;
     let new_id =
         digest::content_id(&serde_json::json!({"kind":"created_invoice","document":&invoice}))?;
     tx.rekey_invoice(id, &new_id).await?;
@@ -870,6 +1069,8 @@ pub async fn update_invoice_store(
             "dati_convenzione": &invoice.dati_convenzione,
             "dati_ddt": &processed_ddt,
             "allegati": &processed_allegati,
+            "imported_from_xml": false,
+            "xml_content": null,
         }),
     )
     .await
@@ -883,17 +1084,7 @@ pub async fn update_invoice_store(
         .await
         .map_err(|e| e.to_string())?;
 
-    for (i, line) in invoice.linee.iter().enumerate() {
-        let line_id = uuid::Uuid::new_v4().to_string();
-        let numero_linea = (i + 1) as i32;
-        let prezzo_totale = match line.quantita {
-            Some(q) => line.prezzo_unitario * q,
-            None => line.prezzo_unitario,
-        };
-
-        tx.insert("invoice_lines", serde_json::json!({"id": &line_id, "invoice_id": &id, "numero_linea": numero_linea, "descrizione": &line.descrizione, "quantita": line.quantita, "unita_misura": &line.unita_misura, "prezzo_unitario": line.prezzo_unitario, "prezzo_totale": prezzo_totale, "aliquota_iva": line.aliquota_iva, "natura": &line.natura})).await
-        .map_err(|e| e.to_string())?;
-    }
+    insert_draft_lines(&mut tx, &id, &invoice.linee).await?;
 
     for payment in &invoice.pagamenti {
         let payment_id = uuid::Uuid::new_v4().to_string();
@@ -1534,7 +1725,7 @@ async fn import_xml_content_inner(
                     .natura
                     .and_then(|n| common::xml::enum_map::natura_to_sdi(n).map(String::from));
 
-                tx.insert("invoice_lines", serde_json::json!({"id": &line_id, "invoice_id": &invoice_id, "numero_linea": linea.numero_linea, "descrizione": &linea.descrizione, "quantita": linea.quantita, "unita_misura": &linea.unita_misura, "prezzo_unitario": linea.prezzo_unitario, "prezzo_totale": linea.prezzo_totale, "aliquota_iva": linea.aliquota_iva, "natura": &natura_str})).await
+                tx.insert("invoice_lines", serde_json::json!({"id": &line_id, "invoice_id": &invoice_id, "numero_linea": linea.numero_linea, "descrizione": &linea.descrizione, "quantita": linea.quantita, "unita_misura": &linea.unita_misura, "data_inizio_periodo": &linea.data_inizio_periodo, "data_fine_periodo": &linea.data_fine_periodo, "prezzo_unitario": linea.prezzo_unitario, "prezzo_totale": linea.prezzo_totale, "aliquota_iva": linea.aliquota_iva, "natura": &natura_str, "line_fields": LineFields::from_document(linea)})).await
                 .map_err(|e| e.to_string())?;
             }
         }
@@ -1803,17 +1994,48 @@ pub(crate) async fn fetch_invoice_detail(
         .await
         .map_err(|e| e.to_string())?;
 
+    // Older imports kept the original XML but did not index advanced line fields.
+    let original_body = if invoice_row.get::<Option<bool>>("imported_from_xml") == Some(true)
+        && line_rows
+            .iter()
+            .any(|row| row.get::<Option<LineFields>>("line_fields").is_none())
+    {
+        invoice_row
+            .get::<Option<String>>("xml_content")
+            .and_then(|xml| imported_body_for_id(id, &xml))
+            .and_then(|body| body.dati_beni_servizi)
+    } else {
+        None
+    };
     let linee = line_rows
         .iter()
-        .map(|row| InvoiceLineDetail {
-            numero_linea: row.get("numero_linea"),
-            descrizione: row.get("descrizione"),
-            quantita: row.get("quantita"),
-            unita_misura: row.get("unita_misura"),
-            prezzo_unitario: row.get("prezzo_unitario"),
-            prezzo_totale: row.get("prezzo_totale"),
-            aliquota_iva: row.get("aliquota_iva"),
-            natura: row.get("natura"),
+        .map(|row| {
+            let numero_linea: i32 = row.get("numero_linea");
+            let original = original_body.as_ref().and_then(|body| {
+                body.dettaglio_linee
+                    .iter()
+                    .find(|line| line.numero_linea == numero_linea)
+            });
+            InvoiceLineDetail {
+                numero_linea,
+                descrizione: row.get("descrizione"),
+                quantita: row.get("quantita"),
+                unita_misura: row.get("unita_misura"),
+                data_inizio_periodo: row
+                    .get::<Option<String>>("data_inizio_periodo")
+                    .or_else(|| original.and_then(|line| line.data_inizio_periodo.clone())),
+                data_fine_periodo: row
+                    .get::<Option<String>>("data_fine_periodo")
+                    .or_else(|| original.and_then(|line| line.data_fine_periodo.clone())),
+                prezzo_unitario: row.get("prezzo_unitario"),
+                prezzo_totale: row.get("prezzo_totale"),
+                aliquota_iva: row.get("aliquota_iva"),
+                natura: row.get("natura"),
+                fields: row
+                    .get::<Option<LineFields>>("line_fields")
+                    .or_else(|| original.map(LineFields::from_document))
+                    .unwrap_or_default(),
+            }
         })
         .collect();
 
@@ -2294,16 +2516,47 @@ pub(crate) async fn build_fattura_from_store(
             .as_deref()
             .and_then(common::xml::enum_map::natura_from_sdi);
 
+        use common::xml::enum_map::*;
+        let fields = row
+            .get::<Option<LineFields>>("line_fields")
+            .unwrap_or_default();
+        let adjustments = fields.adjustments();
         dettaglio_linee.push(DettaglioLinee {
             numero_linea: row.get("numero_linea"),
             descrizione: row.get("descrizione"),
             quantita: row.get("quantita"),
             unita_misura: row.get("unita_misura"),
+            data_inizio_periodo: row.get("data_inizio_periodo"),
+            data_fine_periodo: row.get("data_fine_periodo"),
             prezzo_unitario: row.get("prezzo_unitario"),
             prezzo_totale: row.get("prezzo_totale"),
             aliquota_iva: row.get("aliquota_iva"),
             natura: natura_val,
-            ..Default::default()
+            tipo_cessione_prestazione: fields
+                .tipo_cessione_prestazione
+                .as_deref()
+                .and_then(tipo_cessione_prestazione_from_sdi),
+            codice_articolo: fields
+                .codice_articolo
+                .into_iter()
+                .map(|item| CodiceArticolo {
+                    codice_tipo: item.codice_tipo,
+                    codice_valore: item.codice_valore,
+                })
+                .collect(),
+            sconto_maggiorazione: adjustments,
+            ritenuta: fields.ritenuta.as_deref().and_then(ritenuta_from_sdi),
+            riferimento_amministrazione: fields.riferimento_amministrazione,
+            altri_dati_gestionali: fields
+                .altri_dati_gestionali
+                .into_iter()
+                .map(|item| AltriDatiGestionali {
+                    tipo_dato: item.tipo_dato,
+                    riferimento_testo: item.riferimento_testo,
+                    riferimento_numero: item.riferimento_numero,
+                    riferimento_data: item.riferimento_data,
+                })
+                .collect(),
         });
     }
 
@@ -2894,6 +3147,9 @@ pub async fn generate_autofattura_draft_store(
             descrizione: format!("Integrazione acquisto: {}", l.descrizione),
             quantita: l.quantita,
             unita_misura: l.unita_misura.clone(),
+            fields: Default::default(),
+            data_inizio_periodo: l.data_inizio_periodo.clone(),
+            data_fine_periodo: l.data_fine_periodo.clone(),
             prezzo_unitario: l.prezzo_unitario,
             aliquota_iva: 22.0,
             natura: None,
@@ -3138,6 +3394,9 @@ mod tests {
                     descrizione: "Development Services".to_string(),
                     quantita: Some(2.0),
                     unita_misura: Some("H".to_string()),
+                    fields: Default::default(),
+                    data_inizio_periodo: None,
+                    data_fine_periodo: None,
                     prezzo_unitario: 50.0,
                     aliquota_iva: 22.0,
                     natura: None,
@@ -3146,6 +3405,9 @@ mod tests {
                     descrizione: "Documentation".to_string(),
                     quantita: Some(1.0),
                     unita_misura: None,
+                    fields: Default::default(),
+                    data_inizio_periodo: None,
+                    data_fine_periodo: None,
                     prezzo_unitario: 40.0,
                     aliquota_iva: 22.0,
                     natura: None,
@@ -3209,6 +3471,9 @@ mod tests {
             descrizione: "Single Consulting Day".to_string(),
             quantita: Some(1.0),
             unita_misura: Some("DAY".to_string()),
+            fields: Default::default(),
+            data_inizio_periodo: None,
+            data_fine_periodo: None,
             prezzo_unitario: 500.0,
             aliquota_iva: 22.0,
             natura: None,
@@ -3256,6 +3521,9 @@ mod tests {
                 descrizione: "Progettazione architettonica".to_string(),
                 quantita: Some(1.0),
                 unita_misura: None,
+                fields: Default::default(),
+                data_inizio_periodo: None,
+                data_fine_periodo: None,
                 prezzo_unitario: 1000.0,
                 aliquota_iva: 22.0,
                 natura: None,
@@ -3740,6 +4008,9 @@ mod tests {
                 descrizione: "Cloud hosting and Kubernetes compute".to_string(),
                 quantita: Some(1.0),
                 unita_misura: Some("mese".to_string()),
+                fields: Default::default(),
+                data_inizio_periodo: None,
+                data_fine_periodo: None,
                 prezzo_unitario: 100.0,
                 aliquota_iva: 0.0,
                 natura: Some("N2.2".to_string()),
@@ -3885,6 +4156,9 @@ mod tests {
                 descrizione: "Banchi modulari e sedie ergonomiche".to_string(),
                 quantita: Some(10.0),
                 unita_misura: Some("PZ".to_string()),
+                fields: Default::default(),
+                data_inizio_periodo: None,
+                data_fine_periodo: None,
                 prezzo_unitario: 100.0, // 1000.00
                 aliquota_iva: 22.0,     // 220.00 VAT
                 natura: None,
@@ -4021,6 +4295,9 @@ mod tests {
                 descrizione: "Fornitura merci varie da DDT 45 e DDT 46".to_string(),
                 quantita: Some(5.0),
                 unita_misura: Some("PZ".to_string()),
+                fields: Default::default(),
+                data_inizio_periodo: None,
+                data_fine_periodo: None,
                 prezzo_unitario: 100.0,
                 aliquota_iva: 22.0,
                 natura: None,
@@ -4145,6 +4422,9 @@ mod tests {
                 descrizione: "Compenso regime forfettario".to_string(),
                 quantita: Some(1.0),
                 unita_misura: None,
+                fields: Default::default(),
+                data_inizio_periodo: None,
+                data_fine_periodo: None,
                 prezzo_unitario: 500.0,
                 aliquota_iva: 0.0,
                 natura: Some("N2.2".to_string()),
@@ -4153,6 +4433,9 @@ mod tests {
                 descrizione: "Riaddebito imposta di bollo".to_string(),
                 quantita: Some(1.0),
                 unita_misura: None,
+                fields: Default::default(),
+                data_inizio_periodo: None,
+                data_fine_periodo: None,
                 prezzo_unitario: 2.0,
                 aliquota_iva: 0.0,
                 natura: Some("N1".to_string()),

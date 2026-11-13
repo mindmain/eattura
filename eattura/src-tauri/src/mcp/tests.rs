@@ -209,6 +209,20 @@ async fn draft_updates_require_current_revision_and_preserve_attachments() {
     update["invoice"]["linee"][0]["descrizione"] = json!("Updated line");
     assert!(failed(&fixture.call("update_draft", update.clone()).await));
     update["expectedRevision"] = original["revision"].clone();
+    update["invoice"]["linee"][0]["dataInizioPeriodo"] = json!("2026-02-29");
+    update["invoice"]["linee"][0]["dataFinePeriodo"] = json!("2026-03-31");
+    assert!(failed(&fixture.call("update_draft", update.clone()).await));
+    update["invoice"]["linee"][0]["dataInizioPeriodo"] = json!("2026-04-01");
+    assert!(failed(&fixture.call("update_draft", update.clone()).await));
+    update["invoice"]["linee"][0]["dataInizioPeriodo"] = json!("2026-03-01");
+    update["invoice"]["linee"][0]["tipoCessionePrestazione"] = json!("PR");
+    update["invoice"]["linee"][0]["codiceArticolo"] =
+        json!([{"codiceTipo":"SKU", "codiceValore":"SERVICE"}]);
+    update["invoice"]["linee"][0]["scontoMaggiorazione"] = json!([{"tipo":"SC", "percentuale":10}]);
+    update["invoice"]["linee"][0]["ritenuta"] = json!("SI");
+    update["invoice"]["linee"][0]["riferimentoAmministrazione"] = json!("OFFICE");
+    update["invoice"]["linee"][0]["altriDatiGestionali"] =
+        json!([{"tipoDato":"REF", "riferimentoData":"2026-03-15"}]);
 
     let other = Fixture::new();
     assert!(failed(&other.call("update_draft", update.clone()).await));
@@ -224,6 +238,28 @@ async fn draft_updates_require_current_revision_and_preserve_attachments() {
         .await
         .unwrap();
     assert_eq!(detail.linee[0].descrizione, "Updated line");
+    let read = fixture.call("get_invoice", json!({"id": saved_id})).await;
+    let line = &read["result"]["structuredContent"]["linee"][0];
+    assert_eq!(line["dataInizioPeriodo"], "2026-03-01");
+    assert_eq!(line["dataFinePeriodo"], "2026-03-31");
+    assert_eq!(line["scontoMaggiorazione"][0]["tipo"], "SC");
+    assert_eq!(line["prezzoTotale"], 90.0);
+    assert_eq!(detail.importo_totale, Some(109.8));
+    let xml = invoices::export_invoice_xml_store(&reopened, saved_id)
+        .await
+        .unwrap();
+    for element in [
+        "<DataInizioPeriodo>2026-03-01</DataInizioPeriodo>",
+        "<DataFinePeriodo>2026-03-31</DataFinePeriodo>",
+        "<TipoCessionePrestazione>PR</TipoCessionePrestazione>",
+        "<CodiceValore>SERVICE</CodiceValore>",
+        "<ScontoMaggiorazione>",
+        "<Ritenuta>SI</Ritenuta>",
+        "<RiferimentoAmministrazione>OFFICE</RiferimentoAmministrazione>",
+        "<RiferimentoData>2026-03-15</RiferimentoData>",
+    ] {
+        assert!(xml.contains(element), "Missing {element}: {xml}");
+    }
     assert_eq!(detail.allegati[0].attachment_base64, "dGVzdA==");
     fixture
         .store
@@ -234,6 +270,14 @@ async fn draft_updates_require_current_revision_and_preserve_attachments() {
     let validated = fixture.call("get_invoice", json!({"id": saved_id})).await;
     update["expectedRevision"] = validated["result"]["structuredContent"]["revision"].clone();
     assert!(failed(&fixture.call("update_draft", update).await));
+    let draft = invoices::set_invoice_status_store(&fixture.store, saved_id, "draft")
+        .await
+        .unwrap();
+    assert_eq!(draft.stato, "draft");
+    assert_eq!(
+        draft.linee[0].data_fine_periodo.as_deref(),
+        Some("2026-03-31")
+    );
 }
 
 #[tokio::test]

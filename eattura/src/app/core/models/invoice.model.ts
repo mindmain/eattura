@@ -143,11 +143,27 @@ export interface InvoiceDetail extends InvoiceSummary {
   allegati?: AttachmentDetail[];
 }
 
-export interface InvoiceLine {
+export interface InvoiceLineFields {
+  tipoCessionePrestazione?: "SC" | "PR" | "AB" | "AC" | null;
+  codiceArticolo?: { codiceTipo: string; codiceValore: string }[];
+  scontoMaggiorazione?: { tipo: "SC" | "MG"; percentuale?: number | null; importo?: number | null }[];
+  ritenuta?: "SI" | null;
+  riferimentoAmministrazione?: string | null;
+  altriDatiGestionali?: {
+    tipoDato: string;
+    riferimentoTesto?: string | null;
+    riferimentoNumero?: number | null;
+    riferimentoData?: string | null;
+  }[];
+}
+
+export interface InvoiceLine extends InvoiceLineFields {
   numeroLinea: number;
   descrizione: string;
   quantita: number | null;
   unitaMisura: string | null;
+  dataInizioPeriodo?: string | null;
+  dataFinePeriodo?: string | null;
   prezzoUnitario: number;
   prezzoTotale: number;
   aliquotaIva: number;
@@ -204,10 +220,12 @@ export interface CreateInvoiceRequest {
   allegati?: CreateAttachmentRequest[] | null;
 }
 
-export interface CreateLineRequest {
+export interface CreateLineRequest extends InvoiceLineFields {
   descrizione: string;
   quantita: number | null;
   unitaMisura: string | null;
+  dataInizioPeriodo?: string | null;
+  dataFinePeriodo?: string | null;
   prezzoUnitario: number;
   aliquotaIva: number;
   natura: string | null;

@@ -256,7 +256,7 @@ impl InvoiceServer {
     }
 
     #[tool(
-        description = "Update a saved draft using its ID and expectedRevision from get_invoice. Supply the complete editable invoice, retaining unchanged fields. Omit allegati to preserve existing attachments. Returns the current ID and revision. Review and transmission are performed by the user in Eattura.",
+        description = "Update a saved draft using its ID and expectedRevision from get_invoice. Supply the complete editable invoice, retaining unchanged fields. Line items support service periods, article codes, discounts and surcharges, withholding, administrative references, and other management data. Omit allegati to preserve existing attachments. Returns the current ID and revision. Review and transmission are performed by the user in Eattura.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,

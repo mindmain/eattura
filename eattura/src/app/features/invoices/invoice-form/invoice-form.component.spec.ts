@@ -177,6 +177,25 @@ describe("InvoiceFormComponent", () => {
     expect(notifyMock.error).toHaveBeenCalled();
   });
 
+  it("includes service dates and preserves advanced line data when saving", () => {
+    component.linee.at(0).patchValue({
+      descrizione: "Consulting",
+      quantita: 1,
+      prezzoUnitario: 100,
+      dataInizioPeriodo: "2026-03-01",
+      dataFinePeriodo: "2026-03-31",
+      fields: { scontoMaggiorazione: [{ tipo: "SC", percentuale: 10 }] },
+    });
+
+    const request = (component as any).buildRequest();
+    expect(request.linee[0]).toMatchObject({
+      dataInizioPeriodo: "2026-03-01",
+      dataFinePeriodo: "2026-03-31",
+      scontoMaggiorazione: [{ tipo: "SC", percentuale: 10 }],
+    });
+    expect(component.lineTotal(0)).toBe(90);
+  });
+
   it("configura correttamente un'autofattura TD17 con soggetto emittente CC e fattura collegata", () => {
     component.form.patchValue({
       tipoDocumento: "TD17",

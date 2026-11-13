@@ -474,7 +474,7 @@ fn validate_prezzo_totale(linea: &DettaglioLinee) -> Vec<ValidationError> {
 }
 
 /// Apply discount/surcharge adjustments to a base amount.
-fn apply_sconto_maggiorazione(base: f64, adjustments: &[ScontoMaggiorazione]) -> f64 {
+pub fn apply_sconto_maggiorazione(base: f64, adjustments: &[ScontoMaggiorazione]) -> f64 {
     let mut result = base;
     for sm in adjustments {
         let is_sconto = tipo_sconto_maggiorazione_to_sdi(sm.tipo) == Some("SC");

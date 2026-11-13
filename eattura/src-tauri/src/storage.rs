@@ -771,6 +771,8 @@ fn validate_shape(domain: &str, value: &Value) -> Result<(), String> {
         "pending_pec_filename",
         "pending_pec_xml",
         "unita_misura",
+        "data_inizio_periodo",
+        "data_fine_periodo",
         "natura",
         "condizioni_pagamento",
         "data_scadenza_pagamento",
