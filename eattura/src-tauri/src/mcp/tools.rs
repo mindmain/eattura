@@ -103,8 +103,14 @@ async fn check_draft(
     store: &FileStore,
     invoice: &invoices::CreateInvoiceRequest,
 ) -> Result<(), String> {
-    clients::get_client_store(store, &invoice.cedente_id).await?;
-    clients::get_client_store(store, &invoice.cessionario_id).await?;
+    for (field, id) in [
+        ("cedenteId", &invoice.cedente_id),
+        ("cessionarioId", &invoice.cessionario_id),
+    ] {
+        clients::get_client_store(store, id).await.map_err(|_| {
+            format!("Invalid {field}. Select the exact ID returned by list_clients. If the party is missing, ask the user to add it in Eattura.")
+        })?;
+    }
     if invoice.numero.trim().is_empty() || invoice.linee.is_empty() {
         return Err("A draft requires an invoice number and at least one line".into());
     }
@@ -276,7 +282,7 @@ impl InvoiceServer {
     }
 
     #[tool(
-        description = "Create a NEW DRAFT only, using existing cedenteId and cessionarioId from list_clients. Ask the user to review it in Eattura. Never sends, issues, promotes, edits or changes status. Eattura must remain open.",
+        description = "Create a NEW DRAFT only. Select exact cedenteId and cessionarioId values from list_clients. Read get_client to verify the parties. Tax and transmitter data come from the catalog. If a party or tax detail is missing, ask the user to fix the catalog in Eattura. Ask the user to review the draft. Eattura must remain open.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,

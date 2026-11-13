@@ -160,6 +160,9 @@ async fn tool_calls_create_drafts_but_cannot_send_or_change_status() {
     let mut request = draft(&issuer, &customer);
     request["invoice"]["stato"] = json!("sent");
     let response = fixture.call("create_draft", request).await;
+    assert!(failed(&response), "{response}");
+    assert_eq!(fixture.drafts.load(Ordering::Relaxed), 0);
+    let response = fixture.call("create_draft", draft(&issuer, &customer)).await;
     assert!(!failed(&response), "{response}");
     let created = &response["result"]["structuredContent"];
     assert_eq!(created["stato"], "draft");
@@ -405,6 +408,83 @@ async fn line_patches_preserve_draft_parties_and_unrelated_fields() {
         .await
         .unwrap();
     assert!(failed(&fixture.call("update_draft_lines", json!({"id":id, "expectedRevision":detail.revision, "linee":[{"numeroLinea":1,"descrizione":"Blocked"}]})).await));
+}
+
+#[tokio::test]
+async fn draft_tools_use_catalog_ids_and_reject_fiscal_overrides() {
+    let fixture = Fixture::new();
+    let (issuer, customer) = fixture.parties().await;
+    fixture.store.update("clients", &issuer, json!({
+        "denominazione": null, "nome": "Mario", "cognome": "Rossi",
+        "codice_fiscale": "RSSMRA80A01H501U"
+    })).await.unwrap();
+    let catalog = fixture.call("list_clients", json!({})).await;
+    let items = catalog["result"]["structuredContent"]["items"].as_array().unwrap();
+    for id in [&issuer, &customer] {
+        assert!(items.iter().any(|client| client["id"] == *id));
+    }
+
+    for field in ["cedenteId", "cessionarioId"] {
+        for invalid in ["invented-client-id", "01234567890", "Customer", ""] {
+            let mut request = draft(&issuer, &customer);
+            request["invoice"][field] = json!(invalid);
+            let response = fixture.call("create_draft", request).await;
+            assert!(failed(&response), "{field}: {response}");
+            assert!(response.to_string().contains("list_clients"));
+        }
+    }
+    let mut override_request = draft(&issuer, &customer);
+    override_request["invoice"]["idTrasmittente"] =
+        json!({"idPaese": "IT", "idCodice": "00000000000"});
+    assert!(failed(&fixture.call("create_draft", override_request.clone()).await));
+    assert!(invoices::list_invoices_store(&fixture.store).await.unwrap().is_empty());
+    assert_eq!(fixture.drafts.load(Ordering::Relaxed), 0);
+
+    let created = fixture.call("create_draft", draft(&issuer, &customer)).await;
+    assert!(!failed(&created), "{created}");
+    let created = &created["result"]["structuredContent"];
+    let id = created["id"].as_str().unwrap();
+    let revision = &created["revision"];
+    override_request["id"] = json!(id);
+    override_request["expectedRevision"] = revision.clone();
+    assert!(failed(&fixture.call("update_draft", override_request).await));
+    let mut swapped = draft(&customer, &issuer);
+    swapped["id"] = json!(id);
+    swapped["expectedRevision"] = revision.clone();
+    assert!(failed(&fixture.call("update_draft", swapped).await));
+
+    let saved = fixture.call("get_invoice", json!({"id": id})).await;
+    let saved = &saved["result"]["structuredContent"];
+    assert_eq!(saved["revision"], *revision);
+    assert_eq!(saved["cedenteId"], issuer);
+    assert_eq!(saved["cessionarioId"], customer);
+    assert_eq!(fixture.drafts.load(Ordering::Relaxed), 1);
+
+    let xml = invoices::export_invoice_xml_store(&fixture.store, id).await.unwrap();
+    let document = common::xml::decode::decode(&xml).unwrap();
+    let header = document.header.unwrap();
+    assert_eq!(
+        header.dati_trasmissione.unwrap().id_trasmittente.unwrap().id_codice,
+        "RSSMRA80A01H501U"
+    );
+    assert_eq!(
+        header.cedente_prestatore.unwrap().dati_anagrafici.unwrap().id_fiscale_iva.unwrap().id_codice,
+        "01234567890"
+    );
+    assert_eq!(
+        header.cessionario_committente.unwrap().dati_anagrafici.unwrap().id_fiscale_iva.unwrap().id_codice,
+        "09876543210"
+    );
+
+    fixture.store.update("clients", &issuer, json!({"codice_fiscale": null}))
+        .await.unwrap();
+    let validation = fixture.call("validate_invoice", json!({"id": id})).await;
+    let validation = &validation["result"]["structuredContent"];
+    assert_eq!(validation["valid"], false);
+    assert!(validation["errors"].as_array().unwrap().iter().any(|error| {
+        error["code"] == "00300"
+            && error["elementPath"] == "Header/DatiTrasmissione/IdTrasmittente/IdCodice"
+    }));
 }
 
 #[tokio::test]

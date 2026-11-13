@@ -250,14 +250,16 @@ pub struct PaymentDetail {
 
 /// Request to create a new invoice.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[derive(schemars::JsonSchema)]
 pub struct CreateInvoiceRequest {
     pub numero: String,
     pub data: String,
     pub tipo_documento: String,
     pub divisa: String,
+    /// Exact issuer ID from the local client catalog.
     pub cedente_id: String,
+    /// Exact customer ID from the local client catalog.
     pub cessionario_id: String,
     #[serde(default)]
     pub causale: Vec<String>,
@@ -1469,6 +1471,12 @@ pub async fn export_invoice_xml_store(
         return Err("Verifica in PEC il reinvio già registrato prima di esportare la fattura.".into());
     }
     let fattura = build_fattura_from_store(&snapshot, id).await?;
+    if matches!(row.get::<String>("stato").as_str(), "draft" | "validated") {
+        common::validation::rules::validate_transmitter(
+            fattura.header.as_ref().and_then(|header| header.dati_trasmissione.as_ref()),
+        )
+        .map_err(|error| error.to_string())?;
+    }
     let xml = common::xml::encode::encode(&fattura).map_err(|e| e.to_string())?;
 
     // Persist the generated XML as an audit trail.
@@ -2646,6 +2654,26 @@ pub(crate) async fn build_fattura_from_store(
     } else {
         &cedente_row
     };
+    let transmitter_country: String = transmitter.get("id_paese");
+    let transmitter_vat: String = transmitter.get("id_codice");
+    let transmitter_cf: Option<String> = transmitter.get("codice_fiscale");
+    let transmitter_id = if transmitter_country == "IT" {
+        let is_person = ["nome", "cognome"].iter().any(|field| {
+            transmitter.get::<Option<String>>(field)
+                .is_some_and(|value| !value.trim().is_empty())
+        });
+        transmitter_cf.as_deref().map(str::trim).filter(|cf| !cf.is_empty())
+            .unwrap_or_else(|| {
+                if is_person && transmitter_vat.trim().len() != 16 {
+                    ""
+                } else {
+                    transmitter_vat.trim()
+                }
+            })
+            .to_ascii_uppercase()
+    } else {
+        transmitter_vat
+    };
     let destination = destination(&inv, &cessionario_row, is_autofattura);
     let formato_trasmissione = destination.formato_trasmissione;
 
@@ -2653,8 +2681,8 @@ pub(crate) async fn build_fattura_from_store(
     let header = FatturaElettronicaHeader {
         dati_trasmissione: Some(DatiTrasmissione {
             id_trasmittente: Some(IdFiscale {
-                id_paese: transmitter.get("id_paese"),
-                id_codice: transmitter.get("id_codice"),
+                id_paese: transmitter_country,
+                id_codice: transmitter_id,
             }),
             progressivo_invio: common::pec::progressivo_from_id(id),
             ..destination
@@ -3594,6 +3622,32 @@ mod tests {
             soggetto_emittente: None,
             ..Default::default()
         }
+    }
+
+    #[tokio::test]
+    async fn italian_individual_transmitter_requires_and_uses_fiscal_code() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::storage::FileStore::open(dir.path().join("index.json")).unwrap();
+        let (seller, buyer) = setup_test_parties(&store).await;
+        store.update("clients", &seller, json!({
+            "denominazione": null, "nome": "Mario", "cognome": "Rossi",
+        })).await.unwrap();
+        let invoice = create_invoice_store(&store, sample_invoice_request(&seller, &buyer, "1"))
+            .await.unwrap();
+        let validation = validate_invoice_store(&store, &invoice.id).await.unwrap();
+        assert!(!validation.valid);
+        assert!(validation.errors.iter().any(|error| error.code == "00300"));
+        assert!(set_invoice_status_store(&store, &invoice.id, "validated").await.is_err());
+        assert!(export_invoice_xml_store(&store, &invoice.id).await.is_err());
+
+        store.update("clients", &seller, json!({"codice_fiscale": "RSSMRA80A01H501U"}))
+            .await.unwrap();
+        assert!(validate_invoice_store(&store, &invoice.id).await.unwrap().valid);
+        let xml = export_invoice_xml_store(&store, &invoice.id).await.unwrap();
+        assert!(xml.contains("<IdTrasmittente><IdPaese>IT</IdPaese><IdCodice>RSSMRA80A01H501U</IdCodice></IdTrasmittente>"));
+        assert!(xml.contains("<IdFiscaleIVA><IdPaese>IT</IdPaese><IdCodice>11111111111</IdCodice></IdFiscaleIVA>"));
+        let document = common::xml::decode::decode(&xml).unwrap();
+        assert!(common::pec::sdi_filename(&document).starts_with("ITRSSMRA80A01H501U_"));
     }
 
     #[tokio::test]

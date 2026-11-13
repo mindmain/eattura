@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::{ValidationError, ValidationResult};
 use crate::sdi::v1::{
-    DettaglioLinee, FatturaElettronica, FatturaElettronicaBody, FatturaElettronicaHeader,
+    DatiTrasmissione, DettaglioLinee, FatturaElettronica, FatturaElettronicaBody, FatturaElettronicaHeader,
     ScontoMaggiorazione,
 };
 use crate::xml::enum_map::{natura_to_sdi, tipo_sconto_maggiorazione_to_sdi};
@@ -49,10 +49,8 @@ pub fn validate_header(header: &FatturaElettronicaHeader) -> ValidationResult {
     let mut errors = Vec::new();
 
     // Validate DatiTrasmissione
-    if let Some(dt) = &header.dati_trasmissione
-        && let Some(id) = &dt.id_trasmittente
-    {
-        errors.extend(validate_id_fiscale(&id.id_paese, &id.id_codice));
+    if let Err(error) = validate_transmitter(header.dati_trasmissione.as_ref()) {
+        errors.push(error);
     }
 
     // Validate CedentePrestatore
@@ -132,6 +130,38 @@ pub fn validate_header(header: &FatturaElettronicaHeader) -> ValidationResult {
     }
 
     ValidationResult { errors }
+}
+
+/// Check the transmitter identifier's format before export or transmission.
+pub fn validate_transmitter(transmission: Option<&DatiTrasmissione>) -> Result<(), ValidationError> {
+    let id = transmission.and_then(|data| data.id_trasmittente.as_ref());
+    if let Some(id) = id
+        && (id.id_paese.len() != 2 || !id.id_paese.bytes().all(|byte| byte.is_ascii_uppercase()))
+    {
+        return Err(ValidationError {
+            code: "00200".into(),
+            message: "Il paese del trasmittente deve contenere due lettere maiuscole.".into(),
+            element_path: Some("Header/DatiTrasmissione/IdTrasmittente/IdPaese".into()),
+        });
+    }
+    if id.is_some_and(|id| {
+        let code = id.id_codice.as_bytes();
+        if id.id_paese == "IT" {
+            (code.len() == 11 && code.iter().all(u8::is_ascii_digit)
+                && code.iter().any(|digit| *digit != b'0'))
+                || (code.len() == 16 && code.iter().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+                    && code.iter().any(u8::is_ascii_uppercase))
+        } else {
+            (1..=28).contains(&id.id_codice.chars().count()) && !id.id_codice.trim().is_empty()
+        }
+    }) {
+        return Ok(());
+    }
+    Err(ValidationError {
+        code: "00300".into(),
+        message: "Controlla il codice fiscale del trasmittente in anagrafica. Per l’Italia serve un codice fiscale di 11 cifre o 16 caratteri alfanumerici.".into(),
+        element_path: Some("Header/DatiTrasmissione/IdTrasmittente/IdCodice".into()),
+    })
 }
 
 /// Validate a single body element of an invoice.
