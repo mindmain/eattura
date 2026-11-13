@@ -66,7 +66,7 @@ impl Fixture {
 
     async fn parties(&self) -> (String, String) {
         let mut ids = Vec::new();
-        for (name, tax) in [("Issuer", "01234567890"), ("Customer", "09876543210")] {
+        for (name, tax) in [("Issuer", "01234567897"), ("Customer", "09876543217")] {
             let client = serde_json::from_value(json!({
                 "denominazione": name, "idPaese": "IT", "idCodice": tax,
                 "regimeFiscale": "RF01", "indirizzo": "Via Roma", "cap": "00100",
@@ -425,7 +425,7 @@ async fn draft_tools_use_catalog_ids_and_reject_fiscal_overrides() {
     }
 
     for field in ["cedenteId", "cessionarioId"] {
-        for invalid in ["invented-client-id", "01234567890", "Customer", ""] {
+        for invalid in ["invented-client-id", "01234567897", "Customer", ""] {
             let mut request = draft(&issuer, &customer);
             request["invoice"][field] = json!(invalid);
             let response = fixture.call("create_draft", request).await;
@@ -469,11 +469,11 @@ async fn draft_tools_use_catalog_ids_and_reject_fiscal_overrides() {
     );
     assert_eq!(
         header.cedente_prestatore.unwrap().dati_anagrafici.unwrap().id_fiscale_iva.unwrap().id_codice,
-        "01234567890"
+        "01234567897"
     );
     assert_eq!(
         header.cessionario_committente.unwrap().dati_anagrafici.unwrap().id_fiscale_iva.unwrap().id_codice,
-        "09876543210"
+        "09876543217"
     );
 
     fixture.store.update("clients", &issuer, json!({"codice_fiscale": null}))

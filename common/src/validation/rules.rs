@@ -1,17 +1,36 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+use chrono::{Local, NaiveDate};
 
 use super::{ValidationError, ValidationResult};
 use crate::sdi::v1::{
-    DatiTrasmissione, DettaglioLinee, FatturaElettronica, FatturaElettronicaBody, FatturaElettronicaHeader,
-    ScontoMaggiorazione,
+    Anagrafica, DatiTrasmissione, FatturaElettronica, FatturaElettronicaBody,
+    FatturaElettronicaHeader, IdFiscale, Indirizzo, ScontoMaggiorazione, anagrafica,
 };
-use crate::xml::enum_map::{natura_to_sdi, tipo_sconto_maggiorazione_to_sdi};
+use crate::xml::enum_map::{
+    bollo_virtuale_to_sdi, causale_pagamento_to_sdi, condizioni_pagamento_to_sdi,
+    formato_trasmissione_to_sdi, modalita_pagamento_to_sdi, natura_to_sdi, regime_fiscale_to_sdi,
+    tipo_cassa_to_sdi, tipo_documento_to_sdi, tipo_ritenuta_to_sdi,
+    tipo_sconto_maggiorazione_to_sdi,
+};
 
-/// Rounding tolerance for 2-decimal financial amounts (SDI 00421/00422).
-const TOLERANCE_2: f64 = 0.01;
+fn report(
+    errors: &mut Vec<ValidationError>,
+    code: &str,
+    path: impl Into<String>,
+    message: impl Into<String>,
+) {
+    errors.push(ValidationError {
+        code: code.into(),
+        message: message.into(),
+        element_path: Some(path.into()),
+    });
+}
 
-/// Rounding tolerance for 8-decimal price calculations (SDI 00423).
-const TOLERANCE_8: f64 = 1e-4;
+const HEADER: &str = "Header";
+const TRANSMISSION: &str = "Header/DatiTrasmissione";
+const CUSTOMER: &str = "Header/CessionarioCommittente/DatiAnagrafici";
+const SUPPLIER: &str = "Header/CedentePrestatore/DatiAnagrafici";
 
 // ===========================================================================
 // Public API
@@ -23,144 +42,373 @@ const TOLERANCE_8: f64 = 1e-4;
 /// and cross-cutting checks (e.g. document-type-specific rules).
 /// Returns a combined `ValidationResult` with all errors found.
 pub fn validate(invoice: &FatturaElettronica) -> ValidationResult {
+    validate_on(invoice, Local::now().date_naive())
+}
+
+/// Validate with an explicit receipt date. Local preflight uses the current date.
+pub fn validate_on(invoice: &FatturaElettronica, receipt_date: NaiveDate) -> ValidationResult {
     let mut errors = Vec::new();
+
+    if formato_trasmissione_to_sdi(invoice.versione).is_none() {
+        report(
+            &mut errors,
+            "00200",
+            "@versione",
+            "Invoice version must be FPA12 or FPR12",
+        );
+    }
 
     if let Some(header) = &invoice.header {
-        let r = validate_header(header);
-        errors.extend(r.errors);
+        errors.extend(validate_header(header).errors);
+        if let Some(dt) = &header.dati_trasmissione
+            && formato_trasmissione_to_sdi(dt.formato_trasmissione).is_some()
+            && formato_trasmissione_to_sdi(invoice.versione).is_some()
+            && dt.formato_trasmissione != invoice.versione
+        {
+            report(
+                &mut errors,
+                "00428",
+                format!("{TRANSMISSION}/FormatoTrasmissione"),
+                "FormatoTrasmissione must match the root versione attribute",
+            );
+        }
+    } else {
+        report(
+            &mut errors,
+            "00200",
+            HEADER,
+            "FatturaElettronicaHeader is required",
+        );
     }
 
+    if invoice.body.is_empty() {
+        report(
+            &mut errors,
+            "00200",
+            "Body",
+            "At least one FatturaElettronicaBody is required",
+        );
+    }
     for (i, body) in invoice.body.iter().enumerate() {
-        let r = validate_body_indexed(body, i);
-        errors.extend(r.errors);
+        errors.extend(validate_body_indexed(body, i).errors);
+        if let Some(date) = body
+            .dati_generali
+            .as_ref()
+            .and_then(|data| data.dati_generali_documento.as_ref())
+            .filter(|doc| is_iso_date(&doc.data))
+            .and_then(|doc| NaiveDate::parse_from_str(&doc.data, "%Y-%m-%d").ok())
+            && date > receipt_date
+        {
+            report(
+                &mut errors,
+                "00403",
+                format!("Body[{}]/DatiGenerali/DatiGeneraliDocumento/Data", i + 1),
+                "Invoice date is later than the receipt date",
+            );
+        }
     }
 
-    errors.extend(validate_tipo_documento_rules(invoice));
-
+    validate_batch(invoice, &mut errors);
+    validate_tipo_documento_rules(invoice, &mut errors);
+    if errors.iter().filter(|error| error.code == "00200").count() > 50 {
+        report(
+            &mut errors,
+            "00201",
+            "FatturaElettronica",
+            "More than 50 XML format errors found",
+        );
+    }
     ValidationResult { errors }
 }
 
-/// Validate only the header portion of an invoice.
-///
-/// Checks transmission data fields, cedente/prestatore completeness,
-/// cessionario/committente required fields, and format validators for
-/// codice fiscale, partita IVA, and codice destinatario.
+/// Validate the invoice header, including tax identifiers and routing.
 pub fn validate_header(header: &FatturaElettronicaHeader) -> ValidationResult {
     let mut errors = Vec::new();
+    let customer = header
+        .cessionario_committente
+        .as_ref()
+        .and_then(|party| party.dati_anagrafici.as_ref());
 
-    // Validate DatiTrasmissione
-    if let Err(error) = validate_transmitter(header.dati_trasmissione.as_ref()) {
-        errors.push(error);
-    }
-
-    // Validate CedentePrestatore
-    if let Some(cp) = &header.cedente_prestatore
-        && let Some(da) = &cp.dati_anagrafici
-    {
-        if let Some(id) = &da.id_fiscale_iva {
-            errors.extend(validate_id_fiscale(&id.id_paese, &id.id_codice));
-        }
-        if let Some(cf) = &da.codice_fiscale
-            && let Some(e) = validate_codice_fiscale(cf)
-        {
-            errors.push(e);
-        }
-    }
-
-    // Validate CessionarioCommittente
-    if let Some(cc) = &header.cessionario_committente
-        && let Some(da) = &cc.dati_anagrafici
-    {
-        if let Some(id) = &da.id_fiscale_iva {
-            errors.extend(validate_id_fiscale(&id.id_paese, &id.id_codice));
-        }
-        if let Some(cf) = &da.codice_fiscale
-            && let Some(e) = validate_codice_fiscale(cf)
-        {
-            errors.push(e);
-        }
-        // 00417: the cessionario must be identified by IdFiscaleIVA or CodiceFiscale.
-        if da.id_fiscale_iva.is_none() && da.codice_fiscale.is_none() {
-            errors.push(ValidationError {
-                code: "00417".into(),
-                message: "CessionarioCommittente requires either IdFiscaleIVA or CodiceFiscale"
-                    .into(),
-                element_path: Some("Header/CessionarioCommittente/DatiAnagrafici".into()),
-            });
-        }
-    }
-
-    // 00305: CodiceDestinatario must be 7 chars (private) or 6 chars (PA).
     if let Some(dt) = &header.dati_trasmissione {
-        let cd = &dt.codice_destinatario;
-        if dt.formato_trasmissione == 10 {
-            // FPA12 (PA)
-            if cd.len() != 6 || !cd.chars().all(|c| c.is_ascii_alphanumeric()) {
-                errors.push(ValidationError {
-                    code: "00305".into(),
-                    message: format!(
-                        "CodiceDestinatario for FPA12 (Pubblica Amministrazione) must be 6 alphanumeric characters, got '{}'",
-                        cd
-                    ),
-                    element_path: Some("Header/DatiTrasmissione/CodiceDestinatario".into()),
-                });
-            }
-        } else if dt.formato_trasmissione == 20 {
-            // FPR12 (B2B/B2C)
-            if cd.len() != 7 || !cd.chars().all(|c| c.is_ascii_alphanumeric()) {
-                errors.push(ValidationError {
-                    code: "00305".into(),
-                    message: format!(
-                        "CodiceDestinatario for FPR12 (privati) must be 7 alphanumeric characters, got '{}'",
-                        cd
-                    ),
-                    element_path: Some("Header/DatiTrasmissione/CodiceDestinatario".into()),
-                });
-            }
-        } else if !cd.is_empty() && cd.len() != 7 && cd.len() != 6 {
-            errors.push(ValidationError {
-                code: "00305".into(),
-                message: format!(
-                    "CodiceDestinatario must be 6 (PA) or 7 (private) characters, got {}",
-                    cd.len()
-                ),
-                element_path: Some("Header/DatiTrasmissione/CodiceDestinatario".into()),
-            });
+        if let Err(error) = validate_transmitter(Some(dt)) {
+            errors.push(error);
         }
+        if !(1..=10).contains(&dt.progressivo_invio.chars().count()) {
+            report(
+                &mut errors,
+                "00200",
+                format!("{TRANSMISSION}/ProgressivoInvio"),
+                "ProgressivoInvio must contain 1 to 10 characters",
+            );
+        }
+        let cd = &dt.codice_destinatario;
+        let path = format!("{TRANSMISSION}/CodiceDestinatario");
+        if !matches!(cd.len(), 6 | 7)
+            || !cd
+                .bytes()
+                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+        {
+            report(
+                &mut errors,
+                "00200",
+                &path,
+                "CodiceDestinatario must contain 6 or 7 uppercase alphanumeric characters",
+            );
+        } else if matches!((dt.formato_trasmissione, cd.len()), (10, 7) | (20, 6)) {
+            report(
+                &mut errors,
+                "00427",
+                &path,
+                "CodiceDestinatario length does not match FormatoTrasmissione",
+            );
+        } else if cd == "XXXXXXX"
+            && !customer
+                .and_then(|party| party.id_fiscale_iva.as_ref())
+                .is_some_and(|id| !id.id_paese.is_empty() && id.id_paese != "IT")
+        {
+            report(
+                &mut errors,
+                "00313",
+                &path,
+                "XXXXXXX requires a foreign IdFiscaleIVA for the customer",
+            );
+        }
+        if formato_trasmissione_to_sdi(dt.formato_trasmissione).is_none() {
+            report(
+                &mut errors,
+                "00200",
+                format!("{TRANSMISSION}/FormatoTrasmissione"),
+                "FormatoTrasmissione must be FPA12 or FPR12",
+            );
+        }
+        if dt.pec_destinatario.as_deref().is_some_and(is_sdi_mailbox) {
+            report(
+                &mut errors,
+                "00330",
+                format!("{TRANSMISSION}/PECDestinatario"),
+                "PECDestinatario cannot be an SdI mailbox",
+            );
+        }
+    } else {
+        report(
+            &mut errors,
+            "00200",
+            TRANSMISSION,
+            "DatiTrasmissione is required",
+        );
     }
 
+    if let Some(supplier) = header
+        .cedente_prestatore
+        .as_ref()
+        .and_then(|party| party.dati_anagrafici.as_ref())
+    {
+        validate_anagrafica(supplier.anagrafica.as_ref(), SUPPLIER, &mut errors);
+        if regime_fiscale_to_sdi(supplier.regime_fiscale).is_none() {
+            report(
+                &mut errors,
+                "00200",
+                format!("{SUPPLIER}/RegimeFiscale"),
+                "RegimeFiscale is required",
+            );
+        }
+        if let Some(id) = &supplier.id_fiscale_iva {
+            errors.extend(
+                validate_tax_id(id, "00301", &format!("{SUPPLIER}/IdFiscaleIVA"), false).err(),
+            );
+        } else {
+            report(
+                &mut errors,
+                "00200",
+                format!("{SUPPLIER}/IdFiscaleIVA"),
+                "Supplier IdFiscaleIVA is required",
+            );
+        }
+        if let Some(cf) = &supplier.codice_fiscale {
+            validate_codice_fiscale(cf, "00302", SUPPLIER, &mut errors);
+        }
+    } else {
+        report(
+            &mut errors,
+            "00200",
+            SUPPLIER,
+            "Supplier tax details are required",
+        );
+    }
+
+    if let Some(customer) = customer {
+        validate_anagrafica(customer.anagrafica.as_ref(), CUSTOMER, &mut errors);
+        if let Some(id) = &customer.id_fiscale_iva {
+            errors.extend(
+                validate_tax_id(id, "00305", &format!("{CUSTOMER}/IdFiscaleIVA"), false).err(),
+            );
+        }
+        if let Some(cf) = &customer.codice_fiscale {
+            validate_codice_fiscale(cf, "00306", CUSTOMER, &mut errors);
+        }
+        if customer.id_fiscale_iva.is_none() && customer.codice_fiscale.is_none() {
+            report(
+                &mut errors,
+                "00417",
+                CUSTOMER,
+                "Customer requires IdFiscaleIVA or CodiceFiscale",
+            );
+        }
+    } else {
+        report(
+            &mut errors,
+            "00200",
+            CUSTOMER,
+            "Customer tax details are required",
+        );
+    }
+
+    if let Some(party) = &header.cedente_prestatore {
+        validate_sede(
+            party.sede.as_ref(),
+            "Header/CedentePrestatore/Sede",
+            &mut errors,
+        );
+    }
+    if let Some(party) = &header.cessionario_committente {
+        validate_sede(
+            party.sede.as_ref(),
+            "Header/CessionarioCommittente/Sede",
+            &mut errors,
+        );
+    }
+
+    if let Some(party) = header
+        .rappresentante_fiscale
+        .as_ref()
+        .and_then(|party| party.dati_anagrafici.as_ref())
+    {
+        let path = "Header/RappresentanteFiscale/DatiAnagrafici";
+        if let Some(id) = &party.id_fiscale_iva {
+            errors
+                .extend(validate_tax_id(id, "00303", &format!("{path}/IdFiscaleIVA"), false).err());
+        }
+        if let Some(cf) = &party.codice_fiscale {
+            validate_codice_fiscale(cf, "00304", path, &mut errors);
+        }
+    }
+    if let Some(id) = header
+        .cessionario_committente
+        .as_ref()
+        .and_then(|party| party.rappresentante_fiscale.as_ref())
+        .and_then(|party| party.id_fiscale_iva.as_ref())
+    {
+        errors.extend(
+            validate_tax_id(
+                id,
+                "00303",
+                "Header/CessionarioCommittente/RappresentanteFiscale/IdFiscaleIVA",
+                false,
+            )
+            .err(),
+        );
+    }
     ValidationResult { errors }
 }
 
-/// Check the transmitter identifier's format before export or transmission.
-pub fn validate_transmitter(transmission: Option<&DatiTrasmissione>) -> Result<(), ValidationError> {
-    let id = transmission.and_then(|data| data.id_trasmittente.as_ref());
-    if let Some(id) = id
-        && (id.id_paese.len() != 2 || !id.id_paese.bytes().all(|byte| byte.is_ascii_uppercase()))
+fn valid_text(value: &str, max_length: usize) -> bool {
+    (1..=max_length).contains(&value.chars().count())
+        && value
+            .chars()
+            .all(|character| matches!(character, '\t' | '\n' | '\r' | '\u{20}'..='\u{ff}'))
+}
+
+fn validate_anagrafica(party: Option<&Anagrafica>, path: &str, errors: &mut Vec<ValidationError>) {
+    let valid = match party.and_then(|party| party.soggetto.as_ref()) {
+        Some(anagrafica::Soggetto::Denominazione(name)) => valid_text(name, 80),
+        Some(anagrafica::Soggetto::PersonaFisica(person)) => {
+            valid_text(&person.nome, 60) && valid_text(&person.cognome, 60)
+        }
+        None => false,
+    };
+    if !valid {
+        report(
+            errors,
+            "00200",
+            format!("{path}/Anagrafica"),
+            "Anagrafica requires a valid company name or first and last name",
+        );
+    }
+}
+
+fn validate_sede(address: Option<&Indirizzo>, path: &str, errors: &mut Vec<ValidationError>) {
+    let Some(address) = address else {
+        report(errors, "00200", path, "Sede is required");
+        return;
+    };
+    if !valid_text(&address.indirizzo, 60) {
+        report(
+            errors,
+            "00200",
+            format!("{path}/Indirizzo"),
+            "Indirizzo must contain 1 to 60 Latin-1 characters",
+        );
+    }
+    if !valid_text(&address.comune, 60) {
+        report(
+            errors,
+            "00200",
+            format!("{path}/Comune"),
+            "Comune must contain 1 to 60 Latin-1 characters",
+        );
+    }
+    if address.cap.len() != 5 || !address.cap.bytes().all(|byte| byte.is_ascii_digit()) {
+        report(
+            errors,
+            "00200",
+            format!("{path}/CAP"),
+            "CAP must contain five digits",
+        );
+    }
+    if address.nazione.len() != 2
+        || !address
+            .nazione
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase())
     {
+        report(
+            errors,
+            "00200",
+            format!("{path}/Nazione"),
+            "Nazione must contain two uppercase letters",
+        );
+    }
+}
+
+/// Check the transmitter identifier before export or transmission.
+pub fn validate_transmitter(
+    transmission: Option<&DatiTrasmissione>,
+) -> Result<(), ValidationError> {
+    let path = format!("{TRANSMISSION}/IdTrasmittente");
+    let Some(id) = transmission.and_then(|data| data.id_trasmittente.as_ref()) else {
         return Err(ValidationError {
             code: "00200".into(),
-            message: "Il paese del trasmittente deve contenere due lettere maiuscole.".into(),
-            element_path: Some("Header/DatiTrasmissione/IdTrasmittente/IdPaese".into()),
+            message: "IdTrasmittente is required".into(),
+            element_path: Some(path),
+        });
+    };
+    if id.id_codice.trim().is_empty() && id.id_paese == "IT" {
+        return Err(ValidationError {
+            code: "00300".into(),
+            message: "Il codice fiscale del trasmittente italiano è obbligatorio.".into(),
+            element_path: Some(format!("{path}/IdCodice")),
         });
     }
-    if id.is_some_and(|id| {
-        let code = id.id_codice.as_bytes();
-        if id.id_paese == "IT" {
-            (code.len() == 11 && code.iter().all(u8::is_ascii_digit)
-                && code.iter().any(|digit| *digit != b'0'))
-                || (code.len() == 16 && code.iter().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
-                    && code.iter().any(u8::is_ascii_uppercase))
-        } else {
-            (1..=28).contains(&id.id_codice.chars().count()) && !id.id_codice.trim().is_empty()
-        }
-    }) {
-        return Ok(());
-    }
-    Err(ValidationError {
-        code: "00300".into(),
-        message: "Controlla il codice fiscale del trasmittente in anagrafica. Per l’Italia serve un codice fiscale di 11 cifre o 16 caratteri alfanumerici.".into(),
-        element_path: Some("Header/DatiTrasmissione/IdTrasmittente/IdCodice".into()),
+    validate_tax_id(id, "00300", &path, true)
+}
+
+fn is_sdi_mailbox(address: &str) -> bool {
+    let address = address.trim().to_ascii_lowercase();
+    address.split_once('@').is_some_and(|(user, domain)| {
+        domain == "pec.fatturapa.it"
+            && user.strip_prefix("sdi").is_some_and(|suffix| {
+                suffix.len() == 2 && suffix.bytes().all(|byte| byte.is_ascii_digit())
+            })
     })
 }
 
@@ -176,60 +424,133 @@ pub fn validate_body(body: &FatturaElettronicaBody) -> ValidationResult {
 // Internal helpers
 // ===========================================================================
 
-/// Validate document-level general data: date format and ritenuta/bollo coherence.
-///
-/// The date-format and amount-coherence checks are not single official SDI
-/// codes (the SDI XSD enforces the date type structurally), so they carry
-/// `EATTURA-*` codes to distinguish them from canonical SDI controls.
-fn validate_dati_generali(body: &FatturaElettronicaBody) -> Vec<ValidationError> {
-    let mut errors = Vec::new();
-
-    let Some(dgd) = body
-        .dati_generali
-        .as_ref()
-        .and_then(|dg| dg.dati_generali_documento.as_ref())
-    else {
-        return errors;
+fn validate_dati_generali(
+    body: &FatturaElettronicaBody,
+    path: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(dg) = &body.dati_generali else {
+        report(errors, "00200", path, "DatiGenerali is required");
+        return;
+    };
+    let doc_path = format!("{path}/DatiGeneraliDocumento");
+    let Some(doc) = &dg.dati_generali_documento else {
+        report(
+            errors,
+            "00200",
+            doc_path,
+            "DatiGeneraliDocumento is required",
+        );
+        return;
     };
 
-    // Date must be present and in ISO `YYYY-MM-DD` form.
-    if !is_iso_date(&dgd.data) {
-        errors.push(ValidationError {
-            code: "EATTURA-DATE".into(),
-            message: format!("Data must be in YYYY-MM-DD format, got '{}'", dgd.data),
-            element_path: Some("Body/DatiGenerali/DatiGeneraliDocumento/Data".into()),
-        });
+    if tipo_documento_to_sdi(doc.tipo_documento).is_none() {
+        report(
+            errors,
+            "00200",
+            format!("{doc_path}/TipoDocumento"),
+            "TipoDocumento is unsupported",
+        );
     }
-
-    // Ritenuta: when present, importo and aliquota must be positive.
-    for (i, rit) in dgd.dati_ritenuta.iter().enumerate() {
-        if rit.importo_ritenuta <= 0.0 || rit.aliquota_ritenuta <= 0.0 {
-            errors.push(ValidationError {
-                code: "EATTURA-RITENUTA".into(),
-                message: "DatiRitenuta requires a positive ImportoRitenuta and AliquotaRitenuta"
-                    .into(),
-                element_path: Some(format!(
-                    "Body/DatiGenerali/DatiGeneraliDocumento/DatiRitenuta[{}]",
-                    i + 1
-                )),
-            });
+    if !is_iso_date(&doc.data) || doc.data.as_str() < "1970-01-01" {
+        report(
+            errors,
+            "00200",
+            format!("{doc_path}/Data"),
+            "Data must be a calendar date in YYYY-MM-DD format on or after 1970-01-01",
+        );
+    } else {
+        for (index, linked) in dg.dati_fatture_collegate.iter().enumerate() {
+            if let Some(date) = &linked.data {
+                let linked_path = format!("{path}/DatiFattureCollegate[{}]/Data", index + 1);
+                if !is_iso_date(date) {
+                    report(
+                        errors,
+                        "00200",
+                        linked_path,
+                        "Linked invoice date must use YYYY-MM-DD",
+                    );
+                } else if doc.data < *date {
+                    report(
+                        errors,
+                        "00418",
+                        linked_path,
+                        "Linked invoice date is later than the document date",
+                    );
+                }
+            }
         }
     }
-
-    // Bollo: when present, ImportoBollo must be positive.
-    if let Some(bollo) = &dgd.dati_bollo
-        && bollo.importo_bollo.unwrap_or(0.0) <= 0.0
-    {
-        errors.push(ValidationError {
-            code: "EATTURA-BOLLO".into(),
-            message: "DatiBollo requires a positive ImportoBollo".into(),
-            element_path: Some(
-                "Body/DatiGenerali/DatiGeneraliDocumento/DatiBollo/ImportoBollo".into(),
-            ),
-        });
+    if !(1..=20).contains(&doc.numero.chars().count()) {
+        report(
+            errors,
+            "00200",
+            format!("{doc_path}/Numero"),
+            "Numero must contain 1 to 20 characters",
+        );
+    } else if !doc.numero.bytes().any(|byte| byte.is_ascii_digit()) {
+        report(
+            errors,
+            "00425",
+            format!("{doc_path}/Numero"),
+            "Numero must contain at least one digit",
+        );
+    }
+    if doc.divisa.len() != 3 || !doc.divisa.bytes().all(|byte| byte.is_ascii_uppercase()) {
+        report(
+            errors,
+            "00200",
+            format!("{doc_path}/Divisa"),
+            "Divisa must contain three uppercase letters",
+        );
     }
 
-    errors
+    validate_adjustments(&doc.sconto_maggiorazione, "00437", &doc_path, errors);
+    for (index, withholding) in doc.dati_ritenuta.iter().enumerate() {
+        let path = format!("{doc_path}/DatiRitenuta[{}]", index + 1);
+        if tipo_ritenuta_to_sdi(withholding.tipo_ritenuta).is_none() {
+            report(
+                errors,
+                "00200",
+                format!("{path}/TipoRitenuta"),
+                "TipoRitenuta is required",
+            );
+        }
+        if causale_pagamento_to_sdi(withholding.causale_pagamento).is_none() {
+            report(
+                errors,
+                "00200",
+                format!("{path}/CausalePagamento"),
+                "CausalePagamento is required",
+            );
+        }
+        if withholding.importo_ritenuta <= 0.0 || withholding.aliquota_ritenuta <= 0.0 {
+            report(
+                errors,
+                "EATTURA-RITENUTA",
+                path,
+                "DatiRitenuta requires a positive amount and rate",
+            );
+        }
+    }
+    if let Some(bollo) = &doc.dati_bollo {
+        if bollo_virtuale_to_sdi(bollo.bollo_virtuale).is_none() {
+            report(
+                errors,
+                "00200",
+                format!("{doc_path}/DatiBollo/BolloVirtuale"),
+                "BolloVirtuale is required",
+            );
+        }
+        if bollo.importo_bollo.is_some_and(|amount| amount <= 0.0) {
+            report(
+                errors,
+                "EATTURA-BOLLO",
+                format!("{doc_path}/DatiBollo/ImportoBollo"),
+                "ImportoBollo must be positive when present",
+            );
+        }
+    }
 }
 
 /// Whether `s` is a syntactically valid ISO date `YYYY-MM-DD`.
@@ -242,29 +563,14 @@ fn is_iso_date(s: &str) -> bool {
     if !(digits(0..4) && digits(5..7) && digits(8..10)) {
         return false;
     }
-    let year: u32 = s[0..4].parse().unwrap_or(0);
-    let month: u32 = s[5..7].parse().unwrap_or(0);
-    let day: u32 = s[8..10].parse().unwrap_or(0);
-
-    let is_leap = (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400);
-    let max_day = match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 => {
-            if is_leap {
-                29
-            } else {
-                28
-            }
-        }
-        _ => 0,
-    };
-    (1..=12).contains(&month) && day >= 1 && day <= max_day
+    NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok()
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum LineDescriptionError {
-    #[error("Descrizione contains an unsupported character {character:?} (U+{codepoint:04X}). Use Basic Latin or Latin-1 Supplement, with straight quotes and hyphens.")]
+    #[error(
+        "Descrizione contains an unsupported character {character:?} (U+{codepoint:04X}). Use Basic Latin or Latin-1 Supplement, with straight quotes and hyphens."
+    )]
     UnsupportedCharacter { character: char, codepoint: u32 },
     #[error("Descrizione must contain 1 to 1000 characters and cannot be blank.")]
     InvalidLength,
@@ -291,38 +597,48 @@ pub fn validate_line_description(description: &str) -> Result<(), LineDescriptio
 
 fn validate_body_indexed(body: &FatturaElettronicaBody, body_idx: usize) -> ValidationResult {
     let mut errors = Vec::new();
-
-    errors.extend(validate_dati_generali(body));
-    errors.extend(validate_natura_aliquota_coherence(body));
-    errors.extend(validate_dati_riepilogo(body));
-    errors.extend(validate_linee_riepilogo_match(body));
+    let path = format!("Body[{}]", body_idx + 1);
+    validate_dati_generali(body, &format!("{path}/DatiGenerali"), &mut errors);
+    validate_dati_beni_servizi(body, &path, &mut errors);
     errors.extend(validate_dati_documenti_correlati(body));
 
-    // Validate line descriptions and price calculations.
-    if let Some(dbs) = &body.dati_beni_servizi {
-        for linea in &dbs.dettaglio_linee {
-            if let Err(message) = validate_line_description(&linea.descrizione) {
-                errors.push(ValidationError {
-                    code: "00200".into(),
-                    message: format!("Line {}: {message}", linea.numero_linea),
-                    element_path: Some(format!(
-                        "Body[{}]/DatiBeniServizi/DettaglioLinee[NumeroLinea={}]/Descrizione",
-                        body_idx + 1,
-                        linea.numero_linea
-                    )),
-                });
-            }
-            errors.extend(validate_prezzo_totale(linea));
+    for (payment_idx, payment) in body.dati_pagamento.iter().enumerate() {
+        let payment_path = format!("{path}/DatiPagamento[{}]", payment_idx + 1);
+        if condizioni_pagamento_to_sdi(payment.condizioni_pagamento).is_none() {
+            report(
+                &mut errors,
+                "00200",
+                format!("{payment_path}/CondizioniPagamento"),
+                "CondizioniPagamento is required",
+            );
         }
-    }
-
-    // Validate IBAN in payment details
-    for dp in &body.dati_pagamento {
-        for det in &dp.dettaglio_pagamento {
-            if let Some(iban) = &det.iban
-                && let Some(e) = validate_iban(iban)
+        if payment.dettaglio_pagamento.is_empty() {
+            report(
+                &mut errors,
+                "00200",
+                format!("{payment_path}/DettaglioPagamento"),
+                "At least one payment detail is required",
+            );
+        }
+        for (detail_idx, detail) in payment.dettaglio_pagamento.iter().enumerate() {
+            let detail_path = format!("{payment_path}/DettaglioPagamento[{}]", detail_idx + 1);
+            if modalita_pagamento_to_sdi(detail.modalita_pagamento).is_none() {
+                report(
+                    &mut errors,
+                    "00200",
+                    format!("{detail_path}/ModalitaPagamento"),
+                    "ModalitaPagamento is required",
+                );
+            }
+            if let Some(iban) = &detail.iban
+                && !valid_iban(iban)
             {
-                errors.push(e);
+                report(
+                    &mut errors,
+                    "00200",
+                    format!("{detail_path}/IBAN"),
+                    "IBAN must contain a two-letter country code, two digits and 11 to 30 alphanumeric characters",
+                );
             }
         }
     }
@@ -330,226 +646,360 @@ fn validate_body_indexed(body: &FatturaElettronicaBody, body_idx: usize) -> Vali
     ValidationResult { errors }
 }
 
-/// SDI 00400: Natura must be present when AliquotaIVA is 0.
-/// SDI 00401: Natura must NOT be present when AliquotaIVA is > 0.
-///
-/// Applies to both DettaglioLinee and DatiRiepilogo.
-fn validate_natura_aliquota_coherence(body: &FatturaElettronicaBody) -> Vec<ValidationError> {
-    let mut errors = Vec::new();
-
-    if let Some(dbs) = &body.dati_beni_servizi {
-        // Check DettaglioLinee
-        for (i, linea) in dbs.dettaglio_linee.iter().enumerate() {
-            let has_natura = linea.natura.is_some() && linea.natura != Some(0);
-            let aliquota_zero = linea.aliquota_iva == 0.0;
-
-            if aliquota_zero && !has_natura {
-                errors.push(ValidationError {
-                    code: "00400".into(),
-                    message: format!(
-                        "Natura is required when AliquotaIVA is 0 (line {})",
-                        linea.numero_linea
-                    ),
-                    element_path: Some(format!(
-                        "Body/DatiBeniServizi/DettaglioLinee[{}]/Natura",
-                        i + 1
-                    )),
-                });
-            }
-            if !aliquota_zero && has_natura {
-                errors.push(ValidationError {
-                    code: "00401".into(),
-                    message: format!(
-                        "Natura must not be present when AliquotaIVA > 0 (line {})",
-                        linea.numero_linea
-                    ),
-                    element_path: Some(format!(
-                        "Body/DatiBeniServizi/DettaglioLinee[{}]/Natura",
-                        i + 1
-                    )),
-                });
-            }
-        }
-
-        // Check DatiRiepilogo
-        for (i, riep) in dbs.dati_riepilogo.iter().enumerate() {
-            let has_natura = riep.natura.is_some() && riep.natura != Some(0);
-            let aliquota_zero = riep.aliquota_iva == 0.0;
-
-            if aliquota_zero && !has_natura {
-                errors.push(ValidationError {
-                    code: "00400".into(),
-                    message: "Natura is required in DatiRiepilogo when AliquotaIVA is 0".into(),
-                    element_path: Some(format!(
-                        "Body/DatiBeniServizi/DatiRiepilogo[{}]/Natura",
-                        i + 1
-                    )),
-                });
-            }
-            if !aliquota_zero && has_natura {
-                errors.push(ValidationError {
-                    code: "00401".into(),
-                    message: "Natura must not be present in DatiRiepilogo when AliquotaIVA > 0"
-                        .into(),
-                    element_path: Some(format!(
-                        "Body/DatiBeniServizi/DatiRiepilogo[{}]/Natura",
-                        i + 1
-                    )),
-                });
-            }
-        }
-    }
-
-    errors
-}
-
-/// SDI 00419: For each AliquotaIVA in DettaglioLinee, a DatiRiepilogo must exist.
-/// SDI 00421: Imposta must equal AliquotaIVA * ImponibileImporto / 100.
-/// SDI 00422: ImponibileImporto must equal the sum of PrezzoTotale (and DatiCassaPrevidenziale) for matching (AliquotaIVA, Natura).
-fn validate_dati_riepilogo(body: &FatturaElettronicaBody) -> Vec<ValidationError> {
-    let mut errors = Vec::new();
-
-    let Some(dbs) = &body.dati_beni_servizi else {
-        return errors;
-    };
-
-    // Group line and cassa totals by (aliquota, natura) AND by aliquota alone
-    let mut totals_by_pair: HashMap<(String, Option<i32>), f64> = HashMap::new();
-    let mut line_aliquote: HashMap<String, f64> = HashMap::new();
-    for linea in &dbs.dettaglio_linee {
-        let aliq_key = format!("{:.2}", linea.aliquota_iva);
-        let nat_key = linea.natura.filter(|&n| n != 0);
-        *totals_by_pair
-            .entry((aliq_key.clone(), nat_key))
-            .or_default() += linea.prezzo_totale;
-        *line_aliquote.entry(aliq_key).or_default() += linea.prezzo_totale;
-    }
-
-    if let Some(dgd) = body
+fn validate_dati_beni_servizi(
+    body: &FatturaElettronicaBody,
+    path: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    let goods_path = format!("{path}/DatiBeniServizi");
+    let doc = body
         .dati_generali
         .as_ref()
-        .and_then(|dg| dg.dati_generali_documento.as_ref())
-    {
-        for cassa in &dgd.dati_cassa_previdenziale {
-            let aliq_key = format!("{:.2}", cassa.aliquota_iva);
-            let nat_key = cassa.natura.filter(|&n| n != 0);
-            *totals_by_pair
-                .entry((aliq_key.clone(), nat_key))
-                .or_default() += cassa.importo_contributo_cassa;
-            *line_aliquote.entry(aliq_key).or_default() += cassa.importo_contributo_cassa;
-        }
+        .and_then(|dg| dg.dati_generali_documento.as_ref());
+    let td16 = doc.is_some_and(|doc| doc.tipo_documento == 160);
+    let td21 = doc.is_some_and(|doc| doc.tipo_documento == 210);
+    let has_withholding = doc.is_some_and(|doc| !doc.dati_ritenuta.is_empty());
+
+    let Some(goods) = &body.dati_beni_servizi else {
+        report(errors, "00200", goods_path, "DatiBeniServizi is required");
+        return;
+    };
+    if goods.dettaglio_linee.is_empty() {
+        report(
+            errors,
+            "00200",
+            format!("{goods_path}/DettaglioLinee"),
+            "At least one DettaglioLinee is required",
+        );
+    }
+    if goods.dati_riepilogo.is_empty() {
+        report(
+            errors,
+            "00200",
+            format!("{goods_path}/DatiRiepilogo"),
+            "At least one DatiRiepilogo is required",
+        );
     }
 
-    // Build a set of aliquota values present in riepilogo
-    let mut riepilogo_aliquote: HashMap<String, usize> = HashMap::new();
-    let mut riepilogo_sum_by_pair: HashMap<(String, Option<i32>), (f64, usize)> = HashMap::new();
-    for (i, riep) in dbs.dati_riepilogo.iter().enumerate() {
-        let aliq_key = format!("{:.2}", riep.aliquota_iva);
-        let nat_key = riep.natura.filter(|&n| n != 0);
-        riepilogo_aliquote.insert(aliq_key.clone(), i);
-        let arrotondamento = riep.arrotondamento.unwrap_or(0.0);
-        let entry = riepilogo_sum_by_pair
-            .entry((aliq_key.clone(), nat_key))
-            .or_insert((0.0, i));
-        entry.0 += riep.imponibile_importo - arrotondamento;
-
-        // SDI 00420: EsigibilitaIVA cannot be S (Split Payment) when Natura is N6
-        if riep.esigibilita_iva == Some(30) {
-            let nat_code = riep.natura.unwrap_or(0);
-            if nat_code == 60 || (61..=69).contains(&nat_code) {
-                errors.push(ValidationError {
-                    code: "00420".into(),
-                    message: "EsigibilitaIVA cannot be S (Split Payment) when Natura is N6 (Reverse charge)".into(),
-                    element_path: Some(format!("Body/DatiBeniServizi/DatiRiepilogo[{}]/EsigibilitaIVA", i + 1)),
-                });
+    let mut summary_rates = BTreeSet::new();
+    let mut summary_natures = BTreeSet::new();
+    let mut totals_by_rate = BTreeMap::<String, f64>::new();
+    for (index, summary) in goods.dati_riepilogo.iter().enumerate() {
+        let summary_path = format!("{goods_path}/DatiRiepilogo[{}]", index + 1);
+        validate_rate_and_nature(
+            summary.aliquota_iva,
+            summary.natura,
+            ("00429", "00430"),
+            td16,
+            &summary_path,
+            errors,
+        );
+        let rate = rate_key(summary.aliquota_iva);
+        summary_rates.insert(rate.clone());
+        if let Some(nature) = summary.natura.and_then(natura_to_sdi) {
+            summary_natures.insert(nature);
+            if summary.esigibilita_iva == Some(30) && nature.starts_with("N6") {
+                report(
+                    errors,
+                    "00420",
+                    format!("{summary_path}/EsigibilitaIVA"),
+                    "Split payment is incompatible with reverse charge Natura N6",
+                );
             }
         }
-
-        // SDI 00421: Check imposta calculation
-        let expected_imposta = riep.aliquota_iva * riep.imponibile_importo / 100.0;
-        if (riep.imposta - expected_imposta).abs() > TOLERANCE_2 {
-            errors.push(ValidationError {
-                code: "00421".into(),
-                message: format!(
-                    "Imposta ({:.2}) does not match AliquotaIVA * ImponibileImporto / 100 ({:.2})",
-                    riep.imposta, expected_imposta
+        let taxable = xml_amount2(summary.imponibile_importo);
+        let tax_in_cents = xml_amount2(summary.aliquota_iva) * taxable;
+        let expected_tax = (tax_in_cents + f64::EPSILON * tax_in_cents).round() / 100.0;
+        if exceeds_tolerance(xml_amount2(summary.imposta), expected_tax, 0.01) {
+            report(
+                errors,
+                "00421",
+                format!("{summary_path}/Imposta"),
+                format!(
+                    "Imposta is {:.2}, expected {expected_tax:.2}",
+                    summary.imposta
                 ),
-                element_path: Some(format!(
-                    "Body/DatiBeniServizi/DatiRiepilogo[{}]/Imposta",
-                    i + 1
-                )),
-            });
+            );
+        }
+        *totals_by_rate.entry(rate).or_default() +=
+            taxable - summary.arrotondamento.unwrap_or_default();
+    }
+
+    let mut taxable_by_rate = BTreeMap::new();
+    for line in &goods.dettaglio_linee {
+        let line_path = format!(
+            "{goods_path}/DettaglioLinee[NumeroLinea={}]",
+            line.numero_linea
+        );
+        if !(1..=9999).contains(&line.numero_linea) {
+            report(
+                errors,
+                "00200",
+                format!("{line_path}/NumeroLinea"),
+                "NumeroLinea must be between 1 and 9999",
+            );
+        }
+        if let Err(message) = validate_line_description(&line.descrizione) {
+            report(
+                errors,
+                "00200",
+                format!("{line_path}/Descrizione"),
+                format!("Line {}: {message}", line.numero_linea),
+            );
+        }
+        validate_rate_and_nature(
+            line.aliquota_iva,
+            line.natura,
+            ("00400", "00401"),
+            td16,
+            &line_path,
+            errors,
+        );
+        validate_adjustments(&line.sconto_maggiorazione, "00438", &line_path, errors);
+        if !has_withholding && line.ritenuta == Some(10) {
+            report(
+                errors,
+                "00411",
+                format!("{line_path}/Ritenuta"),
+                "Line withholding requires DatiRitenuta",
+            );
+        }
+        if td21 && xml_amount2(line.aliquota_iva) == 0.0 {
+            report(
+                errors,
+                "00474",
+                format!("{line_path}/AliquotaIVA"),
+                "TD21 does not allow a zero VAT rate on lines",
+            );
+        }
+        let expected_price =
+            apply_sconto_maggiorazione(line.prezzo_unitario, &line.sconto_maggiorazione)
+                * line.quantita.unwrap_or(1.0);
+        if exceeds_tolerance(line.prezzo_totale, expected_price, 0.01) {
+            report(
+                errors,
+                "00423",
+                format!("{line_path}/PrezzoTotale"),
+                format!(
+                    "PrezzoTotale is {}, expected {expected_price:.8}",
+                    line.prezzo_totale
+                ),
+            );
+        }
+        let rate = rate_key(line.aliquota_iva);
+        validate_summary_match(
+            &rate,
+            line.natura,
+            &summary_rates,
+            &summary_natures,
+            &line_path,
+            errors,
+        );
+        *taxable_by_rate.entry(rate).or_default() += line.prezzo_totale;
+    }
+
+    if let Some(doc) = doc {
+        for (index, cassa) in doc.dati_cassa_previdenziale.iter().enumerate() {
+            let cassa_path = format!(
+                "{path}/DatiGenerali/DatiGeneraliDocumento/DatiCassaPrevidenziale[{}]",
+                index + 1
+            );
+            if tipo_cassa_to_sdi(cassa.tipo_cassa).is_none() {
+                report(
+                    errors,
+                    "00200",
+                    format!("{cassa_path}/TipoCassa"),
+                    "TipoCassa is required",
+                );
+            }
+            validate_rate_and_nature(
+                cassa.aliquota_iva,
+                cassa.natura,
+                ("00413", "00414"),
+                false,
+                &cassa_path,
+                errors,
+            );
+            if !has_withholding && cassa.ritenuta == Some(10) {
+                report(
+                    errors,
+                    "00415",
+                    format!("{cassa_path}/Ritenuta"),
+                    "Pension contribution withholding requires DatiRitenuta",
+                );
+            }
+            let rate = rate_key(cassa.aliquota_iva);
+            validate_summary_match(
+                &rate,
+                cassa.natura,
+                &summary_rates,
+                &summary_natures,
+                &cassa_path,
+                errors,
+            );
+            *taxable_by_rate.entry(rate).or_default() +=
+                xml_amount2(cassa.importo_contributo_cassa);
         }
     }
 
-    // SDI 00422: Check imponibile_importo matches sum of line + cassa totals for each (AliquotaIVA, Natura)
-    for ((aliq_key, nat_key), (riep_sum, idx)) in &riepilogo_sum_by_pair {
-        if let Some(&expected_sum) = totals_by_pair.get(&(aliq_key.clone(), *nat_key))
-            && (*riep_sum - expected_sum).abs() > TOLERANCE_2
+    if goods.dati_riepilogo.len() < taxable_by_rate.len() {
+        report(
+            errors,
+            "00419",
+            format!("{goods_path}/DatiRiepilogo"),
+            "At least one DatiRiepilogo is required for each distinct VAT rate",
+        );
+    }
+    for (rate, expected) in taxable_by_rate {
+        if let Some(&actual) = totals_by_rate.get(&rate)
+            && exceeds_tolerance(actual, expected, 1.0)
         {
-            errors.push(ValidationError {
-                code: "00422".into(),
-                message: format!(
-                    "ImponibileImporto ({:.2}) does not match sum of PrezzoTotale for AliquotaIVA {} ({:.2})",
-                    riep_sum, aliq_key, expected_sum
+            report(
+                errors,
+                "00422",
+                format!("{goods_path}/DatiRiepilogo[AliquotaIVA={rate}]/ImponibileImporto"),
+                format!(
+                    "Taxable amount net of rounding is {actual:.2}, expected {expected:.2} at VAT rate {rate}"
                 ),
-                element_path: Some(format!(
-                    "Body/DatiBeniServizi/DatiRiepilogo[{}]/ImponibileImporto",
-                    idx + 1
-                )),
-            });
+            );
         }
     }
+}
 
-    // SDI 00419: Check that every aliquota in lines has a riepilogo
-    for key in line_aliquote.keys() {
-        if !riepilogo_aliquote.contains_key(key) {
-            errors.push(ValidationError {
-                code: "00419".into(),
-                message: format!("No DatiRiepilogo found for AliquotaIVA {}", key),
-                element_path: Some("Body/DatiBeniServizi/DatiRiepilogo".into()),
-            });
+// The XML writer serializes VAT rates and two-decimal amounts with this precision.
+fn xml_amount2(value: f64) -> f64 {
+    format!("{value:.2}").parse().unwrap_or(value)
+}
+
+fn rate_key(rate: f64) -> String {
+    format!("{:.2}", rate + 0.0)
+}
+
+fn exceeds_tolerance(actual: f64, expected: f64, tolerance: f64) -> bool {
+    if !actual.is_finite() || !expected.is_finite() {
+        return true;
+    }
+    // Account for representation error at the inclusive monetary boundary.
+    let float_error = 2.0 * f64::EPSILON * actual.abs().max(expected.abs());
+    (actual - expected).abs() > tolerance + float_error
+}
+
+fn validate_rate_and_nature(
+    rate: f64,
+    nature: Option<i32>,
+    (missing_code, unexpected_code): (&str, &str),
+    allow_taxable_nature: bool,
+    path: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    let rate = xml_amount2(rate + 0.0);
+    let nature_code = nature.and_then(natura_to_sdi);
+    if !(0.0..=100.0).contains(&rate) {
+        report(
+            errors,
+            "00200",
+            format!("{path}/AliquotaIVA"),
+            "AliquotaIVA must be between 0 and 100",
+        );
+    } else if rate != 0.0 && rate < 1.0 {
+        report(
+            errors,
+            "00424",
+            format!("{path}/AliquotaIVA"),
+            "AliquotaIVA must be expressed as a percentage",
+        );
+    }
+    if nature.is_some_and(|value| value != 0) && nature_code.is_none() {
+        report(errors, "00200", format!("{path}/Natura"), "Unknown Natura");
+    }
+    if matches!(nature_code, Some("N2" | "N3" | "N6")) {
+        report(
+            errors,
+            "00445",
+            format!("{path}/Natura"),
+            "Use a specific Natura subcode",
+        );
+    }
+    if rate == 0.0 && nature_code.is_none() {
+        report(
+            errors,
+            missing_code,
+            format!("{path}/Natura"),
+            "Natura is required when AliquotaIVA is zero",
+        );
+    } else if rate != 0.0 && nature_code.is_some() && !allow_taxable_nature {
+        report(
+            errors,
+            unexpected_code,
+            format!("{path}/Natura"),
+            "Natura is not allowed with a nonzero AliquotaIVA",
+        );
+    }
+}
+
+fn validate_adjustments(
+    adjustments: &[ScontoMaggiorazione],
+    code: &str,
+    path: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    for (index, adjustment) in adjustments.iter().enumerate() {
+        let path = format!("{path}/ScontoMaggiorazione[{}]", index + 1);
+        if tipo_sconto_maggiorazione_to_sdi(adjustment.tipo).is_none() {
+            report(
+                errors,
+                "00200",
+                format!("{path}/Tipo"),
+                "ScontoMaggiorazione requires SC or MG",
+            );
+        } else if adjustment.percentuale.is_none() && adjustment.importo.is_none() {
+            report(
+                errors,
+                code,
+                path,
+                "ScontoMaggiorazione requires Percentuale or Importo",
+            );
         }
     }
-
-    errors
 }
 
-/// SDI 00423: PrezzoTotale must equal PrezzoUnitario * Quantita +/- ScontoMaggiorazione.
-///
-/// Rounding tolerance is applied to account for floating-point precision.
-fn validate_prezzo_totale(linea: &DettaglioLinee) -> Vec<ValidationError> {
-    let mut errors = Vec::new();
-
-    // Quantita is optional for service lines; SDI treats a missing quantity as 1.
-    let quantita = linea.quantita.unwrap_or(1.0);
-
-    let base = linea.prezzo_unitario * quantita;
-    let adjusted = apply_sconto_maggiorazione(base, &linea.sconto_maggiorazione);
-
-    if (linea.prezzo_totale - adjusted).abs() > TOLERANCE_8 {
-        errors.push(ValidationError {
-            code: "00423".into(),
-            message: format!(
-                "PrezzoTotale ({}) does not match PrezzoUnitario * Quantita adjusted by ScontoMaggiorazione ({:.8}), line {}",
-                linea.prezzo_totale, adjusted, linea.numero_linea
-            ),
-            element_path: Some(format!("Body/DatiBeniServizi/DettaglioLinee[{}]/PrezzoTotale", linea.numero_linea)),
-        });
+fn validate_summary_match(
+    rate: &str,
+    nature: Option<i32>,
+    summary_rates: &BTreeSet<String>,
+    summary_natures: &BTreeSet<&str>,
+    path: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    if !summary_rates.contains(rate) {
+        report(
+            errors,
+            "00443",
+            format!("{path}/AliquotaIVA"),
+            format!("No DatiRiepilogo for AliquotaIVA {rate}"),
+        );
     }
-
-    errors
+    if let Some(nature) = nature.and_then(natura_to_sdi)
+        && !summary_natures.contains(nature)
+    {
+        report(
+            errors,
+            "00444",
+            format!("{path}/Natura"),
+            format!("No DatiRiepilogo for Natura {nature}"),
+        );
+    }
 }
 
-/// Apply discount/surcharge adjustments to a base amount.
+/// Apply discount/surcharge adjustments to a unit price before multiplying by quantity.
 pub fn apply_sconto_maggiorazione(base: f64, adjustments: &[ScontoMaggiorazione]) -> f64 {
     let mut result = base;
     for sm in adjustments {
         let is_sconto = tipo_sconto_maggiorazione_to_sdi(sm.tipo) == Some("SC");
-        let adjustment = if let Some(pct) = sm.percentuale {
-            result * pct / 100.0
-        } else if let Some(imp) = sm.importo {
+        let adjustment = if let Some(imp) = sm.importo {
             imp
+        } else if let Some(pct) = sm.percentuale {
+            result * pct / 100.0
         } else {
             continue;
         };
@@ -563,225 +1013,252 @@ pub fn apply_sconto_maggiorazione(base: f64, adjustments: &[ScontoMaggiorazione]
     result
 }
 
-/// SDI 00443: If DettaglioLinee has a specific AliquotaIVA,
-/// a DatiRiepilogo with the same AliquotaIVA must exist.
-///
-/// SDI 00444: If DettaglioLinee has Natura set,
-/// a DatiRiepilogo with the same Natura must exist.
-fn validate_linee_riepilogo_match(body: &FatturaElettronicaBody) -> Vec<ValidationError> {
-    let mut errors = Vec::new();
-
-    let Some(dbs) = &body.dati_beni_servizi else {
-        return errors;
-    };
-
-    // Collect aliquota+natura pairs from riepilogo
-    let riepilogo_keys: Vec<(String, Option<String>)> = dbs
-        .dati_riepilogo
-        .iter()
-        .map(|r| {
-            let aliq = format!("{:.2}", r.aliquota_iva);
-            let nat = r.natura.and_then(|n| natura_to_sdi(n).map(String::from));
-            (aliq, nat)
-        })
-        .collect();
-
-    for linea in &dbs.dettaglio_linee {
-        let aliq = format!("{:.2}", linea.aliquota_iva);
-        let nat = linea
-            .natura
-            .and_then(|n| natura_to_sdi(n).map(String::from));
-
-        // SDI 00443: aliquota match
-        if !riepilogo_keys.iter().any(|(a, _)| a == &aliq) {
-            errors.push(ValidationError {
-                code: "00443".into(),
-                message: format!(
-                    "No DatiRiepilogo with AliquotaIVA {} for line {}",
-                    aliq, linea.numero_linea
-                ),
-                element_path: Some(format!(
-                    "Body/DatiBeniServizi/DettaglioLinee[{}]/AliquotaIVA",
-                    linea.numero_linea
-                )),
-            });
+fn validate_batch(invoice: &FatturaElettronica, errors: &mut Vec<ValidationError>) {
+    let mut seen = HashMap::<_, (bool, BTreeSet<&str>)>::new();
+    for (index, body) in invoice.body.iter().enumerate() {
+        let Some(doc) = body
+            .dati_generali
+            .as_ref()
+            .and_then(|dg| dg.dati_generali_documento.as_ref())
+        else {
+            continue;
+        };
+        if !is_iso_date(&doc.data) || doc.numero.is_empty() {
+            continue;
         }
-
-        // SDI 00444: natura match (only if natura is set on the line)
-        if let Some(ref line_nat) = nat
-            && !riepilogo_keys
-                .iter()
-                .any(|(_, rn)| rn.as_deref() == Some(line_nat))
-        {
-            errors.push(ValidationError {
-                code: "00444".into(),
-                message: format!(
-                    "No DatiRiepilogo with Natura {} for line {}",
-                    line_nat, linea.numero_linea
+        let key = (
+            &doc.data[..4],
+            doc.numero.as_str(),
+            doc.tipo_documento == 40,
+            uses_customer_numbering(doc.tipo_documento),
+        );
+        let (has_standard_numbering, dates) = seen.entry(key).or_default();
+        let repeated_date = !dates.insert(&doc.data);
+        let article_73 = doc.art73 == Some(10);
+        if repeated_date || *has_standard_numbering || (!article_73 && dates.len() > 1) {
+            report(
+                errors,
+                "00409",
+                format!(
+                    "Body[{}]/DatiGenerali/DatiGeneraliDocumento/Numero",
+                    index + 1
                 ),
-                element_path: Some(format!(
-                    "Body/DatiBeniServizi/DettaglioLinee[{}]/Natura",
-                    linea.numero_linea
-                )),
-            });
+                format!("Duplicate invoice number {} in the same batch", doc.numero),
+            );
         }
+        *has_standard_numbering |= !article_73;
     }
-
-    errors
 }
 
-/// SDI 00471-00476: TipoDocumento-specific validation rules.
-///
-/// Verifies constraints based on the document type, such as:
-/// - TD16-TD19 (reverse charge / self-invoicing): cedente/cessionario P.IVA constraints
-/// - TD20-TD21 (self-invoicing): cedente must match cessionario
-/// - TD27 (auto-consumption): cedente must match cessionario
-fn validate_tipo_documento_rules(invoice: &FatturaElettronica) -> Vec<ValidationError> {
-    let mut errors = Vec::new();
+fn uses_customer_numbering(kind: i32) -> bool {
+    matches!(kind, 160 | 170 | 180 | 190 | 200 | 220 | 230 | 280)
+}
 
+fn validate_tipo_documento_rules(invoice: &FatturaElettronica, errors: &mut Vec<ValidationError>) {
     let Some(header) = &invoice.header else {
-        return errors;
+        return;
     };
-
-    for body in &invoice.body {
-        let Some(dg) = &body.dati_generali else {
-            continue;
-        };
-        let Some(dgd) = &dg.dati_generali_documento else {
-            continue;
-        };
-
-        let tipo = dgd.tipo_documento;
-
-        // TD20, TD21, TD27: cedente and cessionario must be the same entity
-        // (self-invoicing documents)
-        if matches!(tipo, 200 | 210 | 270) {
-            let cedente_piva = header
-                .cedente_prestatore
-                .as_ref()
-                .and_then(|cp| cp.dati_anagrafici.as_ref())
-                .and_then(|da| da.id_fiscale_iva.as_ref())
-                .map(|id| (&id.id_paese, &id.id_codice));
-
-            let cessionario_piva = header
-                .cessionario_committente
-                .as_ref()
-                .and_then(|cc| cc.dati_anagrafici.as_ref())
-                .and_then(|da| da.id_fiscale_iva.as_ref())
-                .map(|id| (&id.id_paese, &id.id_codice));
-
-            if cedente_piva != cessionario_piva {
-                let tipo_str = crate::xml::enum_map::tipo_documento_to_sdi(tipo).unwrap_or("?");
-                errors.push(ValidationError {
-                    code: "00471".into(),
-                    message: format!(
-                        "For document type {} (self-invoicing), CedentePrestatore and CessionarioCommittente must have the same P.IVA",
-                        tipo_str
-                    ),
-                    element_path: Some("Header/CedentePrestatore/DatiAnagrafici/IdFiscaleIVA".into()),
-                });
-            }
-        }
-
-        // TD17, TD18, TD19, TD28: cedente must be a foreign entity (IdPaese != "IT")
-        if matches!(tipo, 170 | 180 | 190 | 280) {
-            let cedente_paese = header
-                .cedente_prestatore
-                .as_ref()
-                .and_then(|cp| cp.dati_anagrafici.as_ref())
-                .and_then(|da| da.id_fiscale_iva.as_ref())
-                .map(|id| id.id_paese.as_str());
-
-            if cedente_paese == Some("IT") {
-                let tipo_str = crate::xml::enum_map::tipo_documento_to_sdi(tipo).unwrap_or("?");
-                errors.push(ValidationError {
-                    code: "00473".into(),
-                    message: format!(
-                        "For document type {} (foreign acquisition), CedentePrestatore must be a foreign entity (IdPaese != IT)",
-                        tipo_str
-                    ),
-                    element_path: Some("Header/CedentePrestatore/DatiAnagrafici/IdFiscaleIVA/IdPaese".into()),
-                });
-            }
-        }
+    let supplier = header
+        .cedente_prestatore
+        .as_ref()
+        .and_then(|party| party.dati_anagrafici.as_ref())
+        .and_then(|party| party.id_fiscale_iva.as_ref());
+    let customer = header
+        .cessionario_committente
+        .as_ref()
+        .and_then(|party| party.dati_anagrafici.as_ref())
+        .and_then(|party| party.id_fiscale_iva.as_ref());
+    if let (Some(supplier), Some(customer)) = (supplier, customer)
+        && [&supplier.id_paese, &customer.id_paese]
+            .iter()
+            .all(|country| !country.is_empty() && *country != "IT")
+    {
+        report(
+            errors,
+            "00476",
+            format!("{CUSTOMER}/IdFiscaleIVA/IdPaese"),
+            "Supplier and customer cannot both have foreign VAT identifiers",
+        );
     }
 
-    errors
+    for (index, body) in invoice.body.iter().enumerate() {
+        let Some(doc) = body
+            .dati_generali
+            .as_ref()
+            .and_then(|dg| dg.dati_generali_documento.as_ref())
+        else {
+            continue;
+        };
+        let kind = doc.tipo_documento;
+        let path = format!(
+            "Body[{}]/DatiGenerali/DatiGeneraliDocumento/TipoDocumento",
+            index + 1
+        );
+        if let (Some(supplier), Some(customer)) = (supplier, customer) {
+            if matches!(
+                kind,
+                10 | 20 | 30 | 60 | 160 | 170 | 180 | 190 | 200 | 240 | 250 | 280
+            ) && supplier == customer
+            {
+                report(
+                    errors,
+                    "00471",
+                    &path,
+                    "This document type requires different supplier and customer VAT identifiers",
+                );
+            }
+            if matches!(kind, 210 | 270) && supplier != customer {
+                report(
+                    errors,
+                    "00472",
+                    &path,
+                    "This document type requires the same supplier and customer VAT identifier",
+                );
+            }
+        }
+        if matches!(kind, 170 | 180 | 190 | 280) && supplier.is_some_and(|id| id.id_paese == "IT") {
+            report(
+                errors,
+                "00473",
+                &path,
+                "This document type requires a foreign supplier VAT identifier",
+            );
+        }
+        if uses_customer_numbering(kind) && customer.is_none() {
+            report(
+                errors,
+                "00475",
+                &path,
+                "This document type requires customer IdFiscaleIVA",
+            );
+        }
+    }
 }
 
-// ===========================================================================
-// Format validators
-// ===========================================================================
+fn validate_tax_id(
+    id: &IdFiscale,
+    code: &str,
+    path: &str,
+    allow_personal_id: bool,
+) -> Result<(), ValidationError> {
+    let (code, field, message) =
+        if id.id_paese.len() != 2 || !id.id_paese.bytes().all(|byte| byte.is_ascii_uppercase()) {
+            (
+                "00200",
+                "IdPaese",
+                "IdPaese must contain two uppercase letters",
+            )
+        } else if id.id_codice.trim().is_empty() || id.id_codice.chars().count() > 28 {
+            (
+                "00200",
+                "IdCodice",
+                "IdCodice must contain 1 to 28 characters",
+            )
+        } else if id.id_paese == "IT"
+            && !(valid_numeric_tax_id(&id.id_codice)
+                || allow_personal_id && valid_personal_tax_id(&id.id_codice))
+        {
+            (
+                code,
+                "IdCodice",
+                "Italian tax identifier has invalid structure or check digit",
+            )
+        } else {
+            return Ok(());
+        };
+    Err(ValidationError {
+        code: code.into(),
+        message: message.into(),
+        element_path: Some(format!("{path}/{field}")),
+    })
+}
 
-/// Validate codice fiscale format: 11 digits (company) or 16 alphanumeric (individual).
-fn validate_codice_fiscale(cf: &str) -> Option<ValidationError> {
-    let len = cf.len();
-    let all_alnum = cf.chars().all(|c| c.is_ascii_alphanumeric());
+fn validate_codice_fiscale(value: &str, code: &str, path: &str, errors: &mut Vec<ValidationError>) {
+    let path = format!("{path}/CodiceFiscale");
+    if !(11..=16).contains(&value.len())
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+    {
+        report(
+            errors,
+            "00200",
+            path,
+            "CodiceFiscale must contain 11 to 16 uppercase alphanumeric characters",
+        );
+    } else if !valid_numeric_tax_id(value) && !valid_personal_tax_id(value) {
+        report(
+            errors,
+            code,
+            path,
+            "CodiceFiscale has invalid structure or check digit",
+        );
+    }
+}
 
-    if !all_alnum || (len != 11 && len != 16) {
-        Some(ValidationError {
-            code: "00100".into(),
-            message: format!(
-                "Invalid CodiceFiscale format: '{}' (must be 11 or 16 alphanumeric characters)",
-                cf
-            ),
-            element_path: None,
+fn valid_numeric_tax_id(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 11 || !bytes.iter().all(u8::is_ascii_digit) || value == "00000000000" {
+        return false;
+    }
+    let sum: u8 = bytes[..10]
+        .iter()
+        .enumerate()
+        .map(|(index, byte)| {
+            let digit = byte - b'0';
+            if index % 2 == 0 {
+                digit
+            } else {
+                (digit * 2) % 10 + (digit * 2) / 10
+            }
         })
-    } else {
-        None
-    }
+        .sum();
+    (10 - sum % 10) % 10 == bytes[10] - b'0'
 }
 
-/// Validate IdFiscale: IdPaese must be 2 uppercase letters, IdCodice 1-28 characters.
-fn validate_id_fiscale(id_paese: &str, id_codice: &str) -> Vec<ValidationError> {
-    let mut errors = Vec::new();
-
-    if id_paese.len() != 2 || !id_paese.chars().all(|c| c.is_ascii_uppercase()) {
-        errors.push(ValidationError {
-            code: "00200".into(),
-            message: format!(
-                "Invalid IdPaese: '{}' (must be 2 uppercase letters)",
-                id_paese
-            ),
-            element_path: None,
-        });
+fn valid_personal_tax_id(value: &str) -> bool {
+    const ODD_DIGITS: [u8; 10] = [1, 0, 5, 7, 9, 13, 15, 17, 19, 21];
+    const ODD_LETTERS: [u8; 26] = [
+        1, 0, 5, 7, 9, 13, 15, 17, 19, 21, 2, 4, 18, 20, 11, 3, 6, 8, 12, 14, 16, 10, 22, 25, 24,
+        23,
+    ];
+    let bytes = value.as_bytes();
+    if bytes.len() != 16 {
+        return false;
     }
-
-    if id_codice.is_empty() || id_codice.len() > 28 {
-        errors.push(ValidationError {
-            code: "00201".into(),
-            message: format!(
-                "Invalid IdCodice: '{}' (must be 1-28 characters)",
-                id_codice
-            ),
-            element_path: None,
-        });
+    for (index, &byte) in bytes.iter().enumerate() {
+        let valid = match index {
+            6 | 7 | 9 | 10 | 12 | 13 | 14 => byte.is_ascii_digit() || b"LMNPQRSTUV".contains(&byte),
+            8 => b"ABCDEHLMPRST".contains(&byte),
+            _ => byte.is_ascii_uppercase(),
+        };
+        if !valid {
+            return false;
+        }
     }
-
-    errors
+    let sum: u16 = bytes[..15]
+        .iter()
+        .enumerate()
+        .map(|(index, &byte)| {
+            let points = match (index % 2 == 0, byte.is_ascii_digit()) {
+                (true, true) => ODD_DIGITS[usize::from(byte - b'0')],
+                (true, false) => ODD_LETTERS[usize::from(byte - b'A')],
+                (false, true) => byte - b'0',
+                (false, false) => byte - b'A',
+            };
+            u16::from(points)
+        })
+        .sum();
+    sum % 26 == u16::from(bytes[15] - b'A')
 }
 
-/// Validate IBAN format: 2 letters + 2 digits + 11-30 alphanumeric characters.
-fn validate_iban(iban: &str) -> Option<ValidationError> {
-    // Operate on bytes, but only once we know the input is pure ASCII so byte
-    // indices align with char boundaries (avoids panics on multibyte input).
+fn valid_iban(iban: &str) -> bool {
     let bytes = iban.as_bytes();
-    let valid = iban.is_ascii()
-        && bytes.len() >= 15
-        && bytes.len() <= 34
+    iban.is_ascii()
+        && (15..=34).contains(&bytes.len())
         && bytes[..2].iter().all(u8::is_ascii_alphabetic)
         && bytes[2..4].iter().all(u8::is_ascii_digit)
-        && bytes[4..].iter().all(u8::is_ascii_alphanumeric);
-
-    if !valid {
-        Some(ValidationError {
-            code: "00300".into(),
-            message: format!("Invalid IBAN format: '{}'", iban),
-            element_path: None,
-        })
-    } else {
-        None
-    }
+        && bytes[4..].iter().all(u8::is_ascii_alphanumeric)
 }
 
 fn validate_dati_documenti_correlati(body: &FatturaElettronicaBody) -> Vec<ValidationError> {
@@ -811,7 +1288,7 @@ fn validate_dati_documenti_correlati(body: &FatturaElettronicaBody) -> Vec<Valid
                 && (trimmed.len() != 10 || !trimmed.chars().all(|c| c.is_ascii_alphanumeric()))
             {
                 errors.push(ValidationError {
-                    code: "00311".into(),
+                    code: "EATTURA-CIG".into(),
                     message: format!(
                         "Codice CIG must be 10 alphanumeric characters, got '{}'",
                         trimmed
@@ -826,7 +1303,7 @@ fn validate_dati_documenti_correlati(body: &FatturaElettronicaBody) -> Vec<Valid
                 && (trimmed.len() != 15 || !trimmed.chars().all(|c| c.is_ascii_alphanumeric()))
             {
                 errors.push(ValidationError {
-                    code: "00312".into(),
+                    code: "EATTURA-CUP".into(),
                     message: format!(
                         "Codice CUP must be 15 alphanumeric characters, got '{}'",
                         trimmed
@@ -850,7 +1327,7 @@ mod tests {
     use crate::sdi::v1::*;
 
     /// Build a minimal valid invoice for testing.
-    fn minimal_invoice() -> FatturaElettronica {
+    pub(super) fn minimal_invoice() -> FatturaElettronica {
         FatturaElettronica {
             versione: 20, // FPR12
             sistema_emittente: None,
@@ -858,7 +1335,7 @@ mod tests {
                 dati_trasmissione: Some(DatiTrasmissione {
                     id_trasmittente: Some(IdFiscale {
                         id_paese: "IT".into(),
-                        id_codice: "01234567890".into(),
+                        id_codice: "01234567897".into(),
                     }),
                     progressivo_invio: "00001".into(),
                     formato_trasmissione: 20,
@@ -869,7 +1346,7 @@ mod tests {
                     dati_anagrafici: Some(DatiAnagraficiCedente {
                         id_fiscale_iva: Some(IdFiscale {
                             id_paese: "IT".into(),
-                            id_codice: "01234567890".into(),
+                            id_codice: "01234567897".into(),
                         }),
                         anagrafica: Some(Anagrafica {
                             soggetto: Some(anagrafica::Soggetto::Denominazione("Test SRL".into())),
@@ -891,7 +1368,7 @@ mod tests {
                     dati_anagrafici: Some(DatiAnagraficiCessionario {
                         id_fiscale_iva: Some(IdFiscale {
                             id_paese: "IT".into(),
-                            id_codice: "09876543210".into(),
+                            id_codice: "09876543217".into(),
                         }),
                         anagrafica: Some(Anagrafica {
                             soggetto: Some(anagrafica::Soggetto::Denominazione(
@@ -960,7 +1437,11 @@ mod tests {
     fn rejects_non_sdi_line_descriptions_with_the_line_number() {
         let mut invoice = minimal_invoice();
         let description = |invoice: &mut FatturaElettronica, value: String| {
-            invoice.body[0].dati_beni_servizi.as_mut().unwrap().dettaglio_linee[0]
+            invoice.body[0]
+                .dati_beni_servizi
+                .as_mut()
+                .unwrap()
+                .dettaglio_linee[0]
                 .descrizione = value;
         };
         for (value, codepoint) in [
@@ -1056,25 +1537,25 @@ mod tests {
 
     #[test]
     fn test_codice_fiscale_valid() {
-        assert!(validate_codice_fiscale("RSSMRA85M01H501Z").is_none());
-        assert!(validate_codice_fiscale("01234567890").is_none());
+        assert!(valid_personal_tax_id("RSSMRA80A01H501U"));
+        assert!(valid_numeric_tax_id("01234567897"));
     }
 
     #[test]
     fn test_codice_fiscale_invalid() {
-        assert!(validate_codice_fiscale("SHORT").is_some());
-        assert!(validate_codice_fiscale("INVALID_CHARS!@").is_some());
+        assert!(!valid_personal_tax_id("SHORT"));
+        assert!(!valid_personal_tax_id("RSSMRA80A01H501V"));
     }
 
     #[test]
     fn test_iban_valid() {
-        assert!(validate_iban("IT60X0542811101000000123456").is_none());
+        assert!(valid_iban("IT60X0542811101000000123456"));
     }
 
     #[test]
     fn test_iban_invalid() {
-        assert!(validate_iban("SHORT").is_some());
-        assert!(validate_iban("123456789012345").is_some()); // starts with digits
+        assert!(!valid_iban("SHORT"));
+        assert!(!valid_iban("123456789012345")); // starts with digits
     }
 
     #[test]
@@ -1104,9 +1585,10 @@ mod tests {
             .as_mut()
             .unwrap()
             .codice_destinatario = "UF1234".into(); // 6 chars
+        inv.versione = 10;
         assert!(validate(&inv).is_valid());
 
-        // 7 chars on FPA12 should fail with 00305
+        // Seven characters on FPA12 trigger 00427.
         inv.header
             .as_mut()
             .unwrap()
@@ -1116,9 +1598,10 @@ mod tests {
             .codice_destinatario = "0000000".into();
         let res = validate(&inv);
         assert!(!res.is_valid());
-        assert!(res.errors.iter().any(|e| e.code == "00305"));
+        assert!(res.errors.iter().any(|e| e.code == "00427"));
 
-        // 7 chars on FPR12 should pass
+        // Seven characters on FPR12 pass.
+        inv.versione = 20;
         inv.header
             .as_mut()
             .unwrap()
@@ -1141,7 +1624,7 @@ mod tests {
         let mut inv = minimal_invoice();
         let dbs = inv.body[0].dati_beni_servizi.as_mut().unwrap();
         dbs.dati_riepilogo[0].esigibilita_iva = Some(30); // S = Split Payment
-        dbs.dati_riepilogo[0].natura = Some(60); // N6 = Reverse charge
+        dbs.dati_riepilogo[0].natura = Some(290); // N6.1 = Reverse charge
         let res = validate(&inv);
         assert!(!res.is_valid());
         assert!(res.errors.iter().any(|e| e.code == "00420"));
@@ -1163,7 +1646,7 @@ mod tests {
             });
         assert!(validate(&inv).is_valid());
 
-        // Invalid CIG length -> 00311
+        // Invalid CIG length triggers the local CIG check.
         inv.body[0]
             .dati_generali
             .as_mut()
@@ -1172,7 +1655,7 @@ mod tests {
             .codice_cig = Some("SHORT".into());
         let res = validate(&inv);
         assert!(!res.is_valid());
-        assert!(res.errors.iter().any(|e| e.code == "00311"));
+        assert!(res.errors.iter().any(|e| e.code == "EATTURA-CIG"));
     }
 
     #[test]
@@ -1217,7 +1700,7 @@ mod tests {
             prezzo_unitario: 50.0,
             prezzo_totale: 50.0,
             aliquota_iva: 0.0,
-            natura: Some(22), // N2.2
+            natura: Some(70), // N2.2
             ..Default::default()
         });
         dbs.dati_riepilogo.push(DatiRiepilogo {
@@ -1231,7 +1714,7 @@ mod tests {
             aliquota_iva: 0.0,
             imponibile_importo: 50.0,
             imposta: 0.0,
-            natura: Some(22), // N2.2
+            natura: Some(70), // N2.2
             ..Default::default()
         });
 
@@ -1239,3 +1722,6 @@ mod tests {
         assert!(res.is_valid(), "Expected valid, got: {:?}", res.errors);
     }
 }
+
+#[cfg(test)]
+mod sdi_tests;

@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 serde.workspace = true
+chrono = "0.4"
 prost = "0.14.3"
 quick-xml = { version = "0.37", features = ["serialize"] }
 thiserror = "2"

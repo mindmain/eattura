@@ -196,6 +196,16 @@ describe("InvoiceFormComponent", () => {
     expect(component.lineTotal(0)).toBe(90);
   });
 
+  it("applies fixed discounts to the unit price before multiplying by quantity", () => {
+    component.linee.at(0).patchValue({
+      quantita: 2,
+      prezzoUnitario: 100,
+      fields: { scontoMaggiorazione: [{ tipo: "SC", importo: 10, percentuale: 5 }] },
+    });
+
+    expect(component.lineTotal(0)).toBe(180);
+  });
+
   it("keeps the editor on the offending line and blocks saving and validation until corrected", async () => {
     component.form.patchValue({ numero: "1", cedenteId: "seller", cessionarioId: "buyer" });
     const description = component.linee.at(0).get("descrizione")!;

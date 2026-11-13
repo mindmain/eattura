@@ -325,6 +325,10 @@ async fn reserve_pec_attempt(
         ));
     }
     let xml = common::xml::encode::encode(&fattura).map_err(|e| e.to_string())?;
+    let attachment = common::validation::validate_xml_attachment(&filename, xml.len());
+    if let Some(error) = attachment.errors.first() {
+        return Err(error.to_string());
+    }
     let message = pec::prepare_invoice(config, &xml, &filename)?;
     tx.update(
         "invoices",
@@ -1144,6 +1148,63 @@ mod tests {
     use crate::pec::{PecAttachment, PecMessage};
 
     #[tokio::test]
+    async fn oversized_xml_is_rejected_before_reserving_pec_attempt() {
+        use crate::commands::invoices::{create_invoice_store, set_invoice_status_store};
+        use base64::Engine as _;
+        use serde_json::json;
+
+        let directory = tempfile::tempdir().unwrap();
+        let store = FileStore::open(directory.path().join("eattura.json")).unwrap();
+        for (id, vat) in [("seller", "01234567897"), ("buyer", "98765432103")] {
+            store
+                .insert("clients", json!({
+                    "id": id, "id_paese": "IT", "id_codice": vat, "denominazione": id,
+                    "indirizzo": "Via Roma", "cap": "00100", "comune": "Roma",
+                    "nazione": "IT", "regime_fiscale": "RF01"
+                }))
+                .await
+                .unwrap();
+        }
+        let request = serde_json::from_value(json!({
+            "numero": "1", "data": "2024-01-01", "tipoDocumento": "TD01", "divisa": "EUR",
+            "cedenteId": "seller", "cessionarioId": "buyer", "pagamenti": [],
+            "linee": [{"descrizione": "Consulting", "quantita": 1, "prezzoUnitario": 100, "aliquotaIva": 22}]
+        })).unwrap();
+        let invoice = create_invoice_store(&store, request).await.unwrap();
+        set_invoice_status_store(&store, &invoice.id, "validated").await.unwrap();
+        let size_bytes = 3_800_000;
+        let attachment = crate::commands::invoices::AttachmentDetail {
+            nome_attachment: "attachment.bin".into(),
+            size_bytes,
+            attachment_base64: base64::engine::general_purpose::STANDARD.encode(vec![0; size_bytes]),
+            ..Default::default()
+        };
+        store
+            .update("invoices", &invoice.id, json!({"allegati": [attachment]}))
+            .await
+            .unwrap();
+
+        let config = PecConfig {
+            email: "test@example.com".into(),
+            password: String::new(),
+            sdi_address: String::new(),
+            smtp_host: "localhost".into(),
+            smtp_port: 465,
+            imap_host: "localhost".into(),
+            imap_port: 993,
+        };
+        let error = reserve_pec_attempt(&store, &invoice.id, &config)
+            .await
+            .err()
+            .expect("PEC must reject the oversized encoded XML");
+        assert!(error.contains("[00003]"), "{error}");
+        let detail = crate::commands::invoices::fetch_invoice_detail(&store, &invoice.id)
+            .await
+            .unwrap();
+        assert_eq!(detail.pending_pec_filename, None);
+    }
+
+    #[tokio::test]
     async fn pending_send_survives_restart_and_blocks_resend_until_reconciled() {
         use crate::commands::invoices::{
             create_invoice_store, fetch_invoice_detail, set_invoice_status_store,
@@ -1154,7 +1215,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("eattura.json");
         let store = FileStore::open(path.clone()).unwrap();
-        for (id, vat) in [("seller", "01234567890"), ("buyer", "98765432101")] {
+        for (id, vat) in [("seller", "01234567897"), ("buyer", "98765432103")] {
             store
                 .insert(
                     "clients",

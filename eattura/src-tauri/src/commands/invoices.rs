@@ -414,9 +414,9 @@ impl LineFields {
 impl CreateLineRequest {
     fn total(&self) -> f64 {
         common::validation::rules::apply_sconto_maggiorazione(
-            self.prezzo_unitario * self.quantita.unwrap_or(1.0),
+            self.prezzo_unitario,
             &self.fields.adjustments(),
-        )
+        ) * self.quantita.unwrap_or(1.0)
     }
 }
 
@@ -3542,14 +3542,14 @@ mod tests {
     }
 
     async fn setup_test_parties(store: &crate::storage::FileStore) -> (String, String) {
-        let seller_id = digest::client_id("IT", "11111111111").unwrap();
-        let buyer_id = digest::client_id("IT", "22222222222").unwrap();
+        let seller_id = digest::client_id("IT", "11111111115").unwrap();
+        let buyer_id = digest::client_id("IT", "22222222220").unwrap();
 
         store
             .insert(
                 "clients",
                 json!({
-                    "id": &seller_id, "id_paese": "IT", "id_codice": "11111111111",
+                    "id": &seller_id, "id_paese": "IT", "id_codice": "11111111115",
                     "denominazione": "Seller Srl", "regime_fiscale": "RF01",
                     "indirizzo": "Via Roma 1", "cap": "00100", "comune": "Roma", "nazione": "IT"
                 }),
@@ -3561,7 +3561,7 @@ mod tests {
             .insert(
                 "clients",
                 json!({
-                    "id": &buyer_id, "id_paese": "IT", "id_codice": "22222222222",
+                    "id": &buyer_id, "id_paese": "IT", "id_codice": "22222222220",
                     "denominazione": "Buyer SpA", "regime_fiscale": "RF01",
                     "indirizzo": "Corso Milano 2", "cap": "20100", "comune": "Milano", "nazione": "IT"
                 }),
@@ -3625,6 +3625,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fixed_line_discount_matches_the_validated_xml_and_saved_total() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = crate::storage::FileStore::open(directory.path().join("data.json")).unwrap();
+        let (seller, buyer) = setup_test_parties(&store).await;
+        let mut request = sample_invoice_request(&seller, &buyer, "1");
+        request.linee.truncate(1);
+        request.linee[0].fields.sconto_maggiorazione = vec![LineAdjustment {
+            tipo: "SC".into(),
+            percentuale: Some(5.0),
+            importo: Some(10.0),
+        }];
+        request.pagamenti[0].importo_pagamento = 97.60;
+
+        let invoice = create_invoice_store(&store, request).await.unwrap();
+        assert_eq!(invoice.linee[0].prezzo_totale, 80.0);
+        assert_eq!(invoice.importo_totale, Some(97.60));
+        let validation = validate_invoice_store(&store, &invoice.id).await.unwrap();
+        assert!(validation.valid, "{:?}", validation.errors);
+        let xml = export_invoice_xml_store(&store, &invoice.id).await.unwrap();
+        assert!(xml.contains("<PrezzoTotale>80.00</PrezzoTotale>"));
+    }
+
+    #[tokio::test]
     async fn italian_individual_transmitter_requires_and_uses_fiscal_code() {
         let dir = tempfile::tempdir().unwrap();
         let store = crate::storage::FileStore::open(dir.path().join("index.json")).unwrap();
@@ -3645,7 +3668,7 @@ mod tests {
         assert!(validate_invoice_store(&store, &invoice.id).await.unwrap().valid);
         let xml = export_invoice_xml_store(&store, &invoice.id).await.unwrap();
         assert!(xml.contains("<IdTrasmittente><IdPaese>IT</IdPaese><IdCodice>RSSMRA80A01H501U</IdCodice></IdTrasmittente>"));
-        assert!(xml.contains("<IdFiscaleIVA><IdPaese>IT</IdPaese><IdCodice>11111111111</IdCodice></IdFiscaleIVA>"));
+        assert!(xml.contains("<IdFiscaleIVA><IdPaese>IT</IdPaese><IdCodice>11111111115</IdCodice></IdFiscaleIVA>"));
         let document = common::xml::decode::decode(&xml).unwrap();
         assert!(common::pec::sdi_filename(&document).starts_with("ITRSSMRA80A01H501U_"));
     }
@@ -4213,7 +4236,7 @@ mod tests {
                 json!({
                     "id": "buyer_company",
                     "id_paese": "IT",
-                    "id_codice": "01234567890",
+                    "id_codice": "01234567897",
                     "denominazione": "MyCompany Srl",
                     "regime_fiscale": "RF01",
                     "indirizzo": "Via Roma 10",
@@ -4301,7 +4324,7 @@ mod tests {
         assert!(xml_str.contains("<IdDocumento>INV-US-2026-001</IdDocumento>"));
         // Trasmittente is Cessionario (IT), not foreign Cedente (US)
         assert!(xml_str.contains(
-            "<IdTrasmittente><IdPaese>IT</IdPaese><IdCodice>01234567890</IdCodice></IdTrasmittente>"
+            "<IdTrasmittente><IdPaese>IT</IdPaese><IdCodice>01234567897</IdCodice></IdTrasmittente>"
         ));
 
         let val_res = validate_invoice_store(&store, &created_auto.id)
@@ -4339,7 +4362,7 @@ mod tests {
                     "id": seller_id,
                     "denominazione": "Azienda Fornitrice SRL",
                     "id_paese": "IT",
-                    "id_codice": "01234567890",
+                    "id_codice": "01234567897",
                     "regime_fiscale": "RF01",
                     "indirizzo": "Via Roma 10",
                     "cap": "00100",
@@ -4360,8 +4383,8 @@ mod tests {
                     "id": buyer_pa_id,
                     "denominazione": "Comune di Test",
                     "id_paese": "IT",
-                    "id_codice": "98765432101",
-                    "codice_fiscale": "98765432101",
+                    "id_codice": "98765432103",
+                    "codice_fiscale": "98765432103",
                     "indirizzo": "Piazza del Comune 1",
                     "cap": "00100",
                     "comune": "Roma",
@@ -4435,7 +4458,7 @@ mod tests {
             Some("B12C34000050006")
         );
 
-        // 3. Validate invoice against SDI rules (Rule 00305, 00420, 00311, 00312)
+        // 3. Validate the PA invoice and its procurement data.
         let val_res = validate_invoice_store(&store, &created.id).await.unwrap();
         assert!(
             val_res.valid,
@@ -4479,7 +4502,7 @@ mod tests {
                     "id": seller_id,
                     "denominazione": "Grossista Materiali SPA",
                     "id_paese": "IT",
-                    "id_codice": "01234567890",
+                    "id_codice": "01234567897",
                     "regime_fiscale": "RF01",
                     "indirizzo": "Via Merci 1",
                     "cap": "20100",
@@ -4499,7 +4522,7 @@ mod tests {
                     "id": buyer_id,
                     "denominazione": "Cliente Negozio SRL",
                     "id_paese": "IT",
-                    "id_codice": "09876543210",
+                    "id_codice": "09876543217",
                     "indirizzo": "Corso Commercio 20",
                     "cap": "10100",
                     "comune": "Torino",

@@ -107,14 +107,14 @@ async fn test_stateless_routes_e2e() {
 <p:FatturaElettronica xmlns:p="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2" versione="FPR12">
   <FatturaElettronicaHeader>
     <DatiTrasmissione>
-      <IdTrasmittente><IdPaese>IT</IdPaese><IdCodice>01234567890</IdCodice></IdTrasmittente>
+      <IdTrasmittente><IdPaese>IT</IdPaese><IdCodice>01234567897</IdCodice></IdTrasmittente>
       <ProgressivoInvio>00001</ProgressivoInvio>
       <FormatoTrasmissione>FPR12</FormatoTrasmissione>
       <CodiceDestinatario>0000000</CodiceDestinatario>
     </DatiTrasmissione>
     <CedentePrestatore>
       <DatiAnagrafici>
-        <IdFiscaleIVA><IdPaese>IT</IdPaese><IdCodice>12345678901</IdCodice></IdFiscaleIVA>
+        <IdFiscaleIVA><IdPaese>IT</IdPaese><IdCodice>12345678903</IdCodice></IdFiscaleIVA>
         <Anagrafica><Denominazione>ACME SRL</Denominazione></Anagrafica>
         <RegimeFiscale>RF01</RegimeFiscale>
       </DatiAnagrafici>
@@ -127,7 +127,7 @@ async fn test_stateless_routes_e2e() {
     </CedentePrestatore>
     <CessionarioCommittente>
       <DatiAnagrafici>
-        <IdFiscaleIVA><IdPaese>IT</IdPaese><IdCodice>98765432109</IdCodice></IdFiscaleIVA>
+        <IdFiscaleIVA><IdPaese>IT</IdPaese><IdCodice>98765432103</IdCodice></IdFiscaleIVA>
         <Anagrafica><Denominazione>CLIENTE SPA</Denominazione></Anagrafica>
       </DatiAnagrafici>
       <Sede>
@@ -199,7 +199,7 @@ async fn test_stateless_routes_e2e() {
         .await
         .unwrap();
     let val_json: serde_json::Value = serde_json::from_slice(&val_bytes).unwrap();
-    assert!(val_json["valid"].as_bool().unwrap());
+    assert_eq!(val_json["valid"], true, "{val_json}");
 
     // 4. Proxy: VIES VAT Lookup (validates parameter requirements and route registration)
     let req = axum::http::Request::builder()

@@ -66,11 +66,11 @@ const sdiDescriptionValidator: ValidatorFn = (control) => {
 };
 
 function lineAmount(line: Pick<LineItemFormValue, "quantita" | "prezzoUnitario" | "fields">): number {
-  const base = (line.quantita ?? 1) * (Number(line.prezzoUnitario) || 0);
-  return (line.fields?.scontoMaggiorazione ?? []).reduce((total, item) => {
-    const amount = item.percentuale != null ? total * item.percentuale / 100 : (item.importo ?? 0);
-    return total + (item.tipo === "SC" ? -amount : amount);
-  }, base);
+  const unitPrice = (line.fields?.scontoMaggiorazione ?? []).reduce((price, item) => {
+    const amount = item.importo ?? price * (item.percentuale ?? 0) / 100;
+    return price + (item.tipo === "SC" ? -amount : amount);
+  }, Number(line.prezzoUnitario) || 0);
+  return unitPrice * (line.quantita ?? 1);
 }
 
 @Component({

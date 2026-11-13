@@ -82,26 +82,35 @@ if result.is_valid() {
 }
 ```
 
-#### Implemented SDI Rules
+#### SdI regression coverage
 
-| Code  | Description |
-|-------|-------------|
-| 00400 | Natura required when AliquotaIVA = 0 |
-| 00401 | Natura must not be present when AliquotaIVA > 0 |
-| 00419 | DatiRiepilogo must exist for each AliquotaIVA in line items |
-| 00421 | Imposta must equal AliquotaIVA × ImponibileImporto / 100 |
-| 00422 | ImponibileImporto must equal sum of PrezzoTotale for matching lines |
-| 00423 | PrezzoTotale must equal PrezzoUnitario × Quantita ± adjustments |
-| 00443 | Line AliquotaIVA must have matching DatiRiepilogo |
-| 00444 | Line Natura must have matching DatiRiepilogo |
-| 00471 | Self-invoicing types require matching cedente/cessionario P.IVA |
-| 00473 | Foreign acquisition types require foreign cedente |
+The [SdI tests](src/validation/rules/sdi_tests.rs) exercise the ordinary invoice model using
+[Annex A v1.9.1](https://www.agenziaentrate.gov.it/portale/documents/d/guest/allegato-a-specifiche-tecniche-vers-1-9-1)
+and the [SdI controls v2.0](https://www.fatturapa.gov.it/export/documenti/fatturapa/v1.4/Elenco-Controlli-versione-2.0.pdf).
+The positive fixture passes validation before encoding and after decoding. Run the suite with
+`cargo test --locked -p common validation::`.
 
-#### Format Validators
+| Scope | Codes |
+|---|---|
+| Generated XML attachment name and size | 00001, 00003 |
+| Supported schema checks and format error count | 00200, 00201 |
+| Local tax identifier structure and check digits | 00300–00306 |
+| Recipient routing and PEC | 00313, 00330, 00427, 00428 |
+| Invoice dates, batch duplicates and numbering | 00403, 00409, 00418, 00425 |
+| VAT, nature, pension contributions, withholding, adjustments and summaries | 00400, 00401, 00411, 00413–00415, 00419–00424, 00429, 00430, 00437, 00438, 00443–00445 |
+| Customer identity, document type and party combinations | 00417, 00471–00476 |
 
-- **Codice Fiscale**: 11 digits (company) or 16 alphanumeric (individual)
-- **IdFiscale**: 2-letter country code + 1-28 character tax code
-- **IBAN**: Standard format validation
+`validate_on` takes the receipt date explicitly. `validate` uses the current local date
+as the estimated receipt date during preflight. The PEC flow checks the generated
+filename and XML byte count before reserving an SMTP attempt.
+
+SdI resolves name and invoice duplicates across submissions (00002, 00404), registry
+and routing status (00300–00306, 00311, 00312, 00320–00327, 00398, 00399), and invalidated
+declarations of intent (00477) using data available to SdI. Identity rules 00471/00472
+can also require a registry lookup when the customer has only a fiscal code. The
+ordinary unsigned XML model does not represent signed files or ZIP containers
+(00100–00107), simplified invoices (00460), or TD29 in the pinned Protobuf contract.
+The 00200 checks cover selected fields and are not a full XSD validation.
 
 ### `error` — Error Types
 

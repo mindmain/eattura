@@ -29,13 +29,10 @@ impl std::fmt::Display for ValidationResult {
     }
 }
 
-/// A single validation error, mapped to an SDI error code.
-///
-/// Each error corresponds to a specific check defined by the Agenzia delle Entrate.
-/// See `proto/eattura/sdi/v1/errors.proto` for the full error code catalog.
+/// A local validation finding with an SdI or Eattura error code.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationError {
-    /// SDI error code (e.g., "00400", "00401").
+    /// SdI or Eattura error code (e.g., "00400" or "EATTURA-CIG").
     pub code: String,
 
     /// Human-readable description of what went wrong.

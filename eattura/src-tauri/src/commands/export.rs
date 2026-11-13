@@ -1025,8 +1025,8 @@ mod tests {
                     "id": &client_id,
                     "denominazione": "Azienda Committente SpA",
                     "id_paese": "IT",
-                    "id_codice": "01234567890",
-                    "codice_fiscale": "01234567890",
+                    "id_codice": "01234567897",
+                    "codice_fiscale": "01234567897",
                     "codice_destinatario": "SUBM70N",
                     "regime_fiscale": "RF01",
                     "comune": "Milano",
@@ -1097,7 +1097,7 @@ mod tests {
             .unwrap();
         assert_eq!(csv_res.row_count, 1);
         assert!(csv_res.csv_content.contains("2026/001"));
-        assert!(csv_res.csv_content.contains("01234567890")); // P.IVA / CF populated
+        assert!(csv_res.csv_content.contains("01234567897")); // P.IVA / CF populated
         assert!(csv_res.csv_content.contains("1000,00")); // imponibile
         assert!(csv_res.csv_content.contains("220,00")); // iva 22%
         assert!(csv_res.csv_content.contains("1220,00")); // totale lordo
