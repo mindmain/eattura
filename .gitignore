@@ -41,4 +41,20 @@ target/
 /typings
 .DS_Store
 Thumbs.db
-**/agents.md
+
+# Shared repository instructions
+!**/AGENTS.md
+
+# Local assistant configuration and monitoring
+[Aa]gent
+[Aa]gents
+.[Aa]gent
+.[Aa]gents
+[Gg]emini
+.[Gg]emini
+.codex
+.claude
+.prompts
+/scripts/monitor-angular.sh
+/scripts/monitor-features.sh
+/scripts/update-features-check.py
