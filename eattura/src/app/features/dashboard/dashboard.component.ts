@@ -26,6 +26,8 @@ interface MonthlyStats {
 }
 
 const REVENUE_LABEL = "Fatturato totale";
+const PENDING_SDI_COLOR = "#d99500";
+const PENDING_SDI_LABEL = "Inviate · in attesa di esito SdI";
 
 const MONTH_LABELS = [
   "Gen", "Feb", "Mar", "Apr", "Mag", "Giu",
@@ -57,13 +59,27 @@ export class DashboardComponent implements OnDestroy {
     (_, index) => String(this.currentYear - 7 + index),
   );
 
-  // Expose store metrics directly to template
-  readonly totalInvoices = this.invoiceStore.totalCount;
-  readonly draftCount = this.invoiceStore.draftCount;
-  readonly sentCount = this.invoiceStore.sentCount;
+  // Derive summary counts from shared stores: confirmed (delivered + accepted + imported) and sent (in yellow)
+  readonly confirmedInvoicesCount = computed(
+    () =>
+      this.invoiceStore
+        .invoices()
+        .filter(
+          (inv) =>
+            inv.stato === "delivered" ||
+            inv.stato === "accepted" ||
+            inv.stato === "imported",
+        ).length,
+  );
+  readonly draftCount = computed(
+    () => this.invoiceStore.invoices().filter((inv) => inv.stato === "draft").length,
+  );
+  readonly sentCount = computed(
+    () => this.invoiceStore.invoices().filter((inv) => inv.stato === "sent").length,
+  );
   readonly clientCount = this.clientStore.clientCount;
 
-  /** Monthly totals by invoice date, tracking sales awaiting an SdI outcome separately. */
+  /** Monthly totals by invoice date, keeping all sent sales in yellow outside total revenue. */
   readonly monthlyByYear = computed(() => {
     const invoices = this.invoiceStore.invoices();
     const map = new Map<string, MonthlyStats>();
@@ -87,7 +103,12 @@ export class DashboardComponent implements OnDestroy {
 
       const sign = inv.tipoDocumento === "TD04" || inv.tipoDocumento === "TD08" ? -1 : 1;
       const total = (inv.importoTotale ?? 0) * sign;
-      if (inv.direction === "sale" && (inv.stato === "accepted" || inv.stato === "imported")) {
+      if (
+        inv.direction === "sale" &&
+        (inv.stato === "delivered" ||
+          inv.stato === "accepted" ||
+          inv.stato === "imported")
+      ) {
         stats.income[month] += total;
       } else if (inv.direction === "sale" && inv.stato === "sent") {
         stats.pendingIncome[month] += total;
@@ -126,6 +147,11 @@ export class DashboardComponent implements OnDestroy {
   readonly annualIncome = computed(() => {
     const monthlyMap = this.monthlyByYear();
     return this.annualYears.map((year) => sum(monthlyMap.get(year)?.income ?? []));
+  });
+
+  readonly annualPendingIncome = computed(() => {
+    const monthlyMap = this.monthlyByYear();
+    return this.annualYears.map((year) => sum(monthlyMap.get(year)?.pendingIncome ?? []));
   });
 
   constructor() {
@@ -167,10 +193,11 @@ export class DashboardComponent implements OnDestroy {
     effect((onCleanup) => {
       const canvasRef = this.annualChartCanvas();
       const income = this.annualIncome();
+      const pendingIncome = this.annualPendingIncome();
       this.theme.effectiveTheme();
       if (!canvasRef) return;
 
-      const chartInstance = this.renderAnnualChart(canvasRef.nativeElement, income);
+      const chartInstance = this.renderAnnualChart(canvasRef.nativeElement, income, pendingIncome);
       onCleanup(() => chartInstance.destroy());
     });
   }
@@ -232,6 +259,12 @@ export class DashboardComponent implements OnDestroy {
             borderRadius: 4,
           },
           {
+            label: PENDING_SDI_LABEL,
+            data: stats.pendingIncome,
+            backgroundColor: PENDING_SDI_COLOR,
+            borderRadius: 4,
+          },
+          {
             label: "Costi (Acquisti)",
             data: stats.cost,
             backgroundColor: "#c62828",
@@ -281,7 +314,11 @@ export class DashboardComponent implements OnDestroy {
     return chart;
   }
 
-  private renderAnnualChart(canvas: HTMLCanvasElement, income: number[]): Chart {
+  private renderAnnualChart(
+    canvas: HTMLCanvasElement,
+    income: number[],
+    pendingIncome: number[],
+  ): Chart {
     this.annualChart?.destroy();
     const textColor = this.theme.effectiveTheme() === "dark" ? "#d0d5dc" : "#34465f";
     const gridColor = this.theme.effectiveTheme() === "dark" ? "#2b3038" : "#dce3ee";
@@ -311,16 +348,27 @@ export class DashboardComponent implements OnDestroy {
             pointBorderColor: "#fff",
             pointBorderWidth: 2,
           },
+          {
+            label: PENDING_SDI_LABEL,
+            data: pendingIncome,
+            borderColor: PENDING_SDI_COLOR,
+            backgroundColor: PENDING_SDI_COLOR,
+            borderWidth: 2,
+            borderDash: [5, 4],
+            pointRadius: 4,
+            pointHoverRadius: 6,
+          },
         ],
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { display: false },
+          legend: { position: "top", labels: { color: textColor } },
           tooltip: {
             callbacks: {
-              label: (context) => ` ${REVENUE_LABEL}: ${currencyFormatter.format(Number(context.raw ?? 0))}`,
+              label: (context) =>
+                ` ${context.dataset.label ?? REVENUE_LABEL}: ${currencyFormatter.format(Number(context.raw ?? 0))}`,
             },
           },
         },

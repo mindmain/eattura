@@ -4,7 +4,13 @@
   <div class="stats-grid">
     <div class="stat-card">
       <h3>Fatture Totali</h3>
-      <p class="stat-value">{{ totalInvoices() }}</p>
+      <p class="stat-value">
+        {{ confirmedInvoicesCount() }}
+        @if (sentCount() > 0) {
+          <span class="stat-pending" title="Fatture inviate in attesa di esito SdI">+ {{ sentCount() }}</span>
+        }
+      </p>
+      <p class="stat-sub">Consegnate, accettate e importate</p>
     </div>
     <div class="stat-card">
       <h3>In Bozza</h3>
@@ -27,7 +33,7 @@
     </div>
     <p class="chart-hint mt-1">Clicca un punto per vedere le fatture di quell’anno.</p>
     <div class="chart-container annual-chart-container mt-2">
-      <canvas #annualChart role="img" aria-label="Fatturato totale negli ultimi otto anni"></canvas>
+      <canvas #annualChart role="img" aria-label="Fatturato totale e fatture inviate negli ultimi otto anni"></canvas>
     </div>
   </div>
 

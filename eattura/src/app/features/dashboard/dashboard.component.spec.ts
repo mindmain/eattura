@@ -39,8 +39,9 @@ function setup(records: InvoiceSummary[]) {
 }
 
 describe("Dashboard invoice totals", () => {
-  it("includes accepted and imported sales in revenue and reports pending sales separately", () => {
+  it("includes delivered, accepted and imported sales in revenue and reports pending sales separately", () => {
     const { component } = setup([
+      invoice("delivered", 75),
       invoice("accepted", 100),
       invoice("accepted", 20, { tipoDocumento: "TD04" }),
       invoice("sent", 50),
@@ -54,31 +55,57 @@ describe("Dashboard invoice totals", () => {
 
     const march = 2;
     const monthly = component.monthlyByYear().get(component.selectedYear());
-    expect(monthly?.income[march]).toBe(380);
+    expect(monthly?.income[march]).toBe(455);
     expect(monthly?.pendingIncome[march]).toBe(40);
-    expect(component.yearIncome()).toBe(380);
+    expect(component.yearIncome()).toBe(455);
     expect(component.yearPendingIncome()).toBe(40);
     expect(component.yearCost()).toBe(30);
-    expect(component.annualIncome().at(-1)).toBe(380);
+    expect(component.annualIncome().at(-1)).toBe(455);
+    expect(component.annualPendingIncome().at(-1)).toBe(40);
+    expect(component.confirmedInvoicesCount()).toBe(5);
+    expect(component.sentCount()).toBe(2);
+    expect(component.draftCount()).toBe(1);
   });
 
   it("updates both totals when sent invoices receive an SdI outcome", () => {
-    const accepted = invoice("sent", 100, { id: "to-accept" });
+    const delivered = invoice("sent", 100, { id: "to-deliver" });
     const rejected = invoice("sent", 50, { id: "to-reject" });
-    const { component, invoices } = setup([accepted, rejected]);
+    const { component, invoices } = setup([delivered, rejected]);
 
     expect(component.yearIncome()).toBe(0);
     expect(component.yearPendingIncome()).toBe(150);
+    expect(component.confirmedInvoicesCount()).toBe(0);
+    expect(component.sentCount()).toBe(2);
 
-    const confirmed = { ...accepted, stato: "accepted" } as const;
+    const confirmed = { ...delivered, stato: "delivered" } as const;
     invoices.set([confirmed, rejected]);
 
     expect(component.yearIncome()).toBe(100);
     expect(component.yearPendingIncome()).toBe(50);
+    expect(component.confirmedInvoicesCount()).toBe(1);
+    expect(component.sentCount()).toBe(1);
 
     invoices.set([confirmed, { ...rejected, stato: "rejected" }]);
 
     expect(component.yearIncome()).toBe(100);
     expect(component.yearPendingIncome()).toBe(0);
+    expect(component.confirmedInvoicesCount()).toBe(1);
+    expect(component.sentCount()).toBe(0);
+  });
+
+  it("keeps all sent sales (including MC non-delivery) in yellow pending totals outside total revenue", () => {
+    const { component } = setup([
+      invoice("delivered", 120, { id: "delivered-1" }),
+      invoice("accepted", 80, { id: "accepted-1", isPa: true }),
+      invoice("sent", 250, { id: "b2b-mc", hasMcNotice: true, isPa: false }),
+      invoice("sent", 60, { id: "b2b-pending", hasMcNotice: false, isPa: false }),
+    ]);
+
+    expect(component.yearIncome()).toBe(200);
+    expect(component.yearPendingIncome()).toBe(310);
+    expect(component.annualIncome().at(-1)).toBe(200);
+    expect(component.annualPendingIncome().at(-1)).toBe(310);
+    expect(component.confirmedInvoicesCount()).toBe(2);
+    expect(component.sentCount()).toBe(2);
   });
 });

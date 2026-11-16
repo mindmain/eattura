@@ -24,10 +24,25 @@
 }
 
 .stat-value {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
   margin: 0.5rem 0 0;
   font-size: 1.75rem;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.stat-pending {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: light-dark(#805400, #f3bb48);
+}
+
+.stat-sub {
+  margin: 0.25rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
 }
 
 .chart-card {
