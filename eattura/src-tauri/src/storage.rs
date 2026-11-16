@@ -696,7 +696,7 @@ fn select(data: &Data, domain: &str, kind: &str, args: &[Value], order: &str) ->
             "tax_identity" => r.0["id_paese"] == args[0] && r.0["id_codice"] == args[1],
             "sent" => matches!(
                 r.0["stato"].as_str(),
-                Some("sent" | "accepted" | "rejected")
+                Some("sent" | "delivered" | "accepted" | "rejected")
             ),
             "client_invoice_count" => {
                 r.0["cedente_id"] == args[0] || r.0["cessionario_id"] == args[1]

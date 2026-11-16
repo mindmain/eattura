@@ -278,6 +278,7 @@ async fn reserve_pec_attempt(
     id: &str,
     config: &PecConfig,
 ) -> Result<(pec::PreparedInvoice, String), String> {
+    crate::commands::clients::backfill_client_destinations(store).await?;
     let mut tx = store.begin().await?;
     let row = tx
         .read("invoices", "id", vec![serde_json::json!(id)], "")
@@ -379,13 +380,22 @@ async fn resolve_pec_attempt_store(
                 .await
                 .fetch_all()
                 .await?;
-            let status = receipts.iter().find_map(|receipt| {
+            let mut status = InvoiceStatus::Sent;
+            for receipt in &receipts {
                 let xml: String = receipt.get("raw_xml");
-                let notification = parse_notification(&xml).ok()?;
-                notification.nome_file.as_deref()
-                    .filter(|reference| same_sdi_filename(filename, reference))?;
-                notification.resulting_status()
-            }).unwrap_or(InvoiceStatus::Sent);
+                let Ok(notification) = parse_notification(&xml) else {
+                    continue;
+                };
+                if notification
+                    .nome_file
+                    .as_deref()
+                    .is_some_and(|reference| same_sdi_filename(filename, reference))
+                    && let Some(next) = notification.resulting_status()
+                    && status.can_transition_to(next)
+                {
+                    status = next;
+                }
+            }
             tx.update(
                 "invoices",
                 id,
@@ -399,7 +409,7 @@ async fn resolve_pec_attempt_store(
             && active_pec_filename(&row).is_some_and(|active| same_sdi_filename(&active, filename))
             && matches!(
                 row.get::<String>("stato").as_str(),
-                "sent" | "accepted" | "rejected"
+                "sent" | "delivered" | "accepted" | "rejected"
             )
         {
             return Ok(());
@@ -500,6 +510,8 @@ pub(crate) async fn run_sync(
     result
 }
 
+const SDI_SCAN_VERSION: u32 = 2;
+
 async fn record_sync_failure(store: &crate::storage::FileStore, error: &str) -> Result<(), String> {
     let Some(email) = store
         .read("settings", "settings", vec![], "")
@@ -539,7 +551,8 @@ async fn record_sync_failure(store: &crate::storage::FileStore, error: &str) -> 
         "last_success_at": null,
         "last_error": error,
         "detected_sdi_address": null,
-        "sdi_scan_complete": false
+        "sdi_scan_complete": false,
+        "sdi_scan_version": 0
     });
     if previous.is_some() {
         store.update("pec_sync", "inbox", state).await?;
@@ -549,9 +562,18 @@ async fn record_sync_failure(store: &crate::storage::FileStore, error: &str) -> 
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) async fn process_inbox_messages(
     store: &crate::storage::FileStore,
     messages: &[pec::PecMessage],
+) -> Result<(Vec<NotificationSummary>, Option<String>), String> {
+    process_inbox_messages_with_log(store, messages, &AppLog::memory()).await
+}
+
+pub(crate) async fn process_inbox_messages_with_log(
+    store: &crate::storage::FileStore,
+    messages: &[pec::PecMessage],
+    log: &AppLog,
 ) -> Result<(Vec<NotificationSummary>, Option<String>), String> {
     let mut summaries = Vec::new();
     let mut sdi_candidates = Vec::new();
@@ -568,26 +590,62 @@ pub(crate) async fn process_inbox_messages(
                 continue;
             }
             let (payload, signer) = if name.ends_with(".p7m") {
-                let (payload, signer) = common::p7m::inspect_p7m(&att.data)
-                    .map_err(|e| format!("Invalid PEC attachment {}: {e}", att.filename))?;
-                (payload, Some(signer))
+                match common::p7m::inspect_p7m(&att.data) {
+                    Ok((payload, signer)) => (payload, Some(signer)),
+                    Err(e) => {
+                        log.record(
+                            LogLevel::Warn,
+                            "pec",
+                            &format!(
+                                "Skipping unreadable PEC attachment {} (UID {}): {e}",
+                                att.filename, message.uid
+                            ),
+                        );
+                        continue;
+                    }
+                }
             } else {
                 (att.data.clone(), None)
             };
-            let xml = String::from_utf8(payload)
-                .map_err(|e| format!("Invalid XML attachment {}: {e}", att.filename))?;
+            let xml = match String::from_utf8(payload) {
+                Ok(xml) => xml,
+                Err(e) => {
+                    log.record(
+                        LogLevel::Warn,
+                        "pec",
+                        &format!(
+                            "Skipping non-UTF-8 XML attachment {} (UID {}): {e}",
+                            att.filename, message.uid
+                        ),
+                    );
+                    continue;
+                }
+            };
             if common::xml::decode::decode(&xml).is_ok() {
                 has_sdi_payload = true;
-                let detail =
-                    crate::commands::invoices::import_xml_content_for_pec(store, &xml, signer)
-                        .await?;
-                summaries.push(NotificationSummary {
-                    tipo: "FATTURA".into(),
-                    identificativo_sdi: None,
-                    nome_file: Some(att.filename.clone()),
-                    invoice_id: Some(detail.id),
-                    new_status: None,
-                });
+                match crate::commands::invoices::import_xml_content_for_pec(store, &xml, signer)
+                    .await
+                {
+                    Ok(detail) => {
+                        summaries.push(NotificationSummary {
+                            tipo: "FATTURA".into(),
+                            identificativo_sdi: None,
+                            nome_file: Some(att.filename.clone()),
+                            invoice_id: Some(detail.id),
+                            new_status: None,
+                        });
+                    }
+                    Err(e) => {
+                        log.record(
+                            LogLevel::Warn,
+                            "pec",
+                            &format!(
+                                "Skipping PEC invoice attachment {} (UID {}): {e}",
+                                att.filename, message.uid
+                            ),
+                        );
+                    }
+                }
             } else if let Ok(notification) = parse_notification(&xml)
                 && !matches!(
                     notification.message_type,
@@ -595,16 +653,28 @@ pub(crate) async fn process_inbox_messages(
                 )
             {
                 has_sdi_payload = true;
-                for (linked_id, new_status) in
-                    attach_sdi_notification_to_matches(store, &notification, &xml).await?
-                {
-                    summaries.push(NotificationSummary {
-                        tipo: notification.message_type.code().to_string(),
-                        identificativo_sdi: notification.identificativo_sdi.clone(),
-                        nome_file: notification.nome_file.clone(),
-                        invoice_id: linked_id,
-                        new_status,
-                    });
+                match attach_sdi_notification_to_matches(store, &notification, &xml).await {
+                    Ok(matches) => {
+                        for (linked_id, new_status) in matches {
+                            summaries.push(NotificationSummary {
+                                tipo: notification.message_type.code().to_string(),
+                                identificativo_sdi: notification.identificativo_sdi.clone(),
+                                nome_file: notification.nome_file.clone(),
+                                invoice_id: linked_id,
+                                new_status,
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        log.record(
+                            LogLevel::Warn,
+                            "pec",
+                            &format!(
+                                "Skipping PEC receipt attachment {} (UID {}): {e}",
+                                att.filename, message.uid
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -638,7 +708,8 @@ async fn run_sync_inner(
         let scan_complete = row
             .get::<Option<bool>>("sdi_scan_complete")
             .unwrap_or(false);
-        if !scan_complete {
+        let scan_version = row.get::<Option<u32>>("sdi_scan_version").unwrap_or(0);
+        if !scan_complete || scan_version < SDI_SCAN_VERSION {
             return None;
         }
         Some((
@@ -665,7 +736,8 @@ async fn run_sync_inner(
             inbox.messages.len()
         ),
     );
-    let (summaries, newly_detected) = process_inbox_messages(store, &inbox.messages).await?;
+    let (mut summaries, newly_detected) =
+        process_inbox_messages_with_log(store, &inbox.messages, log).await?;
 
     let detected_sdi_address = select_preferred_sdi_address(
         newly_detected
@@ -677,13 +749,21 @@ async fn run_sync_inner(
         persist_detected_sdi_address(store, detected).await?;
     }
 
-    if previous.is_none() || !summaries.is_empty() {
+    if cursor.is_none() || previous.is_none() || !summaries.is_empty() {
         log.record(
             LogLevel::Info,
             "pec",
             "Linking SDI receipts to imported invoices",
         );
-        reconcile_unlinked_notifications(store).await?;
+        for reconciled in reconcile_unlinked_notifications(store).await? {
+            if !summaries.iter().any(|existing| {
+                existing.invoice_id == reconciled.invoice_id
+                    && existing.tipo == reconciled.tipo
+                    && existing.new_status == reconciled.new_status
+            }) {
+                summaries.push(reconciled);
+            }
+        }
     }
 
     let now = chrono::Utc::now().timestamp_millis();
@@ -696,7 +776,8 @@ async fn run_sync_inner(
         "last_success_at": now,
         "last_error": null,
         "detected_sdi_address": detected_sdi_address,
-        "sdi_scan_complete": true
+        "sdi_scan_complete": true,
+        "sdi_scan_version": SDI_SCAN_VERSION
     });
     if previous.is_some() {
         store.update("pec_sync", "inbox", state).await?;
@@ -848,7 +929,12 @@ pub async fn attach_sdi_notification(
                         aliases.len() == 1 && same_sdi_filename(&aliases[0], filename)
                     }),
             };
+            let legacy_rc_upgrade = cur == InvoiceStatus::Accepted
+                && matches!(target, InvoiceStatus::Delivered | InvoiceStatus::Rejected)
+                && matches_attempt
+                && !has_attempt_pa_acceptance(&snapshot, inv_id, active.as_deref()).await?;
             let can_apply = cur.transition_to(target).is_ok()
+                || legacy_rc_upgrade
                 || (matches!(cur, InvoiceStatus::Draft | InvoiceStatus::Rejected)
                     && matches_attempt
                     && recoverable_pec_filename(&snapshot, &row, inv_id).await?.is_some());
@@ -942,26 +1028,128 @@ async fn find_invoice_by_sdi_id(
     Ok(matched)
 }
 
-/// Revisit receipts downloaded before their invoice was imported.
+/// Revisit stored receipts to link newly imported invoices and upgrade legacy statuses.
 pub(crate) async fn reconcile_unlinked_notifications(
     store: &crate::storage::FileStore,
-) -> Result<(), String> {
+) -> Result<Vec<NotificationSummary>, String> {
     let rows = store
         .read("sdi_notifications", "all", vec![], "")
         .await
         .fetch_all()
         .await?;
     let mut processed = std::collections::HashSet::new();
+    let mut updated = Vec::new();
     for row in rows {
         let xml: String = row.get("raw_xml");
         if !processed.insert(xml.clone()) {
             continue;
         }
         if let Ok(notification) = parse_notification(&xml) {
-            attach_sdi_notification_to_matches(store, &notification, &xml).await?;
+            for (linked_id, new_status) in
+                attach_sdi_notification_to_matches(store, &notification, &xml).await?
+            {
+                if new_status.is_some() {
+                    updated.push(NotificationSummary {
+                        tipo: notification.message_type.code().to_string(),
+                        identificativo_sdi: notification.identificativo_sdi.clone(),
+                        nome_file: notification.nome_file.clone(),
+                        invoice_id: linked_id,
+                        new_status,
+                    });
+                }
+            }
         }
     }
-    Ok(())
+    Ok(updated)
+}
+
+pub(crate) fn filter_attempt_receipts<'a>(
+    receipts: &'a [crate::storage::Record],
+    active: Option<&str>,
+) -> Vec<&'a crate::storage::Record> {
+    let attempt_sdi_ids: std::collections::HashSet<String> = match active {
+        Some(active_name) => receipts
+            .iter()
+            .filter(|row| {
+                row.get::<Option<String>>("nome_file")
+                    .is_some_and(|name| same_sdi_filename(active_name, &name))
+            })
+            .filter_map(|row| row.get::<Option<String>>("identificativo_sdi"))
+            .collect(),
+        None => std::collections::HashSet::new(),
+    };
+    receipts
+        .iter()
+        .filter(|row| match active {
+            Some(active_name) => match row.get::<Option<String>>("nome_file") {
+                Some(name) => same_sdi_filename(active_name, &name),
+                None => row
+                    .get::<Option<String>>("identificativo_sdi")
+                    .is_some_and(|id| attempt_sdi_ids.contains(&id)),
+            },
+            None => true,
+        })
+        .collect()
+}
+
+pub(crate) fn records_have_attempt_mc(
+    receipts: &[crate::storage::Record],
+    active: Option<&str>,
+) -> bool {
+    filter_attempt_receipts(receipts, active)
+        .into_iter()
+        .any(|row| row.get::<String>("tipo") == "MC")
+}
+
+pub(crate) async fn has_attempt_pa_refusal(
+    store: &FileStore,
+    row: &crate::storage::Record,
+    invoice_id: &str,
+) -> Result<bool, String> {
+    let receipts = store
+        .read(
+            "sdi_notifications",
+            "invoice_children",
+            vec![serde_json::json!(invoice_id)],
+            "",
+        )
+        .await
+        .fetch_all()
+        .await?;
+    let active = active_pec_filename(row);
+    Ok(filter_attempt_receipts(&receipts, active.as_deref())
+        .into_iter()
+        .any(|receipt| {
+            let tipo: String = receipt.get("tipo");
+            tipo == "RC"
+                || (tipo == "NE"
+                    && receipt.get::<Option<String>>("esito").as_deref() == Some("EC02"))
+        }))
+}
+
+async fn has_attempt_pa_acceptance(
+    store: &FileStore,
+    invoice_id: &str,
+    active: Option<&str>,
+) -> Result<bool, String> {
+    let receipts = store
+        .read(
+            "sdi_notifications",
+            "invoice_children",
+            vec![serde_json::json!(invoice_id)],
+            "",
+        )
+        .await
+        .fetch_all()
+        .await?;
+    Ok(filter_attempt_receipts(&receipts, active)
+        .into_iter()
+        .any(|row| {
+            let tipo: String = row.get("tipo");
+            tipo == "DT"
+                || (tipo == "NE"
+                    && row.get::<Option<String>>("esito").as_deref() == Some("EC01"))
+        }))
 }
 
 /// Find an invoice ID given an SDI file reference (e.g. IT01234567890_00001.xml).
@@ -1401,7 +1589,7 @@ mod tests {
         assert_eq!(fetch_invoice_detail(&reopened, &invoice.id).await.unwrap().stato, "sent");
         let outcome = format!("<RicevutaConsegna><IdentificativoSdI>222</IdentificativoSdI><NomeFile>{corrected_filename}</NomeFile></RicevutaConsegna>");
         let result = import_sdi_receipt_store(&reopened, &outcome).await.unwrap();
-        assert_eq!(result.new_status.as_deref(), Some("accepted"));
+        assert_eq!(result.new_status.as_deref(), Some("delivered"));
         let detail = fetch_invoice_detail(&reopened, &invoice.id).await.unwrap();
         assert_eq!(detail.notifications.len(), 2);
 
@@ -1411,7 +1599,7 @@ mod tests {
         let replayed = import_sdi_receipt_store(&reopened, &receipt).await.unwrap();
         assert_eq!(replayed.new_status, None);
         let result = import_sdi_receipt_store(&reopened, &outcome).await.unwrap();
-        assert_eq!(result.new_status.as_deref(), Some("accepted"));
+        assert_eq!(result.new_status.as_deref(), Some("delivered"));
     }
 
     #[tokio::test]
@@ -1504,5 +1692,331 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn upgrades_legacy_accepted_invoice_to_delivered_and_attaches_b2b_mc() {
+        use crate::commands::invoices::{
+            create_invoice_store, fetch_invoice_detail, set_invoice_status_store,
+        };
+        use serde_json::json;
+
+        async fn create_test_fixture() -> (tempfile::TempDir, FileStore, crate::commands::invoices::InvoiceDetail) {
+            let directory = tempfile::tempdir().unwrap();
+            let store = FileStore::open(directory.path().join("eattura.json")).unwrap();
+            for (id, vat) in [("seller", "01234567897"), ("buyer", "98765432103")] {
+                store
+                    .insert(
+                        "clients",
+                        json!({
+                            "id": id, "id_paese": "IT", "id_codice": vat, "denominazione": id,
+                            "indirizzo": "Via Roma", "cap": "00100", "comune": "Roma",
+                            "nazione": "IT", "regime_fiscale": "RF01", "codice_destinatario": "ABC1234"
+                        }),
+                    )
+                    .await
+                    .unwrap();
+            }
+            let request = serde_json::from_value(json!({
+                "numero": "1", "data": "2026-01-01", "tipoDocumento": "TD01", "divisa": "EUR",
+                "cedenteId": "seller", "cessionarioId": "buyer", "pagamenti": [],
+                "linee": [{"descrizione": "Consulenza", "quantita": 1, "prezzoUnitario": 100, "aliquotaIva": 22}]
+            }))
+            .unwrap();
+            let invoice = create_invoice_store(&store, request).await.unwrap();
+            (directory, store, invoice)
+        }
+
+        let config = PecConfig {
+            email: "studio@pec.example.it".into(),
+            password: String::new(),
+            sdi_address: String::new(),
+            smtp_host: "localhost".into(),
+            smtp_port: 465,
+            imap_host: "localhost".into(),
+            imap_port: 993,
+        };
+
+        let (_dir, store, invoice) = create_test_fixture().await;
+        set_invoice_status_store(&store, &invoice.id, "validated")
+            .await
+            .unwrap();
+        let (_, filename) = reserve_pec_attempt(&store, &invoice.id, &config)
+            .await
+            .unwrap();
+        resolve_pec_attempt_store(&store, &invoice.id, &filename, true)
+            .await
+            .unwrap();
+
+        // Simulate an invoice that was marked `accepted` by an earlier version on `RC`.
+        let rc_xml = format!(
+            "<RicevutaConsegna><IdentificativoSdI>777111</IdentificativoSdI><NomeFile>{filename}</NomeFile></RicevutaConsegna>"
+        );
+        import_sdi_receipt_store(&store, &rc_xml).await.unwrap();
+        store
+            .update("invoices", &invoice.id, json!({"stato": "accepted"}))
+            .await
+            .unwrap();
+        assert_eq!(
+            fetch_invoice_detail(&store, &invoice.id).await.unwrap().stato,
+            "accepted"
+        );
+
+        // Reconciling or re-scanning PEC upgrades legacy `accepted` -> `delivered`.
+        let upgraded = reconcile_unlinked_notifications(&store).await.unwrap();
+        assert_eq!(upgraded.len(), 1);
+        assert_eq!(upgraded[0].new_status.as_deref(), Some("delivered"));
+        assert_eq!(
+            fetch_invoice_detail(&store, &invoice.id).await.unwrap().stato,
+            "delivered"
+        );
+
+        // A PA invoice that later receives NE EC01 transitions `delivered` -> `accepted`
+        // and stays `accepted` even if `RC` is replayed again.
+        let ne_accept = format!(
+            "<NotificaEsito><IdentificativoSdI>777111</IdentificativoSdI><NomeFile>{filename}</NomeFile><Esito>EC01</Esito></NotificaEsito>"
+        );
+        let ne_res = import_sdi_receipt_store(&store, &ne_accept).await.unwrap();
+        assert_eq!(ne_res.new_status.as_deref(), Some("accepted"));
+        let replay_rc = import_sdi_receipt_store(&store, &rc_xml).await.unwrap();
+        assert_eq!(replay_rc.new_status, None);
+        assert_eq!(
+            fetch_invoice_detail(&store, &invoice.id).await.unwrap().stato,
+            "accepted"
+        );
+
+        // Create a second invoice to verify B2B `RicevutaImpossibilitaRecapito` (`MC`)
+        // and PA `RC -> NE EC02` (`delivered -> rejected`).
+        let (_dir2, store2, invoice2) = create_test_fixture().await;
+        set_invoice_status_store(&store2, &invoice2.id, "validated")
+            .await
+            .unwrap();
+        let (_, filename2) = reserve_pec_attempt(&store2, &invoice2.id, &config)
+            .await
+            .unwrap();
+        resolve_pec_attempt_store(&store2, &invoice2.id, &filename2, true)
+            .await
+            .unwrap();
+
+        let b2b_mc = format!(
+            r#"<ns2:RicevutaImpossibilitaRecapito xmlns:ns2="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fattura/messaggi/v1.0" versione="1.0">
+                <IdentificativoSdI>888222</IdentificativoSdI>
+                <NomeFile>{filename2}</NomeFile>
+                <DataOraRicezione>2026-06-16T10:00:00.000+02:00</DataOraRicezione>
+                <DataMessaADisposizione>2026-06-16</DataMessaADisposizione>
+                <Descrizione>Impossibilita' di recapito</Descrizione>
+            </ns2:RicevutaImpossibilitaRecapito>"#
+        );
+        let messages = vec![PecMessage {
+            uid: 10,
+            subject: "POSTA CERTIFICATA: Invio File".into(),
+            from: "posta-certificata@pec.aruba.it".into(),
+            sdi_sender: Some("sdi11@pec.fatturapa.it".into()),
+            sdi_fallback: None,
+            attachments: vec![PecAttachment {
+                filename: format!(
+                    "{}_MC_001.xml",
+                    filename2.trim_end_matches(".xml")
+                ),
+                data: b2b_mc.as_bytes().to_vec(),
+            }],
+        }];
+        let (summaries, _) = process_inbox_messages(&store2, &messages).await.unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].tipo, "MC");
+        assert_eq!(summaries[0].invoice_id.as_deref(), Some(invoice2.id.as_str()));
+        let detail2 = fetch_invoice_detail(&store2, &invoice2.id).await.unwrap();
+        assert_eq!(detail2.stato, "sent");
+        assert!(detail2.has_mc_notice);
+        assert_eq!(detail2.notifications.len(), 1);
+        assert_eq!(detail2.notifications[0].tipo, "MC");
+        let summaries2 = crate::commands::invoices::list_invoices_store(&store2)
+            .await
+            .unwrap();
+        assert!(
+            summaries2
+                .iter()
+                .find(|inv| inv.id == invoice2.id)
+                .unwrap()
+                .has_mc_notice
+        );
+
+        // Now verify PA `delivered` -> `rejected` on NE EC02 and ensure draft rectification is blocked.
+        let rc2 = format!(
+            "<RicevutaConsegna><IdentificativoSdI>888222</IdentificativoSdI><NomeFile>{filename2}</NomeFile></RicevutaConsegna>"
+        );
+        assert_eq!(
+            import_sdi_receipt_store(&store2, &rc2)
+                .await
+                .unwrap()
+                .new_status
+                .as_deref(),
+            Some("delivered")
+        );
+        let ne_refuse = format!(
+            "<NotificaEsito><IdentificativoSdI>888222</IdentificativoSdI><NomeFile>{filename2}</NomeFile><Esito>EC02</Esito></NotificaEsito>"
+        );
+        assert_eq!(
+            import_sdi_receipt_store(&store2, &ne_refuse)
+                .await
+                .unwrap()
+                .new_status
+                .as_deref(),
+            Some("rejected")
+        );
+        let rectify_err =
+            crate::commands::invoices::rectify_rejected_invoice_store(&store2, &invoice2.id)
+                .await
+                .unwrap_err();
+        assert!(rectify_err.contains("NE EC02"));
+        assert!(
+            set_invoice_status_store(&store2, &invoice2.id, "draft")
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            fetch_invoice_detail(&store2, &invoice2.id)
+                .await
+                .unwrap()
+                .stato,
+            "rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn process_inbox_messages_logs_bad_attachments_and_continues_batch() {
+        use crate::commands::invoices::{
+            create_invoice_store, fetch_invoice_detail, set_invoice_status_store,
+        };
+        use serde_json::json;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileStore::open(dir.path().join("eattura.json")).unwrap();
+        let log_dir = dir.path().join("logs");
+        let log = AppLog::open(log_dir.clone()).unwrap();
+
+        for (id, vat) in [("seller", "01234567897"), ("buyer", "98765432103")] {
+            store
+                .insert(
+                    "clients",
+                    json!({
+                        "id": id,
+                        "id_paese": "IT",
+                        "id_codice": vat,
+                        "denominazione": id,
+                        "indirizzo": "Via Roma 1",
+                        "cap": "00100",
+                        "comune": "Roma",
+                        "nazione": "IT",
+                        "regime_fiscale": "RF01"
+                    }),
+                )
+                .await
+                .unwrap();
+        }
+        let req = serde_json::from_value(json!({
+            "numero": "1",
+            "data": "2026-03-01",
+            "tipoDocumento": "TD01",
+            "divisa": "EUR",
+            "cedenteId": "seller",
+            "cessionarioId": "buyer",
+            "pagamenti": [],
+            "linee": [{"descrizione": "Servizio", "quantita": 1, "prezzoUnitario": 100.0, "aliquotaIva": 22.0}]
+        }))
+        .unwrap();
+        let invoice = create_invoice_store(&store, req).await.unwrap();
+        set_invoice_status_store(&store, &invoice.id, "validated")
+            .await
+            .unwrap();
+        let config = crate::pec::PecConfig {
+            email: "pec@example.it".into(),
+            password: "secret".into(),
+            imap_host: "imap.example.it".into(),
+            imap_port: 993,
+            smtp_host: "smtp.example.it".into(),
+            smtp_port: 465,
+            sdi_address: "sdi01@pec.fatturapa.it".into(),
+        };
+        let (_, filename) = reserve_pec_attempt(&store, &invoice.id, &config)
+            .await
+            .unwrap();
+        resolve_pec_attempt_store(&store, &invoice.id, &filename, true)
+            .await
+            .unwrap();
+
+        let valid_rc = format!(
+            "<RicevutaConsegna><IdentificativoSdI>999001</IdentificativoSdI><NomeFile>{filename}</NomeFile></RicevutaConsegna>"
+        );
+        let messages = vec![
+            PecMessage {
+                uid: 1,
+                subject: "Old broken P7M".into(),
+                from: "archive@pec.example.it".into(),
+                sdi_sender: None,
+                sdi_fallback: None,
+                attachments: vec![PecAttachment {
+                    filename: "IT01234567897_BROKEN.xml.p7m".into(),
+                    data: b"corrupted-der-bytes".to_vec(),
+                }],
+            },
+            PecMessage {
+                uid: 2,
+                subject: "Old Latin-1 XML".into(),
+                from: "archive@pec.example.it".into(),
+                sdi_sender: None,
+                sdi_fallback: None,
+                attachments: vec![PecAttachment {
+                    filename: "IT01234567897_LATIN1.xml".into(),
+                    data: b"<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><Fattura>Caff\xe8</Fattura>"
+                        .to_vec(),
+                }],
+            },
+            PecMessage {
+                uid: 3,
+                subject: "POSTA CERTIFICATA: Ricevuta di consegna".into(),
+                from: "posta-certificata@pec.aruba.it".into(),
+                sdi_sender: Some("sdi09@pec.fatturapa.it".into()),
+                sdi_fallback: None,
+                attachments: vec![PecAttachment {
+                    filename: format!("{}_RC_001.xml", filename.trim_end_matches(".xml")),
+                    data: valid_rc.into_bytes(),
+                }],
+            },
+        ];
+
+        let (summaries, detected) =
+            process_inbox_messages_with_log(&store, &messages, &log)
+                .await
+                .unwrap();
+        assert_eq!(detected.as_deref(), Some("sdi09@pec.fatturapa.it"));
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].tipo, "RC");
+        assert_eq!(summaries[0].new_status.as_deref(), Some("delivered"));
+        assert_eq!(
+            fetch_invoice_detail(&store, &invoice.id).await.unwrap().stato,
+            "delivered"
+        );
+
+        let log_entries: Vec<serde_json::Value> =
+            std::fs::read_to_string(log_dir.join("events.jsonl"))
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+        assert_eq!(log_entries.len(), 2);
+        assert!(log_entries.iter().all(|entry| entry["level"] == "warn"));
+        assert!(
+            log_entries[0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("IT01234567897_BROKEN.xml.p7m")
+        );
+        assert!(
+            log_entries[1]["message"]
+                .as_str()
+                .unwrap()
+                .contains("IT01234567897_LATIN1.xml")
+        );
     }
 }

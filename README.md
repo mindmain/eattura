@@ -42,6 +42,16 @@ The desktop loads a normalized `index.json` into memory at startup. It contains 
 
 Full invoice documents live in `invoices/<revision>.json` and are loaded on demand. Client and invoice catalog IDs for new records use SHA-256 of canonical content with collapsed whitespace; equivalent XML imports resolve to the same invoice ID. These IDs do not rename XML files or change the SDI filename convention. Every creation, XML import, edit or deletion updates the index. Documents and auxiliary state are saved before the index is atomically published; previous revisions are retained. An existing `eattura.json` snapshot is converted when no index exists and is preserved.
 
+### PEC and SdI receipts
+
+PEC synchronization inspects both top-level attachments and nested `postacert.eml` (`message/rfc822`) envelopes, unpacking `.xml` and signed `.xml.p7m` files while ignoring `daticert.xml` transport receipts. Incoming invoices are imported deduplicated; SdI receipts are linked to the matching transmission attempt by `NomeFile` or `IdentificativoSdI` and archived under `ricevute/`.
+
+- `RC` (`RicevutaConsegna`) moves a `sent` invoice to `delivered` (**Consegnata**).
+- `MC` (`NotificaMancataConsegna` for PA and `RicevutaImpossibilitaRecapito` for B2B/B2C) attaches the non-delivery receipt to the dossier without marking delivery completed and surfaces the Cassetto Fiscale courtesy-copy notice.
+- `NS` (`NotificaScarto` / `RicevutaScarto`) moves the invoice to `rejected` (**Rifiutata**) with 5-day draft rectification.
+- `NE` (`NotificaEsito` / `NotificaEsitoCommittente`) and `DT` (`NotificaDecorrenzaTermini` / `DecorrenzaTermini`) advance PA invoices from `sent` or `delivered` to `accepted` (`EC01` / `DT`) or `rejected` (`EC02`, distinct from pre-delivery `NS` discard).
+- `AT` (`AttestazioneTrasmissioneFattura`) and `MT` (`MetadatiInvioFile` / `FileMetadati`) are stored in the invoice dossier as informational receipts.
+
 ### Local MCP assistant
 
 Eattura exposes MCP over **stdio**, using its installed executable with `--mcp-stdio`. **Open Eattura and keep it running before connecting your MCP client.** This mode starts no second GUI, archive, or PEC synchronization job. The desktop retains its shared in-memory store. Stdio processes connect to the running app through private OS IPC: Unix domain sockets on macOS/Linux, local named pipes on Windows. There is **no HTTP/TCP MCP listener**, public endpoint, tunnel, or external bridge dependency.

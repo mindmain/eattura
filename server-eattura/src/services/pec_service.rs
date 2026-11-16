@@ -187,9 +187,9 @@ impl PecService {
         Ok(messages)
     }
 
-    /// Parse a raw RFC822 message into a [`PecMessage`] with its attachments.
+    /// Parse a raw RFC822 message into a [`PecMessage`] with its attachments,
+    /// recursing into nested `postacert.eml` / `message/rfc822` PEC envelopes.
     fn parse_mime(raw: &[u8]) -> Option<PecMessage> {
-        use mail_parser::MimeHeaders;
         let parsed = mail_parser::MessageParser::default().parse(raw)?;
 
         let subject = parsed.subject().unwrap_or_default().to_string();
@@ -200,16 +200,8 @@ impl PecService {
             .unwrap_or_default()
             .to_string();
 
-        let attachments = parsed
-            .attachments()
-            .filter_map(|part| {
-                let filename = part.attachment_name()?.to_string();
-                Some(PecAttachment {
-                    filename,
-                    data: part.contents().to_vec(),
-                })
-            })
-            .collect();
+        let mut attachments = Vec::new();
+        Self::collect_attachments(&parsed, &mut attachments, 0);
 
         Some(PecMessage {
             subject,
@@ -218,9 +210,84 @@ impl PecService {
         })
     }
 
+    fn collect_attachments(
+        message: &mail_parser::Message<'_>,
+        output: &mut Vec<PecAttachment>,
+        depth: usize,
+    ) {
+        use mail_parser::MimeHeaders;
+        if depth >= 5 {
+            return;
+        }
+        for part in message.attachments() {
+            if let Some(nested) = part.message() {
+                Self::collect_attachments(nested, output, depth + 1);
+            } else if let Some(filename) = part.attachment_name() {
+                if filename.to_ascii_lowercase().ends_with(".eml") {
+                    if let Some(nested) =
+                        mail_parser::MessageParser::default().parse(part.contents())
+                    {
+                        Self::collect_attachments(&nested, output, depth + 1);
+                    }
+                    continue;
+                }
+                output.push(PecAttachment {
+                    filename: filename.to_string(),
+                    data: part.contents().to_vec(),
+                });
+            }
+        }
+    }
+
     /// Parse an SDI notification XML into a structured notification.
     pub fn parse_notification(xml: &str) -> Result<ParsedNotification, AppError> {
         parse_notification(xml)
             .map_err(|e| AppError::Internal(format!("Notification parse failed: {e}")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_mime_extracts_nested_postacert_eml_attachments() {
+        let inner_eml = concat!(
+            "From: sdi01@pec.fatturapa.it\r\n",
+            "Subject: Invio File\r\n",
+            "MIME-Version: 1.0\r\n",
+            "Content-Type: multipart/mixed; boundary=\"inner\"\r\n\r\n",
+            "--inner\r\n",
+            "Content-Type: application/xml; name=\"IT01234567890_00001_MC_001.xml\"\r\n",
+            "Content-Disposition: attachment; filename=\"IT01234567890_00001_MC_001.xml\"\r\n\r\n",
+            "<RicevutaImpossibilitaRecapito><IdentificativoSdI>123</IdentificativoSdI></RicevutaImpossibilitaRecapito>\r\n",
+            "--inner--\r\n"
+        );
+        let outer_eml = format!(
+            concat!(
+                "From: posta-certificata@pec.aruba.it\r\n",
+                "Subject: POSTA CERTIFICATA: Invio File\r\n",
+                "MIME-Version: 1.0\r\n",
+                "Content-Type: multipart/mixed; boundary=\"outer\"\r\n\r\n",
+                "--outer\r\n",
+                "Content-Type: application/xml; name=\"daticert.xml\"\r\n",
+                "Content-Disposition: attachment; filename=\"daticert.xml\"\r\n\r\n",
+                "<postacert/>\r\n",
+                "--outer\r\n",
+                "Content-Type: message/rfc822; name=\"postacert.eml\"\r\n",
+                "Content-Disposition: attachment; filename=\"postacert.eml\"\r\n\r\n",
+                "{}\r\n",
+                "--outer--\r\n"
+            ),
+            inner_eml
+        );
+
+        let msg = PecService::parse_mime(outer_eml.as_bytes()).unwrap();
+        let names: Vec<&str> = msg
+            .attachments
+            .iter()
+            .map(|a| a.filename.as_str())
+            .collect();
+        assert!(names.contains(&"IT01234567890_00001_MC_001.xml"));
     }
 }

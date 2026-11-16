@@ -73,6 +73,7 @@ impl Index {
                     "provincia",
                     "email",
                     "pec",
+                    "codice_destinatario",
                     "telefono",
                 ]
             ));

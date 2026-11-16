@@ -112,6 +112,28 @@ ordinary unsigned XML model does not represent signed files or ZIP containers
 (00100–00107), simplified invoices (00460), or TD29 in the pinned Protobuf contract.
 The 00200 checks cover selected fields and are not a full XSD validation.
 
+### `invoice_status` — Lifecycle State Machine
+
+Shared `InvoiceStatus` enum (`draft`, `validated`, `sent`, `delivered`, `accepted`, `rejected`, `imported`) and transition validation:
+
+- `sent` → `delivered` when `RicevutaConsegna` (`RC`) confirms delivery to the recipient channel
+- `sent` / `delivered` → `accepted` on PA positive outcome (`NE` `EC01`) or expiry of terms (`DT`)
+- `sent` / `delivered` → `rejected` on SDI discard (`NS`, rectifiable via `rejected` → `draft`) or PA refusal (`NE` `EC02`)
+
+### `pec` — SDI Naming & Notification Parser
+
+Transport-agnostic SDI file naming (`sdi_filename`, `sdi_receipt_filename`), SDI PEC mailbox extraction (`extract_sdi_pec_addresses`), and XML parser (`parse_notification`) for PA (`messaggiTypes_v1.1.xsd`) and B2B/B2C (`messaggi_fattura_v1.0.xsd`) SDI messages:
+
+| Code | Root elements | Resulting status |
+|------|---------------|------------------|
+| `RC` | `RicevutaConsegna` | `Some(Delivered)` |
+| `NS` | `NotificaScarto`, `RicevutaScarto` | `Some(Rejected)` |
+| `MC` | `NotificaMancataConsegna`, `RicevutaImpossibilitaRecapito` | `None` (attached to dossier with Cassetto Fiscale notice) |
+| `NE` | `NotificaEsito`, `NotificaEsitoCommittente` | `EC01` → `Some(Accepted)`, `EC02` → `Some(Rejected)` |
+| `DT` | `NotificaDecorrenzaTermini`, `DecorrenzaTermini` | `Some(Accepted)` |
+| `AT` | `AttestazioneTrasmissioneFattura` | `None` |
+| `MT` | `MetadatiInvioFile`, `FileMetadati` | `None` |
+
 ### `error` — Error Types
 
 - `CommonError` — Top-level error wrapping XML and validation errors

@@ -3,14 +3,20 @@
 //! The canonical issuing lifecycle is:
 //!
 //! ```text
-//! draft ──▶ validated ──▶ sent ──▶ accepted
-//!   ▲           │                └──▶ rejected
+//! draft ──▶ validated ──▶ sent ──▶ delivered ──▶ accepted
+//!   ▲           │           │          └───────▶ rejected
+//!   │           │           ├──────────────────▶ accepted
+//!   │           │           └──────────────────▶ rejected
 //!   └───────────┘ (revert to edit)
 //! ```
 //!
-//! `rejected` invoices (SDI "scarto" / NS) can be reverted to `draft` to be
-//! corrected and re-sent. `imported` invoices ingested from external XML can
-//! also be validated or transitioned as SDI outcomes arrive.
+//! `delivered` corresponds to SDI `RicevutaConsegna` (`RC`), which is terminal
+//! for B2B/B2C invoices and an intermediate milestone for PA invoices awaiting
+//! `NotificaEsito` (`NE`) or `NotificaDecorrenzaTermini` (`DT`).
+//! `rejected` covers both SDI pre-delivery discards (`NS`, which can be reverted
+//! to `draft` and re-sent) and post-delivery PA refusals (`NE EC02`). `imported`
+//! invoices ingested from external XML can also be validated or transitioned as
+//! SDI outcomes arrive.
 
 use std::fmt;
 use std::str::FromStr;
@@ -24,9 +30,11 @@ pub enum InvoiceStatus {
     Validated,
     /// Sent to SDI via PEC, awaiting outcome.
     Sent,
-    /// Accepted by SDI (ricevuta di consegna / esito positivo).
+    /// Delivered to the recipient by SDI (ricevuta di consegna / RC).
+    Delivered,
+    /// Accepted by recipient or deemed accepted (notifica esito positivo / decorrenza termini).
     Accepted,
-    /// Rejected by SDI (notifica di scarto / esito negativo).
+    /// Rejected by SDI or PA recipient (notifica di scarto / esito negativo).
     Rejected,
     /// Ingested from an external XML.
     Imported,
@@ -39,6 +47,7 @@ impl InvoiceStatus {
             InvoiceStatus::Draft => "draft",
             InvoiceStatus::Validated => "validated",
             InvoiceStatus::Sent => "sent",
+            InvoiceStatus::Delivered => "delivered",
             InvoiceStatus::Accepted => "accepted",
             InvoiceStatus::Rejected => "rejected",
             InvoiceStatus::Imported => "imported",
@@ -53,11 +62,15 @@ impl InvoiceStatus {
             (Draft, Validated)
                 | (Validated, Draft)
                 | (Validated, Sent)
+                | (Sent, Delivered)
                 | (Sent, Accepted)
                 | (Sent, Rejected)
+                | (Delivered, Accepted)
+                | (Delivered, Rejected)
                 | (Rejected, Draft)
                 | (Imported, Validated)
                 | (Imported, Sent)
+                | (Imported, Delivered)
                 | (Imported, Accepted)
                 | (Imported, Rejected)
         )
@@ -91,6 +104,7 @@ impl FromStr for InvoiceStatus {
             "draft" => Ok(InvoiceStatus::Draft),
             "validated" => Ok(InvoiceStatus::Validated),
             "sent" => Ok(InvoiceStatus::Sent),
+            "delivered" => Ok(InvoiceStatus::Delivered),
             "accepted" => Ok(InvoiceStatus::Accepted),
             "rejected" => Ok(InvoiceStatus::Rejected),
             "imported" => Ok(InvoiceStatus::Imported),
@@ -108,10 +122,14 @@ mod tests {
         assert!(InvoiceStatus::Draft.can_transition_to(InvoiceStatus::Validated));
         assert!(InvoiceStatus::Validated.can_transition_to(InvoiceStatus::Sent));
         assert!(InvoiceStatus::Validated.can_transition_to(InvoiceStatus::Draft));
+        assert!(InvoiceStatus::Sent.can_transition_to(InvoiceStatus::Delivered));
         assert!(InvoiceStatus::Sent.can_transition_to(InvoiceStatus::Accepted));
         assert!(InvoiceStatus::Sent.can_transition_to(InvoiceStatus::Rejected));
+        assert!(InvoiceStatus::Delivered.can_transition_to(InvoiceStatus::Accepted));
+        assert!(InvoiceStatus::Delivered.can_transition_to(InvoiceStatus::Rejected));
         assert!(InvoiceStatus::Rejected.can_transition_to(InvoiceStatus::Draft));
         assert!(InvoiceStatus::Imported.can_transition_to(InvoiceStatus::Validated));
+        assert!(InvoiceStatus::Imported.can_transition_to(InvoiceStatus::Delivered));
         assert!(InvoiceStatus::Imported.can_transition_to(InvoiceStatus::Accepted));
     }
 
@@ -119,7 +137,9 @@ mod tests {
     fn illegal_transitions() {
         assert!(!InvoiceStatus::Draft.can_transition_to(InvoiceStatus::Sent));
         assert!(!InvoiceStatus::Sent.can_transition_to(InvoiceStatus::Draft));
+        assert!(!InvoiceStatus::Delivered.can_transition_to(InvoiceStatus::Draft));
         assert!(!InvoiceStatus::Accepted.can_transition_to(InvoiceStatus::Draft));
+        assert!(!InvoiceStatus::Accepted.can_transition_to(InvoiceStatus::Delivered));
         assert!(!InvoiceStatus::Draft.can_transition_to(InvoiceStatus::Draft));
     }
 
@@ -129,6 +149,7 @@ mod tests {
             "draft",
             "validated",
             "sent",
+            "delivered",
             "accepted",
             "rejected",
             "imported",

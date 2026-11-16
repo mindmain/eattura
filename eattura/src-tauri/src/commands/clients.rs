@@ -19,6 +19,8 @@ pub struct ClientSummary {
     pub search_text: String,
     #[serde(default)]
     pub is_pa: bool,
+    #[serde(default)]
+    pub codice_destinatario: Option<String>,
 }
 
 /// Full client detail.
@@ -121,6 +123,268 @@ pub(super) fn validate_italian_tax_fields(
     Ok(())
 }
 
+pub(crate) fn normalize_recipient_code(code: Option<&str>) -> Option<String> {
+    code.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_uppercase)
+}
+
+pub(crate) fn valid_invoice_recipient_code(code: &str, id_paese: &str) -> Option<String> {
+    let normalized = normalize_recipient_code(Some(code))?;
+    if !matches!(normalized.len(), 6 | 7)
+        || !normalized.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    {
+        return None;
+    }
+    if normalized == "XXXXXXX" && id_paese.trim().eq_ignore_ascii_case("IT") {
+        return None;
+    }
+    Some(normalized)
+}
+
+pub(crate) fn valid_invoice_recipient_pec(pec: Option<&str>) -> Option<String> {
+    pec.map(str::trim)
+        .filter(|value| {
+            !value.is_empty() && !value.to_ascii_lowercase().ends_with("@pec.fatturapa.it")
+        })
+        .map(str::to_owned)
+}
+
+pub(crate) fn resolve_client_recipient_code(code: Option<&str>, is_pa: bool) -> Option<String> {
+    match normalize_recipient_code(code) {
+        Some(normalized) => Some(normalized),
+        None if !is_pa => Some("0000000".to_string()),
+        None => None,
+    }
+}
+
+pub(crate) fn has_explicit_recipient_destination(row: &Record) -> bool {
+    if row.get::<Option<bool>>("recipient_configured") == Some(true) {
+        return true;
+    }
+    let current_cd =
+        normalize_recipient_code(row.get::<Option<String>>("codice_destinatario").as_deref());
+    let current_is_pa = row
+        .get::<Option<bool>>("is_pa")
+        .unwrap_or_else(|| current_cd.as_deref().is_some_and(|code| code.len() == 6));
+    if current_cd.as_deref().is_some_and(|code| code != "0000000") {
+        return true;
+    }
+    let current_pec = row.get::<Option<String>>("pec");
+    !current_is_pa
+        && valid_invoice_recipient_pec(current_pec.as_deref()).is_some()
+        && matches!(current_cd.as_deref(), None | Some("0000000"))
+}
+
+pub(crate) fn merge_client_recipient_destination(
+    existing: &Record,
+    candidate_cd: Option<&str>,
+    candidate_pec: Option<&str>,
+) -> (Option<String>, Option<String>, bool) {
+    let current_cd = normalize_recipient_code(
+        existing
+            .get::<Option<String>>("codice_destinatario")
+            .as_deref(),
+    );
+    let current_is_pa = existing
+        .get::<Option<bool>>("is_pa")
+        .unwrap_or_else(|| current_cd.as_deref().is_some_and(|code| code.len() == 6));
+    let current_pec = existing
+        .get::<Option<String>>("pec")
+        .map(|pec| pec.trim().to_owned())
+        .filter(|pec| !pec.is_empty());
+
+    if has_explicit_recipient_destination(existing) {
+        let next_cd = resolve_client_recipient_code(current_cd.as_deref(), current_is_pa);
+        let next_is_pa = next_cd.as_deref().is_some_and(|code| code.len() == 6) || current_is_pa;
+        return (next_cd, current_pec, next_is_pa);
+    }
+
+    let normalized_candidate_cd = normalize_recipient_code(candidate_cd);
+    let next_cd = match normalized_candidate_cd.as_deref() {
+        Some(inc) if inc != "0000000" => Some(inc.to_string()),
+        _ => current_cd
+            .or(normalized_candidate_cd)
+            .or_else(|| (!current_is_pa).then(|| "0000000".to_string())),
+    };
+    let next_is_pa = next_cd.as_deref().is_some_and(|code| code.len() == 6) || current_is_pa;
+    let next_pec = current_pec.or_else(|| valid_invoice_recipient_pec(candidate_pec));
+    (next_cd, next_pec, next_is_pa)
+}
+
+#[derive(Default)]
+struct DiscoveredDestination {
+    explicit_channel: Option<(String, Option<String>)>,
+    any_code: Option<String>,
+    fallback_pec: Option<String>,
+}
+
+/// Recover missing or placeholder `codice_destinatario` and `pec` values for existing
+/// clients from already-archived invoice XML headers without requiring XML re-import.
+/// Explicit recipient configurations (including `"0000000"` paired with a PEC) are preserved.
+/// Non-PA clients without any code in archived invoices default to `"0000000"`.
+pub(crate) async fn backfill_client_destinations(
+    store: &crate::storage::FileStore,
+) -> Result<usize, String> {
+    use std::collections::HashMap;
+
+    let clients = store
+        .read("clients", "all", vec![], "")
+        .await
+        .fetch_all()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut needs_write = false;
+    let mut target_countries: HashMap<String, String> = HashMap::new();
+    for row in &clients {
+        let backfilled = row.get::<Option<bool>>("recipient_backfilled") == Some(true);
+        let cd =
+            normalize_recipient_code(row.get::<Option<String>>("codice_destinatario").as_deref());
+        let is_pa = row
+            .get::<Option<bool>>("is_pa")
+            .unwrap_or_else(|| cd.as_deref().is_some_and(|code| code.len() == 6));
+        if !backfilled || (!is_pa && cd.is_none()) {
+            needs_write = true;
+            if !has_explicit_recipient_destination(row) {
+                target_countries.insert(row.get("id"), row.get("id_paese"));
+            }
+        }
+    }
+
+    if !needs_write {
+        return Ok(0);
+    }
+
+    let mut discovered: HashMap<String, DiscoveredDestination> = HashMap::new();
+    if !target_countries.is_empty() {
+        let invoice_views = store
+            .read("invoices", "invoice_views", vec![], "invoice")
+            .await
+            .fetch_all()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        for inv_view in &invoice_views {
+            let buyer_id: String = inv_view.get("cessionario_id");
+            let Some(country) = target_countries.get(&buyer_id) else {
+                continue;
+            };
+            if discovered
+                .get(&buyer_id)
+                .is_some_and(|entry| entry.explicit_channel.is_some() && entry.fallback_pec.is_some())
+            {
+                continue;
+            }
+            let inv_id: String = inv_view.get("id");
+            let Ok(Some(full_inv)) = store
+                .read("invoices", "id", vec![serde_json::json!(&inv_id)], "")
+                .await
+                .fetch_optional()
+                .await
+            else {
+                continue;
+            };
+            let Some(xml) = full_inv
+                .get::<Option<String>>("xml_content")
+                .filter(|xml| !xml.trim().is_empty())
+            else {
+                continue;
+            };
+            let Ok(Some(header)) = common::xml::decode::decode_header(&xml) else {
+                continue;
+            };
+            let Some(dt) = header.dati_trasmissione.as_ref() else {
+                continue;
+            };
+            let code = valid_invoice_recipient_code(&dt.codice_destinatario, country);
+            let pec = valid_invoice_recipient_pec(dt.pec_destinatario.as_deref());
+            let entry = discovered.entry(buyer_id).or_default();
+            if entry.any_code.is_none() {
+                entry.any_code = code.clone();
+            }
+            if entry.fallback_pec.is_none() {
+                entry.fallback_pec = pec.clone();
+            }
+            if entry.explicit_channel.is_none() {
+                match code.as_deref() {
+                    Some(c) if c != "0000000" => {
+                        entry.explicit_channel = Some((c.to_string(), pec));
+                    }
+                    Some("0000000") if pec.is_some() => {
+                        entry.explicit_channel = Some(("0000000".to_string(), pec));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    let mut tx = store.begin().await?;
+    let current_clients = tx
+        .read("clients", "all", vec![], "")
+        .fetch_all()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut wrote_any = false;
+    let mut upgraded_count = 0usize;
+    for row in &current_clients {
+        let id: String = row.get("id");
+        let backfilled = row.get::<Option<bool>>("recipient_backfilled") == Some(true);
+        let raw_cd: Option<String> = row.get("codice_destinatario");
+        let current_cd = normalize_recipient_code(raw_cd.as_deref());
+        let current_is_pa = row
+            .get::<Option<bool>>("is_pa")
+            .unwrap_or_else(|| current_cd.as_deref().is_some_and(|code| code.len() == 6));
+        if backfilled && (current_is_pa || current_cd.is_some()) {
+            continue;
+        }
+
+        let found = discovered.get(&id);
+        let (candidate_cd, candidate_pec) = match found {
+            Some(entry) => match entry.explicit_channel.as_ref() {
+                Some((code, pec)) if code == "0000000" => (Some(code.as_str()), pec.as_deref()),
+                Some((code, pec)) => (
+                    Some(code.as_str()),
+                    pec.as_deref().or(entry.fallback_pec.as_deref()),
+                ),
+                None => (entry.any_code.as_deref(), entry.fallback_pec.as_deref()),
+            },
+            None => (None, None),
+        };
+        let (next_cd, next_pec, next_is_pa) =
+            merge_client_recipient_destination(row, candidate_cd, candidate_pec);
+
+        let data_changed = raw_cd != next_cd
+            || row.get::<Option<String>>("pec") != next_pec
+            || row.get::<Option<bool>>("is_pa") != Some(next_is_pa);
+        if data_changed {
+            upgraded_count += 1;
+        }
+
+        tx.update(
+            "clients",
+            &id,
+            serde_json::json!({
+                "codice_destinatario": next_cd,
+                "pec": next_pec,
+                "is_pa": next_is_pa,
+                "recipient_backfilled": true,
+            }),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        wrote_any = true;
+    }
+
+    if wrote_any {
+        tx.commit().await?;
+    }
+
+    Ok(upgraded_count)
+}
+
 /// List all clients from the local file store.
 ///
 /// Returns a summary view with key fields, ordered by company name or surname.
@@ -134,6 +398,8 @@ pub async fn list_clients(
 pub async fn list_clients_store(
     store: &crate::storage::FileStore,
 ) -> Result<Vec<ClientSummary>, String> {
+    backfill_client_destinations(store).await?;
+
     let rows = store
         .read("clients", "all", vec![], "client")
         .await
@@ -144,17 +410,21 @@ pub async fn list_clients_store(
     let clients = rows
         .iter()
         .map(|row| {
-            let cd: Option<String> = row.get("codice_destinatario");
+            let cd = normalize_recipient_code(
+                row.get::<Option<String>>("codice_destinatario").as_deref(),
+            );
             let is_pa = row
                 .get::<Option<bool>>("is_pa")
-                .unwrap_or_else(|| cd.as_deref().map(|c| c.trim().len() == 6).unwrap_or(false));
+                .unwrap_or_else(|| cd.as_deref().map(|c| c.len() == 6).unwrap_or(false));
             let country: String = row.get("id_paese");
             let id: String = row.get("id_codice");
             let cf: Option<String> = row.get("codice_fiscale");
             let has_tax_id_error = country.eq_ignore_ascii_case("IT") && {
                 let cf_only = id.len() == 16 && id.bytes().any(|byte| byte.is_ascii_alphabetic());
                 let vat = (!cf_only).then_some(id.as_str());
-                let cf = cf.as_deref().filter(|value| !value.is_empty())
+                let cf = cf
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
                     .or_else(|| cf_only.then_some(id.as_str()));
                 validate_italian_tax_fields(vat, cf).is_err()
             };
@@ -169,6 +439,7 @@ pub async fn list_clients_store(
                 has_tax_id_error,
                 comune: row.get("comune"),
                 is_pa,
+                codice_destinatario: cd,
             }
         })
         .collect();
@@ -189,6 +460,8 @@ pub async fn get_client_store(
     store: &crate::storage::FileStore,
     id: &str,
 ) -> Result<ClientDetail, String> {
+    backfill_client_destinations(store).await?;
+
     let row = store
         .read("clients", "id", vec![serde_json::json!(id)], "")
         .await
@@ -236,6 +509,13 @@ pub async fn create_client_store(
             ));
         }
     }
+    let resolved_cd = resolve_client_recipient_code(client.codice_destinatario.as_deref(), is_pa);
+    let resolved_pec = client
+        .pec
+        .as_deref()
+        .map(str::trim)
+        .filter(|pec| !pec.is_empty())
+        .map(str::to_owned);
 
     let id = digest::client_id(&client.id_paese, &effective_id_codice)?;
 
@@ -259,9 +539,11 @@ pub async fn create_client_store(
                 "nazione": &client.nazione,
                 "telefono": &client.telefono,
                 "email": &client.email,
-                "pec": &client.pec,
-                "codice_destinatario": &client.codice_destinatario,
-                "is_pa": is_pa
+                "pec": &resolved_pec,
+                "codice_destinatario": &resolved_cd,
+                "is_pa": is_pa,
+                "recipient_backfilled": true,
+                "recipient_configured": true
             }),
         )
         .await
@@ -316,6 +598,13 @@ pub async fn update_client_store(
             ));
         }
     }
+    let resolved_cd = resolve_client_recipient_code(client.codice_destinatario.as_deref(), is_pa);
+    let resolved_pec = client
+        .pec
+        .as_deref()
+        .map(str::trim)
+        .filter(|pec| !pec.is_empty())
+        .map(str::to_owned);
 
     let new_id = if same_fiscal_identity {
         id.to_string()
@@ -342,9 +631,11 @@ pub async fn update_client_store(
                 "nazione": &client.nazione,
                 "telefono": &client.telefono,
                 "email": &client.email,
-                "pec": &client.pec,
-                "codice_destinatario": &client.codice_destinatario,
-                "is_pa": is_pa
+                "pec": &resolved_pec,
+                "codice_destinatario": &resolved_cd,
+                "is_pa": is_pa,
+                "recipient_backfilled": true,
+                "recipient_configured": true
             }),
         )
         .await
@@ -459,10 +750,10 @@ pub async fn lookup_vat_vies(
 }
 
 fn row_to_client_detail(row: &Record) -> ClientDetail {
-    let cd: Option<String> = row.get("codice_destinatario");
+    let cd = normalize_recipient_code(row.get::<Option<String>>("codice_destinatario").as_deref());
     let is_pa = row
         .get::<Option<bool>>("is_pa")
-        .unwrap_or_else(|| cd.as_deref().map(|c| c.trim().len() == 6).unwrap_or(false));
+        .unwrap_or_else(|| cd.as_deref().map(|c| c.len() == 6).unwrap_or(false));
     ClientDetail {
         id: row.get("id"),
         denominazione: row.get("denominazione"),
@@ -683,5 +974,379 @@ mod tests {
         let res = lookup_vat_vies("".into(), "".into()).await;
         assert!(res.is_err());
         assert!(res.unwrap_err().contains("obbligatori"));
+    }
+
+    fn minimal_fattura_xml(
+        formato: &str,
+        codice_destinatario: &str,
+        pec_destinatario: Option<&str>,
+        (cedente_vat, cedente_name): (&str, &str),
+        (cessionario_vat, cessionario_name): (&str, &str),
+        (numero, data): (&str, &str),
+    ) -> String {
+        let pec_tag = pec_destinatario
+            .map(|pec| format!("<PECDestinatario>{pec}</PECDestinatario>"))
+            .unwrap_or_default();
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<p:FatturaElettronica versione="{formato}" xmlns:p="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2">
+  <FatturaElettronicaHeader>
+    <DatiTrasmissione>
+      <IdTrasmittente><IdPaese>IT</IdPaese><IdCodice>{cedente_vat}</IdCodice></IdTrasmittente>
+      <ProgressivoInvio>00001</ProgressivoInvio>
+      <FormatoTrasmissione>{formato}</FormatoTrasmissione>
+      <CodiceDestinatario>{codice_destinatario}</CodiceDestinatario>
+      {pec_tag}
+    </DatiTrasmissione>
+    <CedentePrestatore>
+      <DatiAnagrafici>
+        <IdFiscaleIVA><IdPaese>IT</IdPaese><IdCodice>{cedente_vat}</IdCodice></IdFiscaleIVA>
+        <Anagrafica><Denominazione>{cedente_name}</Denominazione></Anagrafica>
+        <RegimeFiscale>RF01</RegimeFiscale>
+      </DatiAnagrafici>
+      <Sede><Indirizzo>Via Roma 1</Indirizzo><CAP>00100</CAP><Comune>Roma</Comune><Provincia>RM</Provincia><Nazione>IT</Nazione></Sede>
+    </CedentePrestatore>
+    <CessionarioCommittente>
+      <DatiAnagrafici>
+        <IdFiscaleIVA><IdPaese>IT</IdPaese><IdCodice>{cessionario_vat}</IdCodice></IdFiscaleIVA>
+        <Anagrafica><Denominazione>{cessionario_name}</Denominazione></Anagrafica>
+      </DatiAnagrafici>
+      <Sede><Indirizzo>Via Milano 2</Indirizzo><CAP>20100</CAP><Comune>Milano</Comune><Provincia>MI</Provincia><Nazione>IT</Nazione></Sede>
+    </CessionarioCommittente>
+  </FatturaElettronicaHeader>
+  <FatturaElettronicaBody>
+    <DatiGenerali>
+      <DatiGeneraliDocumento>
+        <TipoDocumento>TD01</TipoDocumento>
+        <Divisa>EUR</Divisa>
+        <Data>{data}</Data>
+        <Numero>{numero}</Numero>
+        <ImportoTotaleDocumento>122.00</ImportoTotaleDocumento>
+      </DatiGeneraliDocumento>
+    </DatiGenerali>
+    <DatiBeniServizi>
+      <DettaglioLinee>
+        <NumeroLinea>1</NumeroLinea>
+        <Descrizione>Consulenza</Descrizione>
+        <PrezzoUnitario>100.00</PrezzoUnitario>
+        <PrezzoTotale>100.00</PrezzoTotale>
+        <AliquotaIVA>22.00</AliquotaIVA>
+      </DettaglioLinee>
+      <DatiRiepilogo>
+        <AliquotaIVA>22.00</AliquotaIVA>
+        <ImponibileImporto>100.00</ImponibileImporto>
+        <Imposta>22.00</Imposta>
+      </DatiRiepilogo>
+    </DatiBeniServizi>
+  </FatturaElettronicaBody>
+</p:FatturaElettronica>"#
+        )
+    }
+
+    #[tokio::test]
+    async fn backfills_missing_and_placeholder_recipient_codes_from_archived_invoices() {
+        let (store, dir) = test_store("backfill-destinations");
+        let seller_id = digest::client_id("IT", "11111111115").unwrap();
+        let buyer_sdi_id = digest::client_id("IT", "22222222220").unwrap();
+        let buyer_pa_id = digest::client_id("IT", "33333333335").unwrap();
+        let supplier_only_id = digest::client_id("IT", "44444444440").unwrap();
+        let manual_id = digest::client_id("IT", "55555555555").unwrap();
+
+        let mut tx = store.begin().await.unwrap();
+        for (id, vat, name, cd) in [
+            (&seller_id, "11111111115", "Emittente Srl", None),
+            (&buyer_sdi_id, "22222222220", "Cliente SDI Srl", None),
+            (&buyer_pa_id, "33333333335", "Comune di Prova", None),
+            (&supplier_only_id, "44444444440", "Fornitore Srl", None),
+            (&manual_id, "55555555555", "Cliente Manuale Srl", Some("ABC1234")),
+        ] {
+            tx.insert(
+                "clients",
+                serde_json::json!({
+                    "id": id,
+                    "denominazione": name,
+                    "id_paese": "IT",
+                    "id_codice": vat,
+                    "indirizzo": "Via Test 1",
+                    "cap": "00100",
+                    "comune": "Roma",
+                    "nazione": "IT",
+                    "codice_destinatario": cd,
+                    "pec": null
+                }),
+            )
+            .await
+            .unwrap();
+        }
+
+        let xml_older = minimal_fattura_xml(
+            "FPR12",
+            "0000000",
+            Some("amm@pec.clientesdi.it"),
+            ("11111111115", "Emittente Srl"),
+            ("22222222220", "Cliente SDI Srl"),
+            ("1", "2026-01-10"),
+        );
+        let xml_newer = minimal_fattura_xml(
+            "FPR12",
+            "SUBM70N",
+            None,
+            ("11111111115", "Emittente Srl"),
+            ("22222222220", "Cliente SDI Srl"),
+            ("2", "2026-02-15"),
+        );
+        let xml_pa = minimal_fattura_xml(
+            "FPA12",
+            "UF12AB",
+            None,
+            ("11111111115", "Emittente Srl"),
+            ("33333333335", "Comune di Prova"),
+            ("3", "2026-02-20"),
+        );
+        let xml_purchase = minimal_fattura_xml(
+            "FPR12",
+            "0000000",
+            None,
+            ("44444444440", "Fornitore Srl"),
+            ("11111111115", "Emittente Srl"),
+            ("99", "2026-02-01"),
+        );
+        let xml_manual = minimal_fattura_xml(
+            "FPR12",
+            "0000000",
+            None,
+            ("11111111115", "Emittente Srl"),
+            ("55555555555", "Cliente Manuale Srl"),
+            ("4", "2026-02-25"),
+        );
+
+        for (inv_id, num, date, cedente, cessionario, xml) in [
+            ("inv-old", "1", "2026-01-10", &seller_id, &buyer_sdi_id, &xml_older),
+            ("inv-new", "2", "2026-02-15", &seller_id, &buyer_sdi_id, &xml_newer),
+            ("inv-pa", "3", "2026-02-20", &seller_id, &buyer_pa_id, &xml_pa),
+            ("inv-pur", "99", "2026-02-01", &supplier_only_id, &seller_id, &xml_purchase),
+            ("inv-man", "4", "2026-02-25", &seller_id, &manual_id, &xml_manual),
+        ] {
+            tx.insert(
+                "invoices",
+                serde_json::json!({
+                    "id": inv_id,
+                    "numero": num,
+                    "data": date,
+                    "tipo_documento": "TD01",
+                    "divisa": "EUR",
+                    "importo_totale": 122.0,
+                    "stato": "imported",
+                    "cedente_id": cedente,
+                    "cessionario_id": cessionario,
+                    "xml_content": xml
+                }),
+            )
+            .await
+            .unwrap();
+        }
+        tx.commit().await.unwrap();
+
+        // Trigger backfill automatically via list_clients_store without re-importing XMLs.
+        let summaries = list_clients_store(&store).await.unwrap();
+        let buyer_sdi_summary = summaries.iter().find(|c| c.id == buyer_sdi_id).unwrap();
+        assert_eq!(buyer_sdi_summary.codice_destinatario.as_deref(), Some("SUBM70N"));
+        assert!(buyer_sdi_summary.search_text.contains("subm70n"));
+
+        let buyer_sdi = get_client_store(&store, &buyer_sdi_id).await.unwrap();
+        assert_eq!(buyer_sdi.codice_destinatario.as_deref(), Some("SUBM70N"));
+        assert_eq!(buyer_sdi.pec.as_deref(), Some("amm@pec.clientesdi.it"));
+        assert!(!buyer_sdi.is_pa);
+
+        let buyer_pa = get_client_store(&store, &buyer_pa_id).await.unwrap();
+        assert_eq!(buyer_pa.codice_destinatario.as_deref(), Some("UF12AB"));
+        assert!(buyer_pa.is_pa);
+
+        let supplier_only = get_client_store(&store, &supplier_only_id).await.unwrap();
+        assert_eq!(supplier_only.codice_destinatario.as_deref(), Some("0000000"));
+
+        let manual = get_client_store(&store, &manual_id).await.unwrap();
+        assert_eq!(manual.codice_destinatario.as_deref(), Some("ABC1234"));
+
+        // Second invocation is an idempotent no-op.
+        assert_eq!(backfill_client_destinations(&store).await.unwrap(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn import_upgrades_supplier_client_when_seen_as_buyer_with_sdi_code() {
+        let (store, dir) = test_store("import-upgrade-sdi");
+
+        // 1. Import a purchase invoice where Partner Srl is CedentePrestatore (no destination code).
+        let purchase_xml = minimal_fattura_xml(
+            "FPR12",
+            "0000000",
+            None,
+            ("22222222220", "Partner Srl"),
+            ("11111111115", "MyCompany Srl"),
+            ("P-1", "2026-01-15"),
+        );
+        crate::commands::invoices::import_xml_content(&store, &purchase_xml)
+            .await
+            .unwrap();
+
+        let partner_id = digest::client_id("IT", "22222222220").unwrap();
+        let after_purchase = get_client_store(&store, &partner_id).await.unwrap();
+        assert_eq!(
+            after_purchase.codice_destinatario.as_deref(),
+            Some("0000000")
+        );
+        assert_eq!(after_purchase.pec, None);
+
+        // 2. Import a sale invoice where Partner Srl is CessionarioCommittente with SDI code + PEC.
+        let sale_xml = minimal_fattura_xml(
+            "FPR12",
+            "M5UXCR1",
+            Some("partner@pec.it"),
+            ("11111111115", "MyCompany Srl"),
+            ("22222222220", "Partner Srl"),
+            ("S-1", "2026-02-01"),
+        );
+        crate::commands::invoices::import_xml_content(&store, &sale_xml)
+            .await
+            .unwrap();
+
+        let after_sale = get_client_store(&store, &partner_id).await.unwrap();
+        assert_eq!(after_sale.codice_destinatario.as_deref(), Some("M5UXCR1"));
+        assert_eq!(after_sale.pec.as_deref(), Some("partner@pec.it"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn preserves_explicit_pec_destination_across_reimport_backfill_and_xml_generation() {
+        let (store, dir) = test_store("preserve-pec-destination");
+
+        // 1. User configures seller and a PEC-routed buyer (0000000 + PEC).
+        let seller = create_client_store(
+            &store,
+            sample_client_request("11111111115", "MyCompany Srl"),
+        )
+        .await
+        .unwrap();
+        let mut buyer_req = sample_client_request("22222222220", "Cliente PEC Srl");
+        buyer_req.codice_destinatario = Some("0000000".to_string());
+        buyer_req.pec = Some("amministrazione@pec.cliente.it".to_string());
+        let buyer = create_client_store(&store, buyer_req).await.unwrap();
+        assert_eq!(buyer.codice_destinatario.as_deref(), Some("0000000"));
+        assert_eq!(
+            buyer.pec.as_deref(),
+            Some("amministrazione@pec.cliente.it")
+        );
+
+        // 2. Also insert an existing pre-upgrade client (no `recipient_configured` flag)
+        // that already had `0000000` + PEC on disk alongside an older archived invoice with a specific SDI code.
+        let legacy_pec_id = digest::client_id("IT", "33333333335").unwrap();
+        let old_legacy_xml = minimal_fattura_xml(
+            "FPR12",
+            "SUBM70N",
+            None,
+            ("11111111115", "MyCompany Srl"),
+            ("33333333335", "Legacy PEC Srl"),
+            ("OLD-1", "2024-05-10"),
+        );
+        let mut tx = store.begin().await.unwrap();
+        tx.insert(
+            "clients",
+            serde_json::json!({
+                "id": &legacy_pec_id,
+                "denominazione": "Legacy PEC Srl",
+                "id_paese": "IT",
+                "id_codice": "33333333335",
+                "indirizzo": "Via Vecchia 10",
+                "cap": "00100",
+                "comune": "Roma",
+                "nazione": "IT",
+                "codice_destinatario": "0000000",
+                "pec": "legacy@pec.cliente.it"
+            }),
+        )
+        .await
+        .unwrap();
+        tx.insert(
+            "invoices",
+            serde_json::json!({
+                "id": "inv-legacy-old",
+                "numero": "OLD-1",
+                "data": "2024-05-10",
+                "tipo_documento": "TD01",
+                "divisa": "EUR",
+                "importo_totale": 122.0,
+                "stato": "imported",
+                "cedente_id": &seller.id,
+                "cessionario_id": &legacy_pec_id,
+                "xml_content": &old_legacy_xml
+            }),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        // Backfill from archive must preserve `0000000` + PEC on the existing client.
+        backfill_client_destinations(&store).await.unwrap();
+        let legacy_after_backfill = get_client_store(&store, &legacy_pec_id).await.unwrap();
+        assert_eq!(
+            legacy_after_backfill.codice_destinatario.as_deref(),
+            Some("0000000")
+        );
+        assert_eq!(
+            legacy_after_backfill.pec.as_deref(),
+            Some("legacy@pec.cliente.it")
+        );
+
+        // 3. Re-importing an old invoice with a specific SDI code (`M5UXCR1`) for `buyer`
+        // must NOT overwrite `0000000` or drop PEC from subsequent generated XMLs.
+        let old_sale_xml = minimal_fattura_xml(
+            "FPR12",
+            "M5UXCR1",
+            None,
+            ("11111111115", "MyCompany Srl"),
+            ("22222222220", "Cliente PEC Srl"),
+            ("OLD-2", "2024-06-01"),
+        );
+        crate::commands::invoices::import_xml_content(&store, &old_sale_xml)
+            .await
+            .unwrap();
+
+        let buyer_after_import = get_client_store(&store, &buyer.id).await.unwrap();
+        assert_eq!(
+            buyer_after_import.codice_destinatario.as_deref(),
+            Some("0000000")
+        );
+        assert_eq!(
+            buyer_after_import.pec.as_deref(),
+            Some("amministrazione@pec.cliente.it")
+        );
+
+        let new_inv_req: crate::commands::invoices::CreateInvoiceRequest =
+            serde_json::from_value(serde_json::json!({
+                "numero": "2026-10",
+                "data": "2026-03-15",
+                "tipoDocumento": "TD01",
+                "divisa": "EUR",
+                "cedenteId": &seller.id,
+                "cessionarioId": &buyer.id,
+                "pagamenti": [],
+                "linee": [{"descrizione": "Servizio", "quantita": 1, "prezzoUnitario": 100.0, "aliquotaIva": 22.0}]
+            }))
+            .unwrap();
+        let created_inv = crate::commands::invoices::create_invoice_store(&store, new_inv_req)
+            .await
+            .unwrap();
+        let generated_xml =
+            crate::commands::invoices::export_invoice_xml_store(&store, &created_inv.id)
+                .await
+                .unwrap();
+        assert!(generated_xml.contains("<CodiceDestinatario>0000000</CodiceDestinatario>"));
+        assert!(
+            generated_xml.contains("<PECDestinatario>amministrazione@pec.cliente.it</PECDestinatario>")
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

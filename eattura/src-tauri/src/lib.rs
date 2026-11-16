@@ -79,6 +79,25 @@ pub fn run() {
                 }),
             ));
 
+            // Backfill missing client recipient codes from archived XML headers on startup.
+            let backfill_store = store.clone();
+            let backfill_log = log.clone();
+            tauri::async_runtime::spawn(async move {
+                match commands::clients::backfill_client_destinations(&backfill_store).await {
+                    Ok(count) if count > 0 => backfill_log.record(
+                        LogLevel::Info,
+                        "storage",
+                        &format!("Backfilled SDI destination codes for {count} client(s)"),
+                    ),
+                    Ok(_) => {}
+                    Err(error) => backfill_log.record(
+                        LogLevel::Warn,
+                        "storage",
+                        &format!("Unable to backfill client SDI destination codes: {error}"),
+                    ),
+                }
+            });
+
             // Background PEC cron: periodically poll the inbox for SDI
             // notifications. No-op while PEC is not configured.
             spawn_pec_cron(store, log);

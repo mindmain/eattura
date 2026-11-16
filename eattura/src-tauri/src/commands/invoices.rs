@@ -32,6 +32,8 @@ pub struct InvoiceSummary {
     pub is_pa: bool,
     #[serde(default)]
     pub is_split_payment: bool,
+    #[serde(default)]
+    pub has_mc_notice: bool,
 }
 
 /// Summary of an attached SDI notification in the invoice fascicolo.
@@ -210,6 +212,8 @@ pub struct InvoiceDetail {
     pub active_pec_filename: Option<String>,
     #[serde(default)]
     pub recoverable_pec_filename: Option<String>,
+    #[serde(default)]
+    pub has_mc_notice: bool,
     #[serde(default)]
     pub dati_ordine_acquisto: Vec<DatiDocumentoTracciabilitaDetail>,
     #[serde(default)]
@@ -629,9 +633,66 @@ pub async fn list_invoices_store(
         tx.commit().await?;
     }
 
+    let all_notifications = store
+        .read("sdi_notifications", "all", vec![], "")
+        .await
+        .fetch_all()
+        .await
+        .unwrap_or_default();
+    let mut notifications_by_invoice: std::collections::HashMap<
+        String,
+        Vec<crate::storage::Record>,
+    > = std::collections::HashMap::new();
+    for notif in all_notifications {
+        if let Some(inv_id) = notif.get::<Option<String>>("invoice_id") {
+            notifications_by_invoice
+                .entry(inv_id)
+                .or_default()
+                .push(notif);
+        }
+    }
+
+    let mut mc_invoice_ids = std::collections::HashSet::new();
+    for row in &rows {
+        let stato: String = row.get("stato");
+        if matches!(stato.as_str(), "draft" | "validated") {
+            continue;
+        }
+        let id: String = row.get("id");
+        let Some(receipts) = notifications_by_invoice.get(&id) else {
+            continue;
+        };
+        if !receipts.iter().any(|r| r.get::<String>("tipo") == "MC") {
+            continue;
+        }
+        let mut active = row.get::<Option<String>>("active_pec_filename");
+        let mut recoverable = false;
+        if (active.is_none() || stato == "rejected")
+            && let Some(full_row) = store
+                .read("invoices", "id", vec![serde_json::json!(&id)], "")
+                .await
+                .fetch_optional()
+                .await?
+        {
+            if active.is_none() {
+                active = crate::commands::pec::active_pec_filename(&full_row);
+            }
+            if stato == "rejected" {
+                recoverable = crate::commands::pec::recoverable_pec_filename(store, &full_row, &id)
+                    .await?
+                    .is_some();
+            }
+        }
+        if !recoverable && crate::commands::pec::records_have_attempt_mc(receipts, active.as_deref())
+        {
+            mc_invoice_ids.insert(id);
+        }
+    }
+
     let invoices = rows
         .iter()
         .map(|row| {
+            let id: String = row.get("id");
             let cedente_id: (Option<String>, Option<String>) =
                 (row.get("cedente_id_paese"), row.get("cedente_id_codice"));
             let cessionario_id: (Option<String>, Option<String>) = (
@@ -649,9 +710,9 @@ pub async fn list_invoices_store(
 
             let is_pa = row.get::<Option<bool>>("is_pa").unwrap_or(false);
             let is_split_payment = row.get::<Option<bool>>("is_split_payment").unwrap_or(false);
+            let has_mc_notice = mc_invoice_ids.contains(&id);
 
             InvoiceSummary {
-                id: row.get("id"),
                 search_text: row.get("search_text"),
                 numero: row.get("numero"),
                 data: row.get("data"),
@@ -659,10 +720,10 @@ pub async fn list_invoices_store(
                 importo_totale: row
                     .get::<Option<f64>>("importo_totale")
                     .or_else(|| row.get("importo_totale_calcolato"))
-                    .or_else(|| backfilled.get(&row.get::<String>("id")).copied()),
+                    .or_else(|| backfilled.get(&id).copied()),
                 total_calculated: row.get::<Option<f64>>("importo_totale").is_none()
                     && (row.get::<Option<f64>>("importo_totale_calcolato").is_some()
-                        || backfilled.contains_key(&row.get::<String>("id"))),
+                        || backfilled.contains_key(&id)),
                 cedente_denominazione: row.get("cedente_denominazione"),
                 cessionario_denominazione: row.get("cessionario_denominazione"),
                 stato: row.get("stato"),
@@ -672,6 +733,8 @@ pub async fn list_invoices_store(
                 is_autofattura,
                 is_pa,
                 is_split_payment,
+                has_mc_notice,
+                id,
             }
         })
         .collect();
@@ -1404,6 +1467,23 @@ pub async fn set_invoice_status_store(
     if next == InvoiceStatus::Sent {
         return Err("Usa il comando di invio PEC per registrare la trasmissione.".into());
     }
+    if current == InvoiceStatus::Rejected && next == InvoiceStatus::Draft {
+        if crate::commands::pec::recoverable_pec_filename(&tx.snapshot(), &row, id)
+            .await?
+            .is_some()
+        {
+            return Err(
+                "Lo scarto è di un invio precedente. Verifica in PEC il reinvio prima di rettificare."
+                    .into(),
+            );
+        }
+        if crate::commands::pec::has_attempt_pa_refusal(&tx.snapshot(), &row, id).await? {
+            return Err(
+                "La fattura è stata rifiutata dalla PA (NE EC02) dopo la consegna SdI e non può essere riportata in bozza come scarto."
+                    .into(),
+            );
+        }
+    }
 
     // Block promotion to `validated` if the invoice does not pass SDI validation.
     if next == InvoiceStatus::Validated {
@@ -1476,6 +1556,7 @@ pub async fn export_invoice_xml_store(
     store: &crate::storage::FileStore,
     id: &str,
 ) -> Result<String, String> {
+    crate::commands::clients::backfill_client_destinations(store).await?;
     let mut tx = store.begin().await?;
     let snapshot = tx.snapshot();
     let row = snapshot
@@ -2249,7 +2330,7 @@ pub(crate) async fn fetch_invoice_detail(
         .unwrap_or_default();
 
     let mut notifications = Vec::new();
-    for row in notif_rows {
+    for row in &notif_rows {
         let errs_raw: String = row
             .get::<Option<String>>("errori")
             .unwrap_or_else(|| "[]".into());
@@ -2379,6 +2460,17 @@ pub(crate) async fn fetch_invoice_detail(
         })
     });
 
+    let stato: String = invoice_row.get("stato");
+    let active_pec_filename = crate::commands::pec::active_pec_filename(&invoice_row);
+    let recoverable_pec_filename =
+        crate::commands::pec::recoverable_pec_filename(store, &invoice_row, id).await?;
+    let has_mc_notice = !matches!(stato.as_str(), "draft" | "validated")
+        && recoverable_pec_filename.is_none()
+        && crate::commands::pec::records_have_attempt_mc(
+            &notif_rows,
+            active_pec_filename.as_deref(),
+        );
+
     Ok(InvoiceDetail {
         id: invoice_row.get("id"),
         revision: invoice_revision(&names_row),
@@ -2389,7 +2481,7 @@ pub(crate) async fn fetch_invoice_detail(
         importo_totale: displayed_total,
         total_calculated: declared_total.is_none() && inferred_total.is_some(),
         netto_a_pagare: displayed_netto,
-        stato: invoice_row.get("stato"),
+        stato,
         tax_id_errors: tax_id_errors(&names_row),
         cedente_id: invoice_row.get("cedente_id"),
         cessionario_id: invoice_row.get("cessionario_id"),
@@ -2416,8 +2508,9 @@ pub(crate) async fn fetch_invoice_detail(
         codice_destinatario,
         pec_destinatario,
         pending_pec_filename: invoice_row.get("pending_pec_filename"),
-        active_pec_filename: crate::commands::pec::active_pec_filename(&invoice_row),
-        recoverable_pec_filename: crate::commands::pec::recoverable_pec_filename(store, &invoice_row, id).await?,
+        active_pec_filename,
+        recoverable_pec_filename,
+        has_mc_notice,
         dati_ordine_acquisto,
         dati_contratto,
         dati_convenzione,
@@ -2441,7 +2534,7 @@ fn stored_transmission_document(
     let status: String = row.get("stato");
     if matches!(
         status.as_str(),
-        "imported" | "sent" | "accepted" | "rejected"
+        "imported" | "sent" | "delivered" | "accepted" | "rejected"
     ) || row.get::<Option<bool>>("imported_from_xml") == Some(true)
     {
         return row
@@ -2458,11 +2551,12 @@ fn destination(
     buyer: &crate::storage::Record,
     is_autofattura: bool,
 ) -> common::sdi::v1::DatiTrasmissione {
-    let codice_destinatario = buyer
-        .get::<Option<String>>("codice_destinatario")
-        .map(|code| code.trim().to_owned())
-        .filter(|code| !code.is_empty())
-        .unwrap_or_else(|| "0000000".to_owned());
+    let codice_destinatario = crate::commands::clients::normalize_recipient_code(
+        buyer
+            .get::<Option<String>>("codice_destinatario")
+            .as_deref(),
+    )
+    .unwrap_or_else(|| "0000000".to_owned());
     let pec_destinatario = if !is_autofattura && codice_destinatario == "0000000" {
         buyer
             .get::<Option<String>>("pec")
@@ -3167,6 +3261,18 @@ async fn ensure_client(
     codice_destinatario: Option<&str>,
     pec: Option<&str>,
 ) -> Result<String, String> {
+    use crate::commands::clients::{
+        merge_client_recipient_destination, resolve_client_recipient_code,
+        valid_invoice_recipient_code, valid_invoice_recipient_pec,
+    };
+
+    let incoming_cd = codice_destinatario.and_then(|cd| valid_invoice_recipient_code(cd, id_paese));
+    let incoming_pec = valid_invoice_recipient_pec(pec);
+    let incoming_cf = codice_fiscale
+        .map(str::trim)
+        .filter(|cf| !cf.is_empty())
+        .map(str::to_ascii_uppercase);
+
     // Try to find existing client by tax ID.
     let existing = store
         .read(
@@ -3181,7 +3287,40 @@ async fn ensure_client(
         .map_err(|e| e.to_string())?;
 
     if let Some(row) = existing {
-        return Ok(row.get("id"));
+        let id: String = row.get("id");
+        let raw_existing_cd: Option<String> = row.get("codice_destinatario");
+        let (next_cd, next_pec, next_is_pa) = merge_client_recipient_destination(
+            &row,
+            incoming_cd.as_deref(),
+            incoming_pec.as_deref(),
+        );
+        let existing_cf = row
+            .get::<Option<String>>("codice_fiscale")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        let next_cf = existing_cf.clone().or(incoming_cf);
+
+        if raw_existing_cd != next_cd
+            || row.get::<Option<String>>("pec") != next_pec
+            || row.get::<Option<String>>("codice_fiscale") != next_cf
+            || row.get::<Option<bool>>("is_pa") != Some(next_is_pa)
+        {
+            store
+                .update(
+                    "clients",
+                    &id,
+                    serde_json::json!({
+                        "codice_destinatario": next_cd,
+                        "pec": next_pec,
+                        "codice_fiscale": next_cf,
+                        "is_pa": next_is_pa,
+                        "recipient_backfilled": true
+                    }),
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        return Ok(id);
     }
 
     // Create a new client.
@@ -3197,7 +3336,8 @@ async fn ensure_client(
         ),
         None => ("", None, "00000", "", None, "IT"),
     };
-    let is_pa = codice_destinatario.map(|cd| cd.len() == 6).unwrap_or(false);
+    let is_pa = incoming_cd.as_deref().is_some_and(|cd| cd.len() == 6);
+    let resolved_cd = resolve_client_recipient_code(incoming_cd.as_deref(), is_pa);
 
     store
         .insert(
@@ -3209,7 +3349,7 @@ async fn ensure_client(
                 "cognome": cognome,
                 "id_paese": id_paese,
                 "id_codice": id_codice,
-                "codice_fiscale": codice_fiscale,
+                "codice_fiscale": incoming_cf,
                 "regime_fiscale": regime_fiscale,
                 "indirizzo": indirizzo,
                 "numero_civico": numero_civico,
@@ -3217,9 +3357,10 @@ async fn ensure_client(
                 "comune": comune,
                 "provincia": provincia,
                 "nazione": nazione,
-                "pec": pec,
-                "codice_destinatario": codice_destinatario,
-                "is_pa": is_pa
+                "pec": incoming_pec,
+                "codice_destinatario": resolved_cd,
+                "is_pa": is_pa,
+                "recipient_backfilled": true
             }),
         )
         .await
@@ -3277,6 +3418,12 @@ pub async fn rectify_rejected_invoice_store(
         .is_some()
     {
         return Err("Lo scarto è di un invio precedente. Verifica in PEC il reinvio prima di rettificare.".into());
+    }
+    if crate::commands::pec::has_attempt_pa_refusal(&tx.snapshot(), &row, id).await? {
+        return Err(
+            "La fattura è stata rifiutata dalla PA (NE EC02) dopo la consegna SdI e non può essere riportata in bozza come scarto."
+                .into(),
+        );
     }
     tx.update(
         "invoices",
@@ -4062,7 +4209,7 @@ mod tests {
 
         let detail = import_xml_content(&store, xml).await.unwrap();
         assert_eq!(detail.importo_totale, Some(122.0));
-        assert_eq!(detail.stato, "accepted");
+        assert_eq!(detail.stato, "delivered");
         assert!(detail.total_calculated);
         let listed = list_invoices_store(&store).await.unwrap();
         assert_eq!(listed[0].importo_totale, Some(122.0));

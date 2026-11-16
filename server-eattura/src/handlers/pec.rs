@@ -108,13 +108,29 @@ pub async fn poll_pec(Json(req): Json<PecPollRequest>) -> Result<Json<Value>, Ap
     let mut notifications = Vec::new();
     for message in &messages {
         for att in &message.attachments {
-            if !att.filename.to_lowercase().ends_with(".xml") {
+            let lower = att.filename.to_ascii_lowercase();
+            if lower == "daticert.xml" || (!lower.ends_with(".xml") && !lower.ends_with(".xml.p7m"))
+            {
                 continue;
             }
-            let xml = String::from_utf8_lossy(&att.data).to_string();
+            let payload = if lower.ends_with(".p7m") {
+                let Ok((extracted, _)) = common::p7m::inspect_p7m(&att.data) else {
+                    continue;
+                };
+                extracted
+            } else {
+                att.data.clone()
+            };
+            let xml = String::from_utf8_lossy(&payload).to_string();
             let Ok(parsed) = PecService::parse_notification(&xml) else {
                 continue;
             };
+            if matches!(
+                parsed.message_type,
+                common::pec::SdiMessageType::Unknown(_)
+            ) {
+                continue;
+            }
 
             if let Some(ref set) = filter_set
                 && let Some(ref fname) = parsed.nome_file

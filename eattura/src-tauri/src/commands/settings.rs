@@ -164,6 +164,10 @@ pub async fn update_settings_store(
         let client_id = crate::storage::digest::client_id(&company.id_paese, &company.id_codice)?;
         if let Some(row) = existing {
             let id: String = row.get("id");
+            let preserved_cd = crate::commands::clients::normalize_recipient_code(
+                row.get::<Option<String>>("codice_destinatario").as_deref(),
+            )
+            .unwrap_or_else(|| "0000000".to_string());
             tx.update(
                 "clients",
                 &id,
@@ -182,6 +186,7 @@ pub async fn update_settings_store(
                     "telefono": &company.telefono,
                     "email": &company.email,
                     "pec": &company.pec,
+                    "codice_destinatario": preserved_cd,
                 }),
             )
             .await
@@ -207,6 +212,7 @@ pub async fn update_settings_store(
                     "telefono": &company.telefono,
                     "email": &company.email,
                     "pec": &company.pec,
+                    "codice_destinatario": "0000000",
                 }),
             )
             .await

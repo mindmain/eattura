@@ -141,7 +141,9 @@ pub enum SdiMessageType {
     RicevutaConsegna,
     /// NS — NotificaScarto (PA) or RicevutaScarto (B2B/B2C).
     NotificaScarto,
-    /// MC — NotificaMancataConsegna: SDI accepted but could not deliver yet.
+    /// MC — NotificaMancataConsegna (PA) or RicevutaImpossibilitaRecapito (B2B/B2C):
+    /// SDI accepted the file and made it available in the recipient's Cassetto Fiscale,
+    /// but telematic delivery to the recipient channel could not be completed.
     NotificaMancataConsegna,
     /// NE — NotificaEsito: the recipient (PA) returned an acceptance/refusal.
     NotificaEsito,
@@ -149,7 +151,7 @@ pub enum SdiMessageType {
     NotificaDecorrenzaTermini,
     /// AT — AttestazioneTrasmissioneFattura: transmission attestation.
     AttestazioneTrasmissione,
-    /// MT — MetadatiInvioFile: file metadata.
+    /// MT — MetadatiInvioFile (PA) or FileMetadati (B2B/B2C): file metadata.
     MetadatiInvio,
     /// Any other / unrecognized root element.
     Unknown(String),
@@ -160,13 +162,15 @@ impl SdiMessageType {
         match name {
             "RicevutaConsegna" => SdiMessageType::RicevutaConsegna,
             "NotificaScarto" | "RicevutaScarto" => SdiMessageType::NotificaScarto,
-            "NotificaMancataConsegna" => SdiMessageType::NotificaMancataConsegna,
+            "NotificaMancataConsegna" | "RicevutaImpossibilitaRecapito" => {
+                SdiMessageType::NotificaMancataConsegna
+            }
             "NotificaEsito" | "NotificaEsitoCommittente" => SdiMessageType::NotificaEsito,
             "NotificaDecorrenzaTermini" | "DecorrenzaTermini" => {
                 SdiMessageType::NotificaDecorrenzaTermini
             }
             "AttestazioneTrasmissioneFattura" => SdiMessageType::AttestazioneTrasmissione,
-            "MetadatiInvioFile" => SdiMessageType::MetadatiInvio,
+            "MetadatiInvioFile" | "FileMetadati" => SdiMessageType::MetadatiInvio,
             other => SdiMessageType::Unknown(other.to_string()),
         }
     }
@@ -256,13 +260,16 @@ pub fn sdi_invoice_filename_from_receipt(receipt_filename: &str) -> Option<Strin
 impl ParsedNotification {
     /// The invoice status this notification implies, if it warrants a change.
     ///
-    /// Returns `None` for purely informational messages (AT/MT/MC) that do not
-    /// move the invoice out of `sent`.
+    /// Returns `Some(InvoiceStatus::Delivered)` for `RicevutaConsegna` (`RC`),
+    /// `Some(InvoiceStatus::Accepted)` for `NotificaDecorrenzaTermini` (`DT`) and
+    /// `NotificaEsito` `EC01`, `Some(InvoiceStatus::Rejected)` for `NotificaScarto`
+    /// (`NS`) and `NotificaEsito` `EC02`, and `None` for non-delivery/informational
+    /// messages (`AT`/`MT`/`MC`) that attach to the invoice dossier without marking
+    /// delivery completed.
     pub fn resulting_status(&self) -> Option<InvoiceStatus> {
         match &self.message_type {
-            SdiMessageType::RicevutaConsegna | SdiMessageType::NotificaDecorrenzaTermini => {
-                Some(InvoiceStatus::Accepted)
-            }
+            SdiMessageType::RicevutaConsegna => Some(InvoiceStatus::Delivered),
+            SdiMessageType::NotificaDecorrenzaTermini => Some(InvoiceStatus::Accepted),
             SdiMessageType::NotificaScarto => Some(InvoiceStatus::Rejected),
             SdiMessageType::NotificaEsito => match self.esito.as_deref() {
                 Some("EC01") => Some(InvoiceStatus::Accepted),
@@ -292,12 +299,16 @@ pub fn parse_notification(xml: &str) -> Result<ParsedNotification, XmlError> {
     let mut destinatario = None;
     let mut hash_file = None;
     let mut note = None;
+    let mut top_descrizione: Option<String> = None;
+    let mut data_messa_a_disposizione: Option<String> = None;
 
-    // Scratch state for the current Errore being read.
+    // Scratch state for nested containers.
     let mut cur_codice: Option<String> = None;
     let mut cur_descrizione: Option<String> = None;
     let mut cur_suggerimento: Option<String> = None;
     let mut in_errore = false;
+    let mut in_destinatario = false;
+    let mut in_riferimento_archivio = false;
 
     let mut buf = Vec::new();
     loop {
@@ -314,30 +325,53 @@ pub fn parse_notification(xml: &str) -> Result<ParsedNotification, XmlError> {
                         cur_descrizione = None;
                         cur_suggerimento = None;
                     }
-                    "IdentificativoSdI" => {
-                        identificativo_sdi = Some(read_text(&mut reader)?);
+                    "Destinatario" => {
+                        in_destinatario = true;
                     }
-                    "NomeFile" if nome_file.is_none() => {
-                        nome_file = Some(read_text(&mut reader)?);
+                    "RiferimentoArchivio" => {
+                        in_riferimento_archivio = true;
                     }
-                    "Esito" => {
-                        esito = Some(read_text(&mut reader)?);
+                    "IdentificativoSdI"
+                        if !in_riferimento_archivio && identificativo_sdi.is_none() =>
+                    {
+                        identificativo_sdi =
+                            Some(read_text(&mut reader)?).filter(|s| !s.is_empty());
+                    }
+                    "NomeFile" if !in_riferimento_archivio && nome_file.is_none() => {
+                        nome_file = Some(read_text(&mut reader)?).filter(|s| !s.is_empty());
+                    }
+                    "Esito" if esito.is_none() => {
+                        esito = Some(read_text(&mut reader)?).filter(|s| !s.is_empty());
                     }
                     "DataOraRicezione" | "DataOraConsegna" | "DataOraInvio" | "DataOraEsito"
                         if data_ora_ricezione.is_none() =>
                     {
-                        data_ora_ricezione = Some(read_text(&mut reader)?);
+                        data_ora_ricezione =
+                            Some(read_text(&mut reader)?).filter(|s| !s.is_empty());
                     }
-                    "Destinatario" | "CodiceDestinatario" | "IndirizzoPECDestinatario"
+                    "DataMessaADisposizione" if data_messa_a_disposizione.is_none() => {
+                        data_messa_a_disposizione =
+                            Some(read_text(&mut reader)?).filter(|s| !s.is_empty());
+                    }
+                    "CodiceDestinatario" | "IndirizzoPECDestinatario"
                         if destinatario.is_none() =>
                     {
-                        destinatario = Some(read_text(&mut reader)?);
+                        destinatario = Some(read_text(&mut reader)?).filter(|s| !s.is_empty());
                     }
-                    "HashFattura" | "MessageDigest" if hash_file.is_none() => {
-                        hash_file = Some(read_text(&mut reader)?);
+                    "Codice" if in_destinatario => {
+                        let code = read_text(&mut reader)?;
+                        if destinatario.is_none() && !code.is_empty() {
+                            destinatario = Some(code);
+                        }
+                    }
+                    "Descrizione" if in_destinatario => {
+                        let _ = read_text(&mut reader)?;
+                    }
+                    "Hash" | "HashFattura" | "MessageDigest" if hash_file.is_none() => {
+                        hash_file = Some(read_text(&mut reader)?).filter(|s| !s.is_empty());
                     }
                     "Note" | "Dettaglio" if note.is_none() => {
-                        note = Some(read_text(&mut reader)?);
+                        note = Some(read_text(&mut reader)?).filter(|s| !s.is_empty());
                     }
                     "Codice" if in_errore => {
                         cur_codice = Some(read_text(&mut reader)?);
@@ -348,11 +382,23 @@ pub fn parse_notification(xml: &str) -> Result<ParsedNotification, XmlError> {
                     "Suggerimento" if in_errore => {
                         cur_suggerimento = Some(read_text(&mut reader)?);
                     }
+                    "Descrizione"
+                        if !in_errore && !in_destinatario && top_descrizione.is_none() =>
+                    {
+                        top_descrizione =
+                            Some(read_text(&mut reader)?).filter(|s| !s.is_empty());
+                    }
                     _ => {}
                 }
             }
-            Event::End(e) => {
-                if local_name(e.name().as_ref()) == "Errore" && in_errore {
+            Event::Text(e) if in_destinatario && destinatario.is_none() => {
+                let text = e.unescape()?.trim().to_string();
+                if !text.is_empty() {
+                    destinatario = Some(text);
+                }
+            }
+            Event::End(e) => match local_name(e.name().as_ref()).as_str() {
+                "Errore" if in_errore => {
                     errors.push(SdiError {
                         codice: cur_codice.take().unwrap_or_default(),
                         descrizione: cur_descrizione.take().unwrap_or_default(),
@@ -360,7 +406,14 @@ pub fn parse_notification(xml: &str) -> Result<ParsedNotification, XmlError> {
                     });
                     in_errore = false;
                 }
-            }
+                "Destinatario" => {
+                    in_destinatario = false;
+                }
+                "RiferimentoArchivio" => {
+                    in_riferimento_archivio = false;
+                }
+                _ => {}
+            },
             Event::Eof => break,
             _ => {}
         }
@@ -369,6 +422,25 @@ pub fn parse_notification(xml: &str) -> Result<ParsedNotification, XmlError> {
 
     let message_type =
         message_type.ok_or_else(|| XmlError::MissingElement("notification root element".into()))?;
+
+    if data_ora_ricezione.is_none() {
+        data_ora_ricezione = data_messa_a_disposizione.clone();
+    }
+
+    note = match (top_descrizione, note) {
+        (Some(desc), Some(existing)) if desc != existing => Some(format!("{desc} — {existing}")),
+        (Some(desc), None) => Some(desc),
+        (_, existing) => existing,
+    };
+    if let Some(messa_a_disp) = data_messa_a_disposizione {
+        note = Some(match note {
+            Some(existing) if !existing.contains(&messa_a_disp) => {
+                format!("{existing} (messa a disposizione: {messa_a_disp})")
+            }
+            Some(existing) => existing,
+            None => format!("Messa a disposizione dal {messa_a_disp}"),
+        });
+    }
 
     Ok(ParsedNotification {
         message_type,
@@ -421,7 +493,7 @@ mod tests {
         assert_eq!(n.message_type, SdiMessageType::RicevutaConsegna);
         assert_eq!(n.identificativo_sdi.as_deref(), Some("123456"));
         assert_eq!(n.nome_file.as_deref(), Some("IT01234567890_00001.xml"));
-        assert_eq!(n.resulting_status(), Some(InvoiceStatus::Accepted));
+        assert_eq!(n.resulting_status(), Some(InvoiceStatus::Delivered));
     }
 
     #[test]
@@ -468,6 +540,64 @@ mod tests {
         let n = parse_notification(xml).unwrap();
         assert_eq!(n.message_type, SdiMessageType::NotificaMancataConsegna);
         assert_eq!(n.resulting_status(), None);
+    }
+
+    #[test]
+    fn parse_b2b_ricevuta_impossibilita_recapito_and_nested_destinatario() {
+        let mc_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+            <ns2:RicevutaImpossibilitaRecapito xmlns:ns2="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fattura/messaggi/v1.0" versione="1.0">
+                <IdentificativoSdI>987654321</IdentificativoSdI>
+                <NomeFile>IT01234567890_00009.xml</NomeFile>
+                <Hash>deadbeefcafe</Hash>
+                <DataOraRicezione>2026-06-16T09:30:00.000+02:00</DataOraRicezione>
+                <DataMessaADisposizione>2026-06-16</DataMessaADisposizione>
+                <RiferimentoArchivio>
+                    <IdentificativoSdI>111111111</IdentificativoSdI>
+                    <NomeFile>IT01234567890_archivio.zip</NomeFile>
+                </RiferimentoArchivio>
+                <Descrizione>Non e' stato possibile recapitare il file al destinatario per indisponibilita' dell'indirizzo telematico</Descrizione>
+            </ns2:RicevutaImpossibilitaRecapito>"#;
+        let mc = parse_notification(mc_xml).unwrap();
+        assert_eq!(mc.message_type, SdiMessageType::NotificaMancataConsegna);
+        assert_eq!(mc.message_type.code(), "MC");
+        assert_eq!(mc.identificativo_sdi.as_deref(), Some("987654321"));
+        assert_eq!(mc.nome_file.as_deref(), Some("IT01234567890_00009.xml"));
+        assert_eq!(mc.hash_file.as_deref(), Some("deadbeefcafe"));
+        assert_eq!(
+            mc.data_ora_ricezione.as_deref(),
+            Some("2026-06-16T09:30:00.000+02:00")
+        );
+        assert!(
+            mc.note
+                .as_deref()
+                .unwrap_or_default()
+                .contains("messa a disposizione: 2026-06-16")
+        );
+        assert_eq!(mc.resulting_status(), None);
+
+        let b2b_rc_xml = r#"<ns2:RicevutaConsegna xmlns:ns2="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fattura/messaggi/v1.0" versione="1.0">
+            <IdentificativoSdI>555000</IdentificativoSdI>
+            <NomeFile>IT01234567890_00010.xml</NomeFile>
+            <Hash>00112233</Hash>
+            <DataOraRicezione>2026-06-16T10:00:00.000+02:00</DataOraRicezione>
+            <DataOraConsegna>2026-06-16T10:01:00.000+02:00</DataOraConsegna>
+            <Destinatario>
+                <Codice>SUBM70N</Codice>
+                <Descrizione>Canale telematico attivo</Descrizione>
+            </Destinatario>
+        </ns2:RicevutaConsegna>"#;
+        let rc = parse_notification(b2b_rc_xml).unwrap();
+        assert_eq!(rc.message_type, SdiMessageType::RicevutaConsegna);
+        assert_eq!(rc.destinatario.as_deref(), Some("SUBM70N"));
+        assert_eq!(rc.hash_file.as_deref(), Some("00112233"));
+        assert_eq!(rc.note, None);
+        assert_eq!(rc.resulting_status(), Some(InvoiceStatus::Delivered));
+
+        let mt_xml =
+            r#"<FileMetadati versione="1.0"><IdentificativoSdI>42</IdentificativoSdI></FileMetadati>"#;
+        let mt = parse_notification(mt_xml).unwrap();
+        assert_eq!(mt.message_type, SdiMessageType::MetadatiInvio);
+        assert_eq!(mt.message_type.code(), "MT");
     }
 
     #[test]
