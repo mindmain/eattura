@@ -80,10 +80,12 @@ export class ClientFormComponent {
           client.idPaese.toUpperCase() === "IT" &&
           client.idCodice?.length === 16 &&
           /[A-Za-z]/.test(client.idCodice);
+        const normalizedCode = client.codiceDestinatario?.trim().toUpperCase() || "";
         this.form.patchValue({
           ...client,
           idCodice: isCfOnly ? "" : client.idCodice,
           codiceFiscale: client.codiceFiscale || (isCfOnly ? client.idCodice : ""),
+          codiceDestinatario: normalizedCode || (isPa ? "" : "0000000"),
           isPa,
         });
         if (this.form.hasError("invalidVat")) this.form.controls.idCodice.markAsTouched();
@@ -157,8 +159,11 @@ export class ClientFormComponent {
 
   onPaChange(): void {
     const isPa = !!this.form.get("isPa")?.value;
-    if (isPa && this.form.get("codiceDestinatario")?.value === "0000000") {
+    const currentCode = (this.form.get("codiceDestinatario")?.value || "").trim();
+    if (isPa && currentCode === "0000000") {
       this.form.patchValue({ codiceDestinatario: "" });
+    } else if (!isPa && !currentCode) {
+      this.form.patchValue({ codiceDestinatario: "0000000" });
     }
     this.updateCodiceDestinatarioValidation(isPa);
   }
@@ -215,6 +220,7 @@ export class ClientFormComponent {
       return;
     }
 
+    const rawDest = (value.codiceDestinatario ?? "").trim().toUpperCase();
     const request = {
       denominazione: this.subjectType() === "azienda" ? value.denominazione?.trim() || null : null,
       nome: this.subjectType() === "persona" ? value.nome?.trim() || null : null,
@@ -231,8 +237,8 @@ export class ClientFormComponent {
       nazione: value.nazione!,
       telefono: value.telefono || null,
       email: value.email || null,
-      pec: value.pec || null,
-      codiceDestinatario: value.codiceDestinatario ? value.codiceDestinatario.toUpperCase() : null,
+      pec: value.pec?.trim() || null,
+      codiceDestinatario: rawDest || (value.isPa ? null : "0000000"),
       isPa: !!value.isPa,
     };
 

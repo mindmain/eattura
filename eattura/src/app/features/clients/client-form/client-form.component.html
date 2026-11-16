@@ -162,7 +162,14 @@
         </div>
         <div class="form-group">
           <label for="pec">PEC</label>
-          <input id="pec" type="email" formControlName="pec" />
+          <input
+            id="pec"
+            type="email"
+            formControlName="pec"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
+          />
         </div>
       </div>
     </div>
@@ -188,11 +195,15 @@
           id="codiceDestinatario"
           type="text"
           formControlName="codiceDestinatario"
+          autocorrect="off"
+          autocapitalize="off"
+          spellcheck="false"
           [attr.maxlength]="form.get('isPa')?.value ? 6 : 7"
+          [attr.aria-describedby]="form.get('codiceDestinatario')?.invalid && form.get('codiceDestinatario')?.touched ? 'codice-destinatario-error' : null"
           [placeholder]="form.get('isPa')?.value ? 'es. UF12AB' : '0000000'"
         />
         @if (form.get('codiceDestinatario')?.invalid && form.get('codiceDestinatario')?.touched) {
-          <span class="form-error">
+          <span id="codice-destinatario-error" class="form-error">
             {{ form.get('isPa')?.value ? 'Il codice IPA della PA deve contenere esattamente 6 caratteri alfanumerici.' : 'Il codice destinatario deve contenere 7 caratteri.' }}
           </span>
         }

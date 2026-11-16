@@ -25,7 +25,7 @@ export class ClientListComponent implements OnInit {
     const term = this.searchTerm().trim().toLowerCase();
     if (!term) return this.clients();
     return this.clients().filter((c) => {
-      const text = c.searchText ?? [c.denominazione, c.nome, c.cognome, c.idCodice, c.comune]
+      const text = c.searchText ?? [c.denominazione, c.nome, c.cognome, c.idCodice, c.codiceDestinatario, c.comune]
         .filter(Boolean).join(" ").toLowerCase();
       return term.split(/\s+/).every((part) => text.includes(part));
     });
