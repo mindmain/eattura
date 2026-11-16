@@ -3,7 +3,34 @@
     <div class="page-header">
       <div>
         <h1>Fattura {{ inv.numero }}</h1>
-        <span class="badge" [class]="'badge-' + inv.stato">{{ inv.stato | invoiceStatus }}</span>
+        <span
+          class="badge"
+          [class]="'badge-' + inv.stato"
+          [attr.title]="inv.stato === 'delivered' ? 'Accettata dallo SdI e consegnata al destinatario' : null"
+        >
+          @if (inv.stato === "delivered") {
+            <svg class="delivered-check" viewBox="0 0 16 16" aria-hidden="true">
+              <circle cx="8" cy="8" r="8" fill="currentColor" />
+              <path
+                d="M4.5 8.2L6.9 10.6L11.5 5.6"
+                fill="none"
+                stroke="#ffffff"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          }
+          <span class="badge-label">{{ inv.stato | invoiceStatus }}</span>
+        </span>
+        @if (inv.stato === "sent" && hasMcNotice()) {
+          <span
+            class="badge badge-mc ml-1"
+            title="Accettata dallo SdI e messa a disposizione nel Cassetto Fiscale del cliente"
+          >
+            Mancata consegna (MC)
+          </span>
+        }
         @if (inv.isSigned) {
           <span class="badge badge-signed ml-1">Firmata CAdES (.p7m)</span>
         }
@@ -44,9 +71,9 @@
             {{ sending() ? "Invio in corso..." : "Invia via PEC" }}
           </button>
         }
-        @if (inv.stato === "rejected" && !inv.recoverablePecFilename) {
+        @if (canRectifyRejected()) {
           <button class="btn-primary btn-rectify" (click)="rectifyRejected()" [disabled]="rectifying()">
-            {{ rectifying() ? "Sblocco in corso..." : "Rettifica e Correggi (5 gg)" }}
+            {{ rectifying() ? "Sblocco in corso..." : (scartoInfo() ? "Rettifica e Correggi (5 gg)" : "Riporta in Bozza") }}
           </button>
         }
         @if (!inv.recoverablePecFilename) {
@@ -219,11 +246,13 @@
         </div>
       </div>
 
-      @let awaitingSdiOutcome = inv.stato === 'sent';
+      @let mcOnSent = inv.stato === 'sent' && hasMcNotice();
+      @let awaitingSdiOutcome = inv.stato === 'sent' && !mcOnSent;
+      @let deliveredBySdi = inv.stato === 'delivered';
       @let acceptedBySdi = inv.stato === 'accepted';
       @let rejectedBySdi = inv.stato === 'rejected' && !inv.recoverablePecFilename;
-      @let transmissionConfirmed = awaitingSdiOutcome || acceptedBySdi || inv.stato === 'rejected';
-      @let hasSdiOutcome = acceptedBySdi || rejectedBySdi;
+      @let transmissionConfirmed = inv.stato === 'sent' || deliveredBySdi || acceptedBySdi || inv.stato === 'rejected';
+      @let hasSdiOutcome = deliveredBySdi || acceptedBySdi || rejectedBySdi || mcOnSent;
 
       <div class="timeline-container mt-2">
         <div class="timeline-step step-active" [class.step-completed]="inv.stato !== 'draft'">
@@ -262,18 +291,22 @@
 
         <div class="timeline-step"
              [class.step-active]="hasSdiOutcome"
-             [class.step-success]="acceptedBySdi"
+             [class.step-success]="deliveredBySdi || acceptedBySdi"
+             [class.step-pending]="mcOnSent"
              [class.step-error]="rejectedBySdi"
              [attr.aria-current]="hasSdiOutcome ? 'step' : null">
           <div class="step-dot">
-            @if (acceptedBySdi) { ✓ }
+            @if (deliveredBySdi || acceptedBySdi) { ✓ }
             @else if (rejectedBySdi) { ✗ }
+            @else if (mcOnSent) { ! }
             @else { 4 }
           </div>
           <div class="step-content">
             <span class="step-title">
-              @if (acceptedBySdi) { Accettata dallo SdI }
-              @else if (rejectedBySdi) { Rifiutata dallo SdI }
+              @if (deliveredBySdi) { Consegnata al destinatario }
+              @else if (acceptedBySdi) { Accettata dallo SdI }
+              @else if (rejectedBySdi) { {{ paRefusalInfo() ? "Rifiutata dalla PA (EC02)" : "Scartata dallo SdI" }} }
+              @else if (mcOnSent) { Mancata consegna (Cassetto Fiscale) }
               @else { Esito SdI }
             </span>
             @if (hasSdiOutcome) {
@@ -294,8 +327,10 @@
               <span class="badge badge-scarto-countdown" [class.badge-expired]="s.expired">
                 @if (s.expired) {
                   Termine 5 giorni scaduto (necessaria nuova numerazione)
-                } @else {
+                } @else if (s.daysRemaining !== null) {
                   Termine 5 giorni per reinvio: {{ s.daysRemaining }} giorni rimanenti
+                } @else {
+                  Termine 5 giorni dalla ricezione dello scarto
                 }
               </span>
             </div>
@@ -306,7 +341,7 @@
           <p class="text-sm mt-1">
             Ai sensi della <strong>Circolare AdE n. 13/E/2018</strong>, hai a disposizione <strong>5 giorni solari</strong> dalla ricezione della notifica di scarto per correggere gli errori e ritrasmettere la fattura con il <strong>medesimo numero e data</strong> senza incorrere in sanzioni.
           </p>
-          @if (s.notification && s.notification.errori.length > 0) {
+          @if (s.notification.errori.length > 0) {
             <div class="error-box mt-1">
               <strong>Errori riscontrati dal Sistema di Interscambio:</strong>
               <ul class="error-list mt-1">
@@ -314,6 +349,27 @@
                   <li><strong>Codice {{ err.codice }}:</strong> {{ err.descrizione }}</li>
                 }
               </ul>
+            </div>
+          }
+        </div>
+      }
+
+      <!-- PA Negative Outcome Notice (NE EC02) -->
+      @if (paRefusalInfo(); as refusal) {
+        <div class="alert-ns mt-2">
+          <div class="alert-ns-header">
+            <div class="alert-ns-title">
+              <strong>NOTIFICA DI ESITO NEGATIVO PA (NE - EC02)</strong>
+              <span class="badge badge-scarto-countdown">Rifiutata dal committente PA</span>
+            </div>
+          </div>
+          <p class="text-sm mt-1">
+            L’ente pubblico destinatario ha rifiutato la fattura dopo la consegna da parte del Sistema di Interscambio. Poiché il documento è già stato trasmesso e recapitato dallo SdI, non si applica il reinvio in bozza entro 5 giorni previsto per lo scarto SdI: verifica la motivazione dell’ente per emettere eventuale nota di credito (TD04) o nuovo documento.
+          </p>
+          @if (refusal.notification.note) {
+            <div class="error-box mt-1">
+              <strong>Motivazione comunicata dall’ente:</strong>
+              <p class="text-sm mt-1">{{ refusal.notification.note }}</p>
             </div>
           }
         </div>
@@ -327,6 +383,9 @@
             <p class="text-sm mt-1">
               Il Sistema di Interscambio ha accettato il documento ma non è riuscito a recapitarlo al canale telematico del destinatario. La fattura è stata messa a disposizione nell'<strong>area riservata (Cassetto Fiscale)</strong> del cliente.
             </p>
+            @if (notif.note) {
+              <p class="text-xs text-muted mt-1">{{ notif.note }}</p>
+            }
             <p class="text-sm font-semibold mt-1">
               ⚠️ È obbligatorio trasmettere tempestivamente una <strong>copia di cortesia in formato PDF</strong> via email ordinaria al cliente comunicando che il documento originale è disponibile nel suo Cassetto Fiscale.
             </p>

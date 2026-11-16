@@ -5,6 +5,7 @@ const LABELS: Record<InvoiceStatus, string> = {
   draft: "Bozza",
   validated: "Validata",
   sent: "Inviata",
+  delivered: "Consegnata",
   accepted: "Accettata",
   rejected: "Rifiutata",
   imported: "Importata",

@@ -44,7 +44,7 @@ export class InvoiceDetailComponent {
   private notify = inject(NotificationService);
 
   /** Router input binding via withComponentInputBinding */
-  id = input.required<string>();
+  id = input<string>("");
 
   invoice = signal<InvoiceDetail | null>(null);
   validationResult = signal<{ valid: boolean; errors: { code: string; message: string }[] } | null>(null);
@@ -69,16 +69,39 @@ export class InvoiceDetailComponent {
     return inv?.direction === "purchase";
   });
 
-  /** Scarto calculation for the 5-day rectification window (Circolare AdE 13/E 2018). */
-  scartoInfo = computed(() => {
+  /** PA negative outcome (`NE` `EC02`) received after SdI delivery. */
+  paRefusalInfo = computed(() => {
     const inv = this.invoice();
-    if (!inv || inv.stato !== "rejected") return null;
+    if (!inv || inv.stato !== "rejected" || inv.recoverablePecFilename) {
+      return null;
+    }
+    const ne = [...this.currentAttemptNotifications()]
+      .reverse()
+      .find((n) => n.tipo === "NE" && n.esito === "EC02");
+    return ne ? { notification: ne } : null;
+  });
 
-    if (inv.recoverablePecFilename) return null;
-    const ns = this.currentAttemptNotifications().find((n) => n.tipo === "NS");
-    if (!ns) return { notification: null, daysRemaining: 5, expired: false };
+  /** True only when a rejected invoice can be unlocked back to draft (excluded for PA `NE EC02` refusals). */
+  canRectifyRejected = computed(() => {
+    const inv = this.invoice();
+    return (
+      !!inv &&
+      inv.stato === "rejected" &&
+      !inv.recoverablePecFilename &&
+      !this.paRefusalInfo()
+    );
+  });
 
-    let daysRemaining = 5;
+  /** Scarto calculation for the 5-day rectification window (Circolare AdE 13/E 2018), only when an `NS` discard is present. */
+  scartoInfo = computed(() => {
+    if (!this.canRectifyRejected()) return null;
+
+    const ns = [...this.currentAttemptNotifications()]
+      .reverse()
+      .find((n) => n.tipo === "NS");
+    if (!ns) return null;
+
+    let daysRemaining: number | null = null;
     let expired = false;
 
     if (ns.dataOraRicezione) {
@@ -111,6 +134,9 @@ export class InvoiceDetailComponent {
   });
 
   latestNotification = computed(() => this.currentAttemptNotifications().at(-1) ?? null);
+  hasMcNotice = computed(() =>
+    this.currentAttemptNotifications().some((n) => n.tipo === "MC")
+  );
 
   hasDdt = computed(() => (this.invoice()?.datiDdt?.length ?? 0) > 0);
   hasAllegati = computed(() => (this.invoice()?.allegati?.length ?? 0) > 0);

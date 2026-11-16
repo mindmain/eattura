@@ -111,6 +111,7 @@ export interface InvoiceSummary {
   isAutofattura?: boolean;
   isPa?: boolean;
   isSplitPayment?: boolean;
+  hasMcNotice?: boolean;
 }
 
 export interface InvoiceDetail extends InvoiceSummary {
@@ -180,7 +181,14 @@ export interface PaymentDetail {
   iban: string | null;
 }
 
-export type InvoiceStatus = "draft" | "validated" | "sent" | "accepted" | "rejected" | "imported";
+export type InvoiceStatus =
+  | "draft"
+  | "validated"
+  | "sent"
+  | "delivered"
+  | "accepted"
+  | "rejected"
+  | "imported";
 
 export interface DirImportSummary {
   totalFiles: number;

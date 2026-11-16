@@ -130,9 +130,35 @@
             }
           </td>
           <td>
-            <span class="badge" [class]="'badge-' + inv.stato">
-              {{ inv.stato | invoiceStatus }}
-            </span>
+            @if (inv.stato === "sent" && inv.hasMcNotice) {
+              <span
+                class="badge badge-mc"
+                title="Accettata dallo SdI e messa a disposizione nel Cassetto Fiscale del cliente (mancata consegna MC)"
+              >
+                <span class="badge-label">Mancata consegna (MC)</span>
+              </span>
+            } @else {
+              <span
+                class="badge"
+                [class]="'badge-' + inv.stato"
+                [attr.title]="inv.stato === 'delivered' ? 'Accettata dallo SdI e consegnata al destinatario' : null"
+              >
+                @if (inv.stato === "delivered") {
+                  <svg class="delivered-check" viewBox="0 0 16 16" aria-hidden="true">
+                    <circle cx="8" cy="8" r="8" fill="currentColor" />
+                    <path
+                      d="M4.5 8.2L6.9 10.6L11.5 5.6"
+                      fill="none"
+                      stroke="#ffffff"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                }
+                <span class="badge-label">{{ inv.stato | invoiceStatus }}</span>
+              </span>
+            }
           </td>
           <td class="text-right actions-cell">
             <button class="btn-secondary btn-sm" (click)="navigateToDetail(inv.id)">Dettaglio</button>

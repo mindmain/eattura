@@ -113,8 +113,14 @@ export class InvoiceStore {
   readonly sentCount = computed(
     () => this._invoices().filter((i) => i.stato === "sent").length
   );
+  readonly deliveredCount = computed(
+    () => this._invoices().filter((i) => i.stato === "delivered").length
+  );
   readonly acceptedCount = computed(
-    () => this._invoices().filter((i) => i.stato === "accepted").length
+    () =>
+      this._invoices().filter(
+        (i) => i.stato === "accepted" || i.stato === "delivered"
+      ).length
   );
   readonly rejectedCount = computed(
     () => this._invoices().filter((i) => i.stato === "rejected").length
@@ -187,7 +193,11 @@ export class InvoiceStore {
   async setStatus(id: string, status: InvoiceStatus): Promise<InvoiceDetail> {
     const detail = await this.invoiceService.setStatus(id, status);
     this._invoices.update((list) =>
-      list.map((inv) => (inv.id === id ? { ...inv, stato: status } : inv))
+      list.map((inv) =>
+        inv.id === id
+          ? { ...inv, stato: status, hasMcNotice: detail.hasMcNotice ?? false }
+          : inv
+      )
     );
     return detail;
   }
@@ -266,7 +276,9 @@ export class InvoiceStore {
   async rectifyRejectedInvoice(id: string): Promise<InvoiceDetail> {
     const detail = await this.invoiceService.rectifyRejectedInvoice(id);
     this._invoices.update((list) =>
-      list.map((inv) => (inv.id === id ? { ...inv, stato: "draft" } : inv))
+      list.map((inv) =>
+        inv.id === id ? { ...inv, stato: "draft", hasMcNotice: false } : inv
+      )
     );
     return detail;
   }

@@ -78,7 +78,11 @@ export class InvoiceListComponent implements OnInit {
     let list = this.invoices();
     const status = this.statusFilter();
     if (status !== "all") {
-      list = list.filter((i) => i.stato === status);
+      list = list.filter((i) =>
+        status === "accepted"
+          ? i.stato === "accepted" || i.stato === "delivered"
+          : i.stato === status
+      );
     }
     // Period filter: match the invoice date prefix (year or year-month).
     const year = this.yearFilter();

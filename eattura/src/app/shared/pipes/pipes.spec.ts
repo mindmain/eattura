@@ -27,6 +27,7 @@ describe("Shared Pure Pipes", () => {
       expect(pipe.transform("draft")).toBe("Bozza");
       expect(pipe.transform("validated")).toBe("Validata");
       expect(pipe.transform("sent")).toBe("Inviata");
+      expect(pipe.transform("delivered")).toBe("Consegnata");
       expect(pipe.transform("accepted")).toBe("Accettata");
       expect(pipe.transform("rejected")).toBe("Rifiutata");
     });

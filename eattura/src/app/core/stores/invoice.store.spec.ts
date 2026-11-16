@@ -168,13 +168,82 @@ describe("InvoiceStore", () => {
     mockInvoiceService.importSdiReceipt.mockResolvedValue({
       tipo: "RC",
       invoiceId: "inv-1",
-      newStatus: "accepted",
+      newStatus: "delivered",
     });
 
     const res = await store.importSdiReceipt("<RicevutaConsegna></RicevutaConsegna>");
 
     expect(mockInvoiceService.importSdiReceipt).toHaveBeenCalled();
     expect(res.tipo).toBe("RC");
+    expect(res.newStatus).toBe("delivered");
+  });
+
+  it("counts delivered invoices within acceptedCount while tracking deliveredCount", async () => {
+    mockInvoiceService.listInvoices.mockResolvedValueOnce([
+      ...mockInvoices,
+      {
+        id: "inv-4",
+        numero: "4",
+        data: "2026-03-05",
+        tipoDocumento: "TD01",
+        importoTotale: 1200,
+        cedenteDenominazione: "My Company",
+        cessionarioDenominazione: "Client D",
+        stato: "accepted",
+        direction: "sale",
+      },
+      {
+        id: "inv-5",
+        numero: "5",
+        data: "2026-03-06",
+        tipoDocumento: "TD01",
+        importoTotale: 1500,
+        cedenteDenominazione: "My Company",
+        cessionarioDenominazione: "Client E",
+        stato: "delivered",
+        direction: "sale",
+      },
+    ]);
+
+    await store.loadAll();
+
+    expect(store.deliveredCount()).toBe(1);
+    expect(store.acceptedCount()).toBe(2);
+  });
+
+  it("keeps sent invoices (including MC notices) in sentCount and counts only delivered and accepted in acceptedCount", async () => {
+    mockInvoiceService.listInvoices.mockResolvedValueOnce([
+      ...mockInvoices,
+      {
+        id: "inv-mc",
+        numero: "6",
+        data: "2026-03-07",
+        tipoDocumento: "TD01",
+        importoTotale: 800,
+        cedenteDenominazione: "My Company",
+        cessionarioDenominazione: "Client F",
+        stato: "sent",
+        direction: "sale",
+        isPa: false,
+        hasMcNotice: true,
+      },
+      {
+        id: "inv-del",
+        numero: "7",
+        data: "2026-03-08",
+        tipoDocumento: "TD01",
+        importoTotale: 400,
+        cedenteDenominazione: "My Company",
+        cessionarioDenominazione: "Client G",
+        stato: "delivered",
+        direction: "sale",
+      },
+    ]);
+
+    await store.loadAll();
+
+    expect(store.sentCount()).toBe(2);
+    expect(store.acceptedCount()).toBe(1);
   });
 
   it("refreshes invoices when a background PEC sync completes", async () => {
