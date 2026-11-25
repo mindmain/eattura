@@ -481,6 +481,7 @@ pub(crate) async fn run_sync(
         .get_or_init(|| tokio::sync::Mutex::new(()))
         .lock()
         .await;
+    let _backup_batch = store.begin_backup_batch();
     log.record(LogLevel::Info, "pec", "PEC synchronization started");
     let result = run_sync_inner(store, log).await;
     match &result {

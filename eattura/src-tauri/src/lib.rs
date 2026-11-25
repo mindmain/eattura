@@ -102,7 +102,11 @@ pub fn run() {
 
             // Background PEC cron: periodically poll the inbox for SDI
             // notifications. No-op while PEC is not configured.
-            spawn_pec_cron(store, log);
+            spawn_pec_cron(store.clone(), log.clone());
+
+            // Background Google Drive backup worker: syncs every 5 minutes and
+            // automatically backs up changes after local edits or PEC syncs.
+            spawn_drive_worker(store, log, app.handle().clone());
 
             Ok(())
         })
@@ -139,7 +143,6 @@ pub fn run() {
             commands::clients::lookup_vat_vies,
             commands::drive::get_drive_status,
             commands::drive::connect_drive,
-            commands::drive::authorize_drive_files,
             commands::drive::disconnect_drive,
             commands::drive::sync_drive,
             commands::settings::get_settings,
@@ -169,6 +172,42 @@ pub fn run() {
 
 /// Interval between automatic PEC inbox polls.
 const PEC_CRON_INTERVAL_SECS: i64 = 300;
+/// Interval between automatic Google Drive backup checks.
+const DRIVE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
+/// Coalescing window after local edits before uploading a Google Drive backup.
+const DRIVE_DEBOUNCE_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
+fn spawn_drive_worker(store: storage::FileStore, log: AppLog, app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        // Clear any startup backfill notification before the initial sync cycle runs.
+        let _ = store.take_backup_pending();
+        commands::drive::run_background_sync(&store, &log, &app).await;
+
+        let mut ticker = tokio::time::interval(DRIVE_POLL_INTERVAL);
+        // Consume the immediate first tick since we just ran the startup check.
+        ticker.tick().await;
+
+        loop {
+            tokio::select! {
+                _ = ticker.tick() => {
+                    if !store.is_backup_batch_active() {
+                        let _ = store.take_backup_pending();
+                        commands::drive::run_background_sync(&store, &log, &app).await;
+                    }
+                }
+                () = store.wait_for_backup_change() => {
+                    tokio::time::sleep(DRIVE_DEBOUNCE_DELAY).await;
+                    while store.is_backup_batch_active() {
+                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    }
+                    if store.take_backup_pending() {
+                        commands::drive::run_background_sync(&store, &log, &app).await;
+                    }
+                }
+            }
+        }
+    });
+}
 
 /// Spawn a background task that periodically syncs the PEC inbox.
 ///

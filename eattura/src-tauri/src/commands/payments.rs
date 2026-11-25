@@ -126,7 +126,7 @@ fn ledger_path(store: &FileStore) -> PathBuf {
     store.data_dir().join("state").join("payments_ledger.json")
 }
 
-fn load_ledger(store: &FileStore) -> PaymentsLedger {
+pub(crate) fn load_ledger(store: &FileStore) -> PaymentsLedger {
     let path = ledger_path(store);
     if path.exists()
         && let Ok(bytes) = std::fs::read(&path)
@@ -140,13 +140,20 @@ fn load_ledger(store: &FileStore) -> PaymentsLedger {
     }
 }
 
-fn save_ledger(store: &FileStore, ledger: &PaymentsLedger) -> Result<(), String> {
+pub(crate) fn write_ledger_without_notify(
+    store: &FileStore,
+    ledger: &PaymentsLedger,
+) -> Result<(), String> {
     let path = ledger_path(store);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let bytes = serde_json::to_vec_pretty(ledger).map_err(|e| e.to_string())?;
-    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    crate::storage::atomic_json(&path, ledger)
+}
+
+fn save_ledger(store: &FileStore, ledger: &PaymentsLedger) -> Result<(), String> {
+    write_ledger_without_notify(store, ledger)?;
+    store.notify_backup_change();
     Ok(())
 }
 

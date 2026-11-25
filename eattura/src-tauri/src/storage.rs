@@ -7,9 +7,12 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
 };
-use tokio::sync::{Mutex, OwnedMutexGuard};
+use tokio::sync::{Mutex, Notify, OwnedMutexGuard};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Record(Value);
@@ -36,10 +39,32 @@ struct InvoiceDocument {
     lines: Vec<Record>,
     payments: Vec<Record>,
 }
+#[derive(Default)]
+struct BackupSignal {
+    batch_depth: AtomicUsize,
+    pending: AtomicBool,
+    notify: Notify,
+}
+
+pub(crate) struct BackupBatchGuard {
+    signal: Arc<BackupSignal>,
+}
+
+impl Drop for BackupBatchGuard {
+    fn drop(&mut self) {
+        if self.signal.batch_depth.fetch_sub(1, Ordering::SeqCst) == 1
+            && self.signal.pending.load(Ordering::SeqCst)
+        {
+            self.signal.notify.notify_one();
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct FileStore {
     path: Arc<std::sync::RwLock<PathBuf>>,
     data: Arc<Mutex<Data>>,
+    backup_signal: Arc<BackupSignal>,
 }
 
 pub(crate) fn lock_archive(directory: &std::path::Path) -> std::io::Result<std::fs::File> {
@@ -61,6 +86,7 @@ pub struct Transaction {
     store: FileStore,
     guard: OwnedMutexGuard<Data>,
     working: Data,
+    business_changed: bool,
 }
 pub struct Change(u64);
 impl Change {
@@ -213,6 +239,7 @@ impl FileStore {
         let store = Self {
             path: Arc::new(std::sync::RwLock::new(path)),
             data: Arc::new(Mutex::new(Data::default())),
+            backup_signal: Arc::new(BackupSignal::default()),
         };
         if needs_index {
             data.index = store.persist(&data)?;
@@ -328,6 +355,7 @@ impl FileStore {
         Self {
             path: self.path.clone(),
             data: Arc::new(Mutex::new(self.data.lock().await.clone())),
+            backup_signal: Arc::new(BackupSignal::default()),
         }
     }
     pub async fn begin(&self) -> Result<Transaction, String> {
@@ -337,7 +365,121 @@ impl FileStore {
             store: self.clone(),
             guard,
             working,
+            business_changed: false,
         })
+    }
+
+    pub(crate) fn notify_backup_change(&self) {
+        self.backup_signal.pending.store(true, Ordering::SeqCst);
+        if self.backup_signal.batch_depth.load(Ordering::SeqCst) == 0 {
+            self.backup_signal.notify.notify_one();
+        }
+    }
+
+    pub(crate) fn begin_backup_batch(&self) -> BackupBatchGuard {
+        self.backup_signal.batch_depth.fetch_add(1, Ordering::SeqCst);
+        BackupBatchGuard {
+            signal: self.backup_signal.clone(),
+        }
+    }
+
+    pub(crate) fn is_backup_batch_active(&self) -> bool {
+        self.backup_signal.batch_depth.load(Ordering::SeqCst) > 0
+    }
+
+    pub(crate) fn take_backup_pending(&self) -> bool {
+        if self.is_backup_batch_active() {
+            return false;
+        }
+        self.backup_signal.pending.swap(false, Ordering::SeqCst)
+    }
+
+    pub(crate) async fn wait_for_backup_change(&self) {
+        self.backup_signal.notify.notified().await;
+    }
+
+    /// Export canonical archive domains (all invoices hydrated, index-only fields stripped).
+    pub(crate) async fn export_archive_domains(
+        &self,
+    ) -> Result<BTreeMap<String, Vec<Value>>, String> {
+        let mut data = self.data.lock().await;
+        let ids = data.index.invoices.ids.clone();
+        for id in ids {
+            self.hydrate(&mut data, &id)?;
+        }
+        let mut exported = BTreeMap::new();
+        for domain in [
+            "settings",
+            "clients",
+            "invoices",
+            "invoice_lines",
+            "invoice_payments",
+            "sdi_notifications",
+        ] {
+            let mut rows: Vec<Value> = items(&data, domain)
+                .iter()
+                .map(|record| clean_domain_record(domain, &record.0))
+                .collect();
+            let sort_key = if domain == "settings" { "key" } else { "id" };
+            rows.sort_by(|left, right| {
+                left[sort_key]
+                    .as_str()
+                    .unwrap_or("")
+                    .cmp(right[sort_key].as_str().unwrap_or(""))
+            });
+            exported.insert(domain.into(), rows);
+        }
+        Ok(exported)
+    }
+
+    /// Atomically validate and apply a complete set of archive domains from a backup/merge.
+    pub(crate) async fn apply_archive_domains(
+        &self,
+        domains: BTreeMap<String, Vec<Value>>,
+    ) -> Result<(), String> {
+        let mut guard = self.data.lock().await;
+        let mut working = Data::default();
+        if let Some(pec_sync) = guard.records.get("pec_sync") {
+            working.records.insert("pec_sync".into(), pec_sync.clone());
+        }
+        for domain in [
+            "settings",
+            "clients",
+            "invoices",
+            "invoice_lines",
+            "invoice_payments",
+            "sdi_notifications",
+        ] {
+            let Some(rows) = domains.get(domain) else {
+                continue;
+            };
+            for row in rows {
+                let cleaned = clean_domain_record(domain, row);
+                if domain == "settings" {
+                    validate_shape(domain, &cleaned)?;
+                    working
+                        .records
+                        .insert(domain.into(), vec![Record(cleaned)]);
+                } else {
+                    validate(&working, domain, &cleaned, None)?;
+                    working
+                        .records
+                        .entry(domain.into())
+                        .or_default()
+                        .push(Record(cleaned));
+                }
+            }
+        }
+        let invoice_ids: BTreeSet<String> = items(&working, "invoices")
+            .iter()
+            .map(|record| record.get("id"))
+            .collect();
+        working.dirty = invoice_ids.clone();
+        working.loaded = invoice_ids;
+        working.index = self.persist(&working)?;
+        working.dirty.clear();
+        *guard = working;
+        Ok(())
     }
     pub fn read(
         &self,
@@ -439,6 +581,7 @@ impl Transaction {
         self.working.dirty.insert(new.into());
         self.working.loaded.remove(old);
         self.working.loaded.insert(new.into());
+        self.business_changed = true;
         Ok(())
     }
     /// Change a client's fiscal identity only when no invoice refers to it.
@@ -467,18 +610,25 @@ impl Transaction {
             .and_then(|rows| rows.iter_mut().find(|r| r.0["id"] == old))
             .ok_or("Client not found")?;
         client.0["id"] = json!(new);
+        self.business_changed = true;
         Ok(())
     }
     pub fn snapshot(&self) -> FileStore {
         FileStore {
             path: self.store.path.clone(),
             data: Arc::new(Mutex::new(self.working.clone())),
+            backup_signal: Arc::new(BackupSignal::default()),
         }
     }
     pub async fn commit(mut self) -> Result<(), String> {
         self.working.index = self.store.persist(&self.working)?;
         self.working.dirty.clear();
+        let notify = self.business_changed;
         *self.guard = self.working;
+        drop(self.guard);
+        if notify {
+            self.store.notify_backup_change();
+        }
         Ok(())
     }
     pub fn read(&self, domain: &str, kind: &str, args: Vec<Value>, order: &str) -> Records {
@@ -487,6 +637,9 @@ impl Transaction {
     pub async fn insert(&mut self, domain: &str, value: Value) -> Result<Change, String> {
         validate_shape(domain, &value)?;
         self.prepare(domain, &value)?;
+        if domain != "pec_sync" {
+            self.business_changed = true;
+        }
         if domain == "settings" {
             self.working
                 .records
@@ -543,6 +696,9 @@ impl Transaction {
             .find(|r| r.0["id"] == id)
             .unwrap();
         row.0 = merged;
+        if domain != "pec_sync" {
+            self.business_changed = true;
+        }
         Ok(Change(1))
     }
     pub async fn remove(&mut self, domain: &str, key: &str, id: &str) -> Result<Change, String> {
@@ -561,6 +717,9 @@ impl Transaction {
         let before = rows.len();
         rows.retain(|r| r.0[key] != id);
         let count = (before - rows.len()) as u64;
+        if count > 0 && domain != "pec_sync" {
+            self.business_changed = true;
+        }
         if domain == "invoices" {
             for child in ["invoice_lines", "invoice_payments"] {
                 self.working
@@ -583,6 +742,35 @@ impl Transaction {
         Ok(Change(count))
     }
 }
+fn clean_domain_record(domain: &str, value: &Value) -> Value {
+    let mut cleaned = value.clone();
+    if let Some(fields) = cleaned.as_object_mut() {
+        match domain {
+            "clients" => {
+                fields.remove("search_text");
+            }
+            "invoices" => {
+                for key in [
+                    "search_text",
+                    "file",
+                    "line_terms",
+                    "tax_id_errors",
+                    "cedente_denominazione",
+                    "cedente_id_paese",
+                    "cedente_id_codice",
+                    "cessionario_denominazione",
+                    "cessionario_id_paese",
+                    "cessionario_id_codice",
+                ] {
+                    fields.remove(key);
+                }
+            }
+            _ => {}
+        }
+    }
+    cleaned
+}
+
 fn items<'a>(data: &'a Data, domain: &str) -> &'a [Record] {
     data.records.get(domain).map(Vec::as_slice).unwrap_or(&[])
 }

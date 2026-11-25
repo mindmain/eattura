@@ -2067,6 +2067,7 @@ pub async fn import_invoices_from_dir(
     // Collect all .xml and .p7m files (recursive) before touching the DB.
     let mut invoice_files = Vec::new();
     collect_invoice_files(root, &mut invoice_files).map_err(|e| format!("Walk failed: {e}"))?;
+    let _backup_batch = state.store.begin_backup_batch();
 
     let mut summary = DirImportSummary {
         total_files: invoice_files.len(),

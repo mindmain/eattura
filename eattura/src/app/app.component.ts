@@ -41,6 +41,7 @@ export class AppComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.invoices.stopPecMonitor();
     this.mcp.stop();
+    this.drive.stop();
   }
 
   async startDragging(event: MouseEvent): Promise<void> {

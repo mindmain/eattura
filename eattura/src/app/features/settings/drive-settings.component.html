@@ -1,39 +1,54 @@
 <section aria-labelledby="drive-title">
-  <h2 id="drive-title">Google Drive</h2>
+  <h2 id="drive-title">Backup automatico su Google Drive</h2>
   @if (drive.desktop) {
-    <p>Collega una cartella personale o condivisa per importare all’avvio le fatture XML e P7M autorizzate su Google Drive.</p>
-    @if (drive.folderName(); as folder) {
-      <p>Cartella collegata <strong>{{ folder }}</strong></p>
+    <p>
+      Salva e mantiene sincronizzato un unico archivio compresso (<strong>eattura-backup.zip</strong>)
+      sul tuo Google Drive dopo ogni operazione di salvataggio o sincronizzazione PEC, controllando
+      automaticamente ogni 5 minuti eventuali aggiornamenti da altri dispositivi.
+    </p>
+
+    @if (drive.status().connected) {
+      <div class="drive-summary">
+        @if (drive.status().accountEmail; as email) {
+          <p>Account collegato: <strong>{{ email }}</strong></p>
+        }
+        @if (drive.status().backupName; as name) {
+          <p>Archivio su Drive: <strong>{{ name }}</strong></p>
+        }
+        @if (drive.status().lastBackupAt; as modifiedAt) {
+          <p>Data ultimo backup (metadati Drive): <strong>{{ modifiedAt | date:'dd/MM/yyyy HH:mm:ss' }}</strong></p>
+        }
+        @if (drive.status().lastCheckedAt; as checkedAt) {
+          <p>Ultimo controllo: <strong>{{ checkedAt | date:'dd/MM/yyyy HH:mm:ss' }}</strong> · {{ actionLabel(drive.status().lastAction) }}</p>
+        }
+      </div>
     }
+
     <div class="form-group">
       <label for="drive-credentials">File JSON del client OAuth desktop di Google</label>
       <input #credentialInput id="drive-credentials" type="file" accept=".json,application/json"
         [disabled]="drive.busy()" (change)="chooseCredentials($event)" />
     </div>
+
     <div class="form-actions">
       <button type="button" class="btn-primary" [disabled]="drive.busy() || !credentials()"
-        (click)="connect(credentialInput)">{{ drive.folderName() ? "Cambia collegamento" : "Collega Google Drive" }}</button>
-      @if (drive.folderName()) {
+        (click)="connect(credentialInput)">{{ drive.status().connected ? "Cambia account Google" : "Collega e avvia backup" }}</button>
+      @if (drive.status().connected) {
         <button type="button" class="btn-secondary" [disabled]="drive.busy()" (click)="drive.syncNow()">Sincronizza ora</button>
-        <button type="button" class="btn-secondary" [disabled]="drive.busy()" (click)="drive.authorizeFiles()">Autorizza file esistenti</button>
         <button type="button" class="btn-secondary" [disabled]="drive.busy()" (click)="drive.disconnect()">Scollega</button>
       }
     </div>
+
     @if (drive.busy()) {
-      <p role="status">Operazione Drive in corso…</p>
+      <p role="status">Sincronizzazione con Google Drive in corso…</p>
     }
     @if (drive.error(); as error) {
       <p role="alert">{{ error }}</p>
     }
     @if (drive.lastSync(); as result) {
-      <p role="status">File importati: {{ result.imported }} · Già allineati: {{ result.unchanged }} · Ignorati: {{ result.ignored }} · Errori: {{ result.failed }}</p>
-      @if (result.errors.length) {
-        <ul>
-          @for (error of result.errors; track $index) {
-            <li>{{ error }}</li>
-          }
-        </ul>
-      }
+      <p role="status">
+        {{ actionLabel(result.action) }} · Fatture: {{ result.invoices }} · Anagrafiche: {{ result.clients }} · Ricevute SdI: {{ result.notifications }}
+      </p>
     }
   } @else {
     <p>Disponibile nell’app desktop Eattura.</p>

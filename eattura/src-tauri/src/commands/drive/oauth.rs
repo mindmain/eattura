@@ -14,11 +14,6 @@ use tokio::{
 const SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 
-pub(super) enum Pick {
-    Folder,
-    Files,
-}
-
 #[derive(Deserialize)]
 struct TokenResponse {
     access_token: String,
@@ -31,8 +26,7 @@ pub(super) async fn authorize(
     http: &Client,
     client_id: &str,
     client_secret: &SecretString,
-    pick: Pick,
-) -> Result<(Vec<String>, SecretString, SecretString), String> {
+) -> Result<(SecretString, SecretString), String> {
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
         .map_err(|_| "Impossibile aprire il callback locale di Google.")?;
@@ -55,26 +49,15 @@ pub(super) async fn authorize(
         ("response_type", "code"),
         ("access_type", "offline"),
         ("prompt", "consent"),
-        ("trigger_onepick", "true"),
         ("code_challenge", &challenge),
         ("code_challenge_method", "S256"),
     ]);
-    match pick {
-        Pick::Folder => url
-            .query_pairs_mut()
-            .append_pair("allow_folder_selection", "true")
-            .append_pair("mimetypes", super::FOLDER_TYPE),
-        Pick::Files => url.query_pairs_mut().append_pair("allow_multiple", "true"),
-    };
     app.opener()
         .open_url(url.as_str(), None::<&str>)
         .map_err(|_| "Impossibile aprire il browser di sistema.")?;
-    let (code, folder) = timeout(
-        Duration::from_secs(180),
-        callback(listener, &redirect, &state, pick),
-    )
-    .await
-    .map_err(|_| "Tempo scaduto per il collegamento Google Drive.")??;
+    let code = timeout(Duration::from_secs(180), callback(listener, &redirect, &state))
+        .await
+        .map_err(|_| "Tempo scaduto per il collegamento Google Drive.")??;
     let tokens = token_request(
         http,
         &[
@@ -97,8 +80,8 @@ pub(super) async fn authorize(
     let refresh = tokens
         .refresh_token
         .filter(|token| !token.is_empty())
-        .ok_or("Google non ha restituito un token per la sincronizzazione all’avvio.")?;
-    Ok((folder, tokens.access_token.into(), refresh.into()))
+        .ok_or("Google non ha restituito un token per il backup automatico.")?;
+    Ok((tokens.access_token.into(), refresh.into()))
 }
 
 pub(super) async fn refresh(
@@ -128,9 +111,9 @@ async fn token_request(http: &Client, fields: &[(&str, &str)]) -> Result<TokenRe
         .form(fields)
         .send()
         .await
-        .map_err(|_| "Impossibile contattare Google per il consenso Drive.")?
+        .map_err(|_| "Impossibile contattare Google per l’autenticazione Drive.")?
         .error_for_status()
-        .map_err(|_| "Google ha rifiutato le credenziali Drive. Ricollega la cartella.")?
+        .map_err(|_| "Google ha rifiutato le credenziali Drive. Ricollega l’account.")?
         .json()
         .await
         .map_err(|_| "Risposta OAuth di Google non valida.".into())
@@ -140,8 +123,7 @@ async fn callback(
     listener: TcpListener,
     redirect: &str,
     state: &str,
-    pick: Pick,
-) -> Result<(SecretString, Vec<String>), String> {
+) -> Result<SecretString, String> {
     loop {
         let (mut stream, _) = listener.accept().await.map_err(|error| error.to_string())?;
         let reader = BufReader::new(&mut stream);
@@ -154,7 +136,7 @@ async fn callback(
         if !matches!(read, Ok(Ok(_))) {
             continue;
         }
-        let Some(result) = callback_request(&request, redirect, state, &pick) else {
+        let Some(result) = callback_request(&request, redirect, state) else {
             let _ = stream
                 .write_all(
                     b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
@@ -162,7 +144,7 @@ async fn callback(
                 .await;
             continue;
         };
-        let message = "Return to Eattura to finish connecting Google Drive.";
+        let message = "Collegamento a Google Drive completato. Puoi tornare su Eattura.";
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{message}",
             message.len()
@@ -172,12 +154,7 @@ async fn callback(
     }
 }
 
-fn callback_request(
-    request: &[u8],
-    redirect: &str,
-    state: &str,
-    pick: &Pick,
-) -> Option<Result<(SecretString, Vec<String>), String>> {
+fn callback_request(request: &[u8], redirect: &str, state: &str) -> Option<Result<SecretString, String>> {
     let mut parts = std::str::from_utf8(request).ok()?.split_ascii_whitespace();
     if parts.next()? != "GET" {
         return None;
@@ -192,20 +169,9 @@ fn callback_request(
         return Some(Err("Collegamento Google Drive annullato o negato.".into()));
     }
     let code = fields.get("code").filter(|code| !code.is_empty());
-    let ids = fields
-        .get("picked_file_ids")
-        .map(|value| value.split(',').collect::<Vec<_>>());
-    Some(match (code, ids) {
-        (Some(code), Some(ids))
-            if ids.iter().all(|id| super::valid_id(id))
-                && (!matches!(pick, Pick::Folder) || ids.len() == 1) =>
-        {
-            Ok((
-                code.to_string().into(),
-                ids.into_iter().map(str::to_owned).collect(),
-            ))
-        }
-        _ => Err("Selezione non valida nel selettore Google Drive.".into()),
+    Some(match code {
+        Some(code) => Ok(code.to_string().into()),
+        None => Err("Codice di autorizzazione Google Drive mancante.".into()),
     })
 }
 
@@ -214,25 +180,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn callback_requires_the_correct_state_and_exactly_one_folder() {
+    fn callback_requires_matching_state_and_authorization_code() {
         let redirect = "http://127.0.0.1:1234/oauth/drive";
-        let request =
-            b"GET /oauth/drive?state=expected&code=code&picked_file_ids=shared_123 HTTP/1.1\r\n";
-        assert!(callback_request(request, redirect, "different", &Pick::Folder).is_none());
-        let (_, folder) = callback_request(request, redirect, "expected", &Pick::Folder)
+        let request = b"GET /oauth/drive?state=expected&code=auth_code_123 HTTP/1.1\r\n";
+        assert!(callback_request(request, redirect, "different").is_none());
+        let code = callback_request(request, redirect, "expected")
             .unwrap()
             .unwrap();
-        assert_eq!(folder, ["shared_123"]);
-        let multiple =
-            b"GET /oauth/drive?state=expected&code=code&picked_file_ids=one%2Ctwo HTTP/1.1\r\n";
+        assert_eq!(code.expose_secret(), "auth_code_123");
+
+        let cancelled = b"GET /oauth/drive?state=expected&error=access_denied HTTP/1.1\r\n";
         assert!(
-            callback_request(multiple, redirect, "expected", &Pick::Folder)
+            callback_request(cancelled, redirect, "expected")
                 .unwrap()
                 .is_err()
         );
-        let (_, files) = callback_request(multiple, redirect, "expected", &Pick::Files)
-            .unwrap()
-            .unwrap();
-        assert_eq!(files, ["one", "two"]);
     }
 }
