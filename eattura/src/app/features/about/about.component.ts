@@ -1,8 +1,9 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from "@angular/core";
 import { RouterLink } from "@angular/router";
-import { LucideAngularModule, ExternalLink, Github, Globe, HardDrive, Mail, FileCheck2 } from "lucide-angular";
+import { LucideAngularModule, Download, ExternalLink, FileCheck2, Github, Globe, HardDrive, Mail, RefreshCw } from "lucide-angular";
 import { AppInfoService } from "../../core/services/app-info.service";
 import { AppLogService } from "../../core/services/app-log.service";
+import { UpdaterService } from "../../core/services/updater.service";
 
 @Component({
   selector: "app-about",
@@ -14,11 +15,12 @@ import { AppLogService } from "../../core/services/app-log.service";
 })
 export class AboutComponent implements OnInit {
   protected readonly app = inject(AppInfoService);
+  protected readonly updater = inject(UpdaterService);
   private readonly log = inject(AppLogService);
   protected readonly version = signal<string | null>(null);
   protected readonly versionStatus = signal("Caricamento versione…");
   protected readonly error = signal("");
-  protected readonly icons = { ExternalLink, Github, Globe, HardDrive, Mail, FileCheck2 };
+  protected readonly icons = { Download, ExternalLink, FileCheck2, Github, Globe, HardDrive, Mail, RefreshCw };
 
   async ngOnInit(): Promise<void> {
     try {

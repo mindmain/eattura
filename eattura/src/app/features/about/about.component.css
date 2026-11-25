@@ -14,6 +14,12 @@ section { margin-bottom: 1.8rem; }
 .features lucide-icon { color: var(--accent); margin-top: 0.15rem; flex: none; }
 .features h3 { font-size: 0.95rem; font-weight: 650; margin-bottom: 0.2rem; }
 .features p { font-size: 0.9rem; color: var(--text-muted); }
+.update-box { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-top: 1.6rem; padding-top: 1.3rem; border-top: 1px solid var(--border); }
+.update-copy { flex: 1; min-width: 220px; }
+.update-copy strong { display: block; font-size: 0.92rem; margin-bottom: 0.15rem; }
+.update-copy span { font-size: 0.86rem; color: var(--text-muted); }
+.update-notes { margin-top: 0.45rem; font-size: 0.84rem; color: var(--text-secondary); white-space: pre-line; }
+.update-actions button { display: inline-flex; align-items: center; gap: 0.45rem; }
 .project-links { display: grid; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr)); gap: 1rem; margin-top: 1rem; }
 .project-link { display: flex; align-items: center; gap: 0.85rem; text-decoration: none; transition: background 0.15s, border-color 0.15s; }
 .project-link:hover { background: var(--surface-hover); border-color: var(--accent); }

@@ -77,7 +77,17 @@ tasks:
     deps: [proto]
     dir: "{{.APP_DIR}}"
     cmds:
-      - '{{.BUN}} run tauri build {{if .BUILD_TARGET}}--target "{{.BUILD_TARGET}}"{{end}} {{if .BUILD_BUNDLES}}--bundles "{{.BUILD_BUNDLES}}"{{end}} {{.CLI_ARGS}} -- --locked'
+      - |
+        SIGN_ARGS=""
+        if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ] && [ -z "${TAURI_SIGNING_PRIVATE_KEY_PATH:-}" ]; then
+          if [ -f "$HOME/.tauri/eattura.key" ]; then
+            export TAURI_SIGNING_PRIVATE_KEY_PATH="$HOME/.tauri/eattura.key"
+            export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
+          else
+            SIGN_ARGS='-c {"bundle":{"createUpdaterArtifacts":false}}'
+          fi
+        fi
+        {{.BUN}} run tauri build {{if .BUILD_TARGET}}--target "{{.BUILD_TARGET}}"{{end}} {{if .BUILD_BUNDLES}}--bundles "{{.BUILD_BUNDLES}}"{{end}} $SIGN_ARGS {{.CLI_ARGS}} -- --locked
 
   ci:
     desc: "Install dependencies, test, and build installers on the current runner"

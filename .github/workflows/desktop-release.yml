@@ -48,10 +48,10 @@ jobs:
         include:
           - os: macos-15
             target: aarch64-apple-darwin
-            bundles: dmg
+            bundles: app,dmg
           - os: macos-15-intel
             target: x86_64-apple-darwin
-            bundles: dmg
+            bundles: app,dmg
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             bundles: deb,appimage
@@ -115,9 +115,25 @@ jobs:
           cd eattura
           bunx tsc -p tsconfig.spec.json --noEmit
           bun run test
-      - name: Build desktop installers
+      - name: Build desktop installers and signed updater bundles
         working-directory: eattura
-        run: bun run tauri build --ci --target "$BUILD_TARGET" --bundles "$BUILD_BUNDLES" -- --locked
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "Missing TAURI_SIGNING_PRIVATE_KEY secret for Tauri updater signatures" >&2
+            exit 1
+          fi
+          bun run tauri build --ci --target "$BUILD_TARGET" --bundles "$BUILD_BUNDLES" -- --locked
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            for deb in ../target/"$BUILD_TARGET"/release/bundle/deb/*.deb; do
+              if [ ! -f "$deb.sig" ]; then
+                bunx tauri signer sign --app-version "${RELEASE_TAG#v}" "$deb"
+              fi
+            done
+          fi
       - name: Stage platform installers
         run: node scripts/release.mjs stage "$BUILD_TARGET"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -146,23 +162,20 @@ jobs:
           pattern: desktop-*
           path: release-artifacts
           merge-multiple: true
-      - name: Recheck tag and produce installer checksums
-        env:
-          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
-          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
-        run: |
-          node scripts/release.mjs validate "$RELEASE_TAG" "$RELEASE_COMMIT"
-          node scripts/release.mjs collect
-      - name: Publish complete GitHub release
+      - name: Recheck tag, prepare updater manifest and publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
         run: |
-          if ! gh release view "$RELEASE_TAG" --json isDraft > release-state.json; then
+          node scripts/release.mjs validate "$RELEASE_TAG" "$RELEASE_COMMIT"
+          if ! gh release view "$RELEASE_TAG" --json isDraft,body > release-state.json; then
             gh release create "$RELEASE_TAG" --verify-tag --draft --generate-notes --title "Eattura $RELEASE_TAG"
-            gh release view "$RELEASE_TAG" --json isDraft > release-state.json
+            gh release view "$RELEASE_TAG" --json isDraft,body > release-state.json
           fi
-          node -e "if (!JSON.parse(require('fs').readFileSync('release-state.json')).isDraft) throw new Error('Refusing to overwrite a published release')"
+          RELEASE_NOTES="$(node -e "const s = JSON.parse(require('fs').readFileSync('release-state.json', 'utf8')); if (!s.isDraft) throw new Error('Refusing to overwrite a published release'); process.stdout.write(s.body || '');")"
+          export RELEASE_NOTES
+          node scripts/release.mjs collect "$RELEASE_TAG"
           gh release upload "$RELEASE_TAG" release-artifacts/* --clobber
           gh release edit "$RELEASE_TAG" --draft=false --latest

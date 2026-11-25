@@ -27,7 +27,7 @@
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": false,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "macOS": {
       "signingIdentity": "-"
@@ -39,5 +39,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVGNDFCN0RDMEU0RkQ3NDAKUldSQTEwOE8zTGRCN3dDR0dzZ0E5RWU4YVEvY0FldDdXZXp0VGp4YXg1ZHVQUVBDS093U2pvcG0K",
+      "endpoints": [
+        "https://github.com/mindmain/eattura/releases/latest/download/latest.json"
+      ],
+      "requireSignedVersion": true
+    }
   }
 }

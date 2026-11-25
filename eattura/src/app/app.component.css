@@ -30,3 +30,43 @@
 
 .workspace { display: flex; flex: 1; min-height: 0; overflow: hidden; }
 .main-content { flex: 1; min-width: 0; overflow-y: auto; background: var(--main-surface); }
+
+.update-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 1.15rem;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+}
+
+.update-banner-info { display: inline-flex; align-items: center; gap: 0.55rem; }
+.update-banner-info lucide-icon { color: var(--accent); flex: none; }
+.update-banner-actions { display: inline-flex; align-items: center; gap: 0.5rem; }
+.btn-update-primary {
+  padding: 0.35rem 0.75rem;
+  border: none;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+.btn-update-primary:hover { background: var(--accent-hover); }
+.btn-update-dismiss {
+  padding: 0.35rem 0.65rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-update-dismiss:hover { background: var(--surface-hover); color: var(--text-primary); }

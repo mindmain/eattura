@@ -9,6 +9,28 @@
       <a routerLink="/settings" [queryParams]="{ section: 'app' }" (mousedown)="$event.stopPropagation()"><lucide-icon [img]="icons.Settings2" [size]="18" />Impostazioni app</a>
     </nav>
   </header>
+  @if (updater.bannerVisible()) {
+    <div class="update-banner" role="status" aria-live="polite">
+      <div class="update-banner-info">
+        <lucide-icon [img]="icons.Download" [size]="16" />
+        @if (updater.status() === "downloading") {
+          <span>
+            Scaricamento aggiornamento {{ updater.availableVersion() }}@if (updater.progress() !== null) { ({{ updater.progress() }}%) }…
+          </span>
+        } @else if (updater.status() === "installing") {
+          <span>Installazione di Eattura {{ updater.availableVersion() }} e riavvio in corso…</span>
+        } @else {
+          <span>Nuova versione <strong>{{ updater.availableVersion() }}</strong> scaricata e pronta per l’installazione.</span>
+        }
+      </div>
+      @if (updater.status() === "ready") {
+        <div class="update-banner-actions">
+          <button type="button" class="btn-update-primary" (click)="updater.installAndRestart()">Installa e riavvia</button>
+          <button type="button" class="btn-update-dismiss" (click)="updater.dismissBanner()">Più tardi</button>
+        </div>
+      }
+    </div>
+  }
   <div class="workspace">
     <app-sidebar />
     <main class="main-content">

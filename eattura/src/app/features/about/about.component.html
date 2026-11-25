@@ -17,6 +17,48 @@
       <li><lucide-icon [img]="icons.Mail" [size]="21" /><div><h3>Invio e ricezione via PEC</h3><p>Invia le fatture allo SdI e sincronizza fatture ricevute, notifiche ed esiti dalla tua casella PEC.</p></div></li>
       <li><lucide-icon [img]="icons.HardDrive" [size]="21" /><div><h3>Un archivio sul tuo computer</h3><p>Conserva i documenti localmente, consulta lo storico ed esporta XML e PDF di cortesia.</p></div></li>
     </ul>
+
+    <div class="update-box" role="status" aria-live="polite">
+      <div class="update-copy">
+        <strong>Aggiornamenti automatici</strong>
+        @if (!updater.desktop) {
+          <span>Disponibili nell’applicazione desktop installata.</span>
+        } @else if (updater.status() === "checking") {
+          <span>Verifica di nuove versioni su GitHub in corso…</span>
+        } @else if (updater.status() === "downloading") {
+          <span>
+            Scaricamento versione {{ updater.availableVersion() }}@if (updater.progress() !== null) { ({{ updater.progress() }}%) }…
+          </span>
+        } @else if (updater.status() === "ready") {
+          <span>La versione {{ updater.availableVersion() }} è stata scaricata e verificata.</span>
+        } @else if (updater.status() === "installing") {
+          <span>Installazione della versione {{ updater.availableVersion() }} e riavvio…</span>
+        } @else if (updater.status() === "up-to-date") {
+          <span>Eattura è aggiornato all’ultima versione disponibile.</span>
+        } @else {
+          <span>Controllo automatico attivo all’avvio tramite GitHub Releases.</span>
+        }
+        @if (updater.releaseNotes()) {
+          <p class="update-notes">{{ updater.releaseNotes() }}</p>
+        }
+        @if (updater.error()) {
+          <p class="form-error" role="alert">{{ updater.error() }}</p>
+        }
+      </div>
+      @if (updater.desktop) {
+        <div class="update-actions">
+          @if (updater.status() === "ready") {
+            <button type="button" class="btn btn-primary" (click)="updater.installAndRestart()">
+              <lucide-icon [img]="icons.Download" [size]="16" />Installa e riavvia
+            </button>
+          } @else {
+            <button type="button" class="btn btn-secondary" [disabled]="updater.busy()" (click)="updater.checkForUpdates()">
+              <lucide-icon [img]="icons.RefreshCw" [size]="16" />Controlla aggiornamenti
+            </button>
+          }
+        </div>
+      }
+    </div>
   </section>
 
   <section aria-labelledby="links-title">

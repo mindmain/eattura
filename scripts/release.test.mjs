@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { bundleDirectories, checkVersions, collect, installers, parseTag, protoModule, stage, validateTag } from './release.mjs';
+import { bundleDirectories, checkVersions, collect, installers, parseTag, protoModule, stage, updaterBundles, validateTag } from './release.mjs';
 
 function fixture(context) {
   const directory = mkdtempSync(join(tmpdir(), 'eattura-release-'));
@@ -27,7 +27,7 @@ test('accepts only canonical stable app tags', () => {
   }
 });
 
-test('release configuration versions only the desktop and disables updater artifacts', () => {
+test('release configuration versions only the desktop and enables signed updater artifacts', () => {
   const config = JSON.parse(readFileSync(new URL('../release-please-config.json', import.meta.url), 'utf8'));
   assert.deepEqual(Object.keys(config.packages), ['eattura']);
   const app = config.packages.eattura;
@@ -42,7 +42,12 @@ test('release configuration versions only the desktop and disables updater artif
   ]);
   assert.equal(app['extra-files'][2].jsonpath, "$.package[?(@.name.value == 'eattura')].version");
   const tauri = JSON.parse(readFileSync(new URL('../eattura/src-tauri/tauri.conf.json', import.meta.url), 'utf8'));
-  assert.equal(tauri.bundle.createUpdaterArtifacts, false);
+  assert.equal(tauri.bundle.createUpdaterArtifacts, true);
+  assert.ok(tauri.plugins?.updater?.pubkey);
+  assert.equal(tauri.plugins.updater.requireSignedVersion, true);
+  assert.deepEqual(tauri.plugins.updater.endpoints, [
+    'https://github.com/mindmain/eattura/releases/latest/download/latest.json',
+  ]);
 });
 
 test('checks only the app versions and rejects manifest drift', context => {
@@ -89,29 +94,67 @@ test('exports the locked protobuf module rather than a floating version', () => 
   assert.throws(() => protoModule('deps: []'));
 });
 
-test('stages all platform installers and hashes only complete releases', context => {
+test('stages installers and updater signatures and writes latest.json plus checksums', context => {
   const root = fixture(context);
   for (const [target, extensions] of Object.entries(installers)) {
     const bundle = join(root, 'target', target, 'release/bundle');
     mkdirSync(bundle, { recursive: true });
-    for (const extension of extensions) {
+    const allExtensions = new Set([
+      ...extensions,
+      ...updaterBundles[target].map(entry => entry.extension),
+    ]);
+    for (const extension of allExtensions) {
       const directory = join(bundle, bundleDirectories[extension]);
-      mkdirSync(directory);
+      mkdirSync(directory, { recursive: true });
       writeFileSync(join(directory, `eattura${extension}`), 'installer');
     }
+    for (const { extension } of updaterBundles[target]) {
+      const directory = join(bundle, bundleDirectories[extension]);
+      writeFileSync(join(directory, `eattura${extension}.sig`), `sig-${target}-${extension}`);
+    }
     writeFileSync(join(bundle, 'ignored.zip'), 'not an installer');
-    assert.equal(stage(root, target).length, extensions.length);
+    const staged = stage(root, target);
+    assert.ok(staged.length >= extensions.length + updaterBundles[target].length);
   }
-  const checksums = collect(root);
-  assert.equal(checksums.trim().split('\n').length, 6);
-  assert.match(checksums, /^9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c  /);
+  const pubDate = '2026-11-25T10:00:00.000Z';
+  const checksums = collect(root, {
+    tag: 'v0.1.0',
+    repository: 'mindmain/eattura',
+    notes: 'First desktop release',
+    pubDate,
+  });
+  const manifest = JSON.parse(readFileSync(join(root, 'release-artifacts/latest.json'), 'utf8'));
+  assert.equal(manifest.version, '0.1.0');
+  assert.equal(manifest.notes, 'First desktop release');
+  assert.equal(manifest.pub_date, pubDate);
+  assert.deepEqual(Object.keys(manifest.platforms).sort(), [
+    'darwin-aarch64',
+    'darwin-aarch64-app',
+    'darwin-x86_64',
+    'darwin-x86_64-app',
+    'linux-x86_64',
+    'linux-x86_64-appimage',
+    'linux-x86_64-deb',
+    'windows-x86_64',
+    'windows-x86_64-msi',
+    'windows-x86_64-nsis',
+  ]);
+  assert.equal(
+    manifest.platforms['darwin-aarch64'].url,
+    'https://github.com/mindmain/eattura/releases/download/v0.1.0/aarch64-apple-darwin-eattura.app.tar.gz',
+  );
+  assert.equal(manifest.platforms['darwin-aarch64'].signature, 'sig-aarch64-apple-darwin-.app.tar.gz');
+  assert.equal(checksums.trim().split('\n').length, 15);
   assert.equal(readFileSync(join(root, 'release-artifacts/SHA256SUMS'), 'utf8'), checksums);
-  assert.equal(collect(root), checksums);
+  assert.equal(collect(root, { tag: 'v0.1.0', repository: 'mindmain/eattura', notes: 'First desktop release', pubDate }), checksums);
+
   writeFileSync(join(root, 'release-artifacts/unexpected.zip'), 'not an installer');
-  assert.throws(() => collect(root), /Unexpected release asset/);
+  assert.throws(() => collect(root, { tag: 'v0.1.0' }), /Unexpected release asset/);
   rmSync(join(root, 'release-artifacts/unexpected.zip'));
+  rmSync(join(root, 'release-artifacts/x86_64-pc-windows-msvc-eattura.msi.sig'));
+  assert.throws(() => collect(root, { tag: 'v0.1.0' }), /Missing updater signature/);
   rmSync(join(root, 'release-artifacts/x86_64-pc-windows-msvc-eattura.msi'));
-  assert.throws(() => collect(root), /Missing release installer/);
+  assert.throws(() => collect(root, { tag: 'v0.1.0' }), /Missing release installer/);
 });
 
 test('rejects missing, empty and unexpected artifacts', context => {
@@ -121,7 +164,10 @@ test('rejects missing, empty and unexpected artifacts', context => {
   mkdirSync(bundle, { recursive: true });
   assert.throws(() => stage(root, target), /Missing/);
   mkdirSync(join(bundle, 'dmg'));
+  mkdirSync(join(bundle, 'macos'));
   writeFileSync(join(bundle, 'dmg/empty.dmg'), '');
+  writeFileSync(join(bundle, 'macos/eattura.app.tar.gz'), 'archive');
+  writeFileSync(join(bundle, 'macos/eattura.app.tar.gz.sig'), 'sig');
   assert.throws(() => stage(root, target), /Empty/);
   assert.throws(() => stage(root, 'unknown'), /Unknown/);
 });

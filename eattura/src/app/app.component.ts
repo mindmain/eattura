@@ -7,9 +7,10 @@ import { InvoiceStore } from "./core/stores/invoice.store";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ThemeService } from "./core/services/theme.service";
-import { LucideAngularModule, Settings2, UserRound } from "lucide-angular";
+import { LucideAngularModule, Download, Settings2, UserRound } from "lucide-angular";
 import { DriveService } from "./core/services/drive.service";
 import { McpService } from "./core/services/mcp.service";
+import { UpdaterService } from "./core/services/updater.service";
 
 @Component({
   selector: "app-root",
@@ -21,18 +22,20 @@ import { McpService } from "./core/services/mcp.service";
 })
 export class AppComponent implements OnInit, OnDestroy {
   protected notifications = inject(NotificationService);
+  protected readonly updater = inject(UpdaterService);
   private invoices = inject(InvoiceStore);
   private readonly mcp = inject(McpService);
   private readonly drive = inject(DriveService);
   private readonly theme = inject(ThemeService);
   private readonly document = inject(DOCUMENT);
   protected readonly macOSOverlay = isTauri() && /Macintosh|Mac OS X/.test(this.document.defaultView?.navigator.userAgent ?? "");
-  protected readonly icons = { Settings2, UserRound };
+  protected readonly icons = { Download, Settings2, UserRound };
 
   ngOnInit(): void {
     this.invoices.startPecMonitor();
     void this.mcp.start();
     void this.drive.start();
+    void this.updater.start();
   }
 
   ngOnDestroy(): void {
