@@ -104,9 +104,11 @@ pub fn run() {
             // notifications. No-op while PEC is not configured.
             spawn_pec_cron(store.clone(), log.clone());
 
-            // Background Google Drive backup worker: syncs every 5 minutes and
-            // automatically backs up changes after local edits or PEC syncs.
-            spawn_drive_worker(store, log, app.handle().clone());
+            // Google Drive backup worker is temporarily disabled until embedded
+            // 1-click Desktop OAuth credentials are configured.
+            if GOOGLE_DRIVE_ENABLED {
+                spawn_drive_worker(store, log, app.handle().clone());
+            }
 
             Ok(())
         })
@@ -170,6 +172,8 @@ pub fn run() {
         });
 }
 
+/// Feature gate for Google Drive automatic backup until 1-click OAuth is enabled.
+const GOOGLE_DRIVE_ENABLED: bool = false;
 /// Interval between automatic PEC inbox polls.
 const PEC_CRON_INTERVAL_SECS: i64 = 300;
 /// Interval between automatic Google Drive backup checks.

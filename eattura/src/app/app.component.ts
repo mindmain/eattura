@@ -8,7 +8,6 @@ import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ThemeService } from "./core/services/theme.service";
 import { LucideAngularModule, Download, Settings2, UserRound } from "lucide-angular";
-import { DriveService } from "./core/services/drive.service";
 import { McpService } from "./core/services/mcp.service";
 import { UpdaterService } from "./core/services/updater.service";
 
@@ -25,7 +24,6 @@ export class AppComponent implements OnInit, OnDestroy {
   protected readonly updater = inject(UpdaterService);
   private invoices = inject(InvoiceStore);
   private readonly mcp = inject(McpService);
-  private readonly drive = inject(DriveService);
   private readonly theme = inject(ThemeService);
   private readonly document = inject(DOCUMENT);
   protected readonly macOSOverlay = isTauri() && /Macintosh|Mac OS X/.test(this.document.defaultView?.navigator.userAgent ?? "");
@@ -34,14 +32,12 @@ export class AppComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.invoices.startPecMonitor();
     void this.mcp.start();
-    void this.drive.start();
     void this.updater.start();
   }
 
   ngOnDestroy(): void {
     this.invoices.stopPecMonitor();
     this.mcp.stop();
-    this.drive.stop();
   }
 
   async startDragging(event: MouseEvent): Promise<void> {
