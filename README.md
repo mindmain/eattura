@@ -6,6 +6,43 @@ It enables freelancers, *Regime Forfettario* (`RF19`) taxpayers, and businesses 
 
 ---
 
+## Installation
+
+### Quick Install Script (macOS & Linux)
+
+Run the official installer script (detects `arm64` Apple Silicon / `x86_64` Intel on macOS and `x86_64` on Linux, and verifies `SHA-256` checksums against `SHA256SUMS`):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mindmain/eattura/main/scripts/install.sh | sh
+```
+
+Or directly from a local clone of the repository:
+
+```sh
+./scripts/install.sh
+```
+
+Then launch Eattura:
+
+```sh
+# macOS (or open from /Applications and Spotlight)
+open -a eattura
+
+# Linux
+~/.local/bin/eattura
+```
+
+- **macOS**: Installs `eattura.app` directly into `/Applications` (or `~/Applications` for non-admin accounts) without browser quarantine attributes, so **Eattura opens immediately without macOS Gatekeeper warnings**. Subsequent updates are verified via Ed25519 and installed directly inside the app.
+- **Options**: Pin a specific version or target folder with `EATTURA_VERSION=v0.1.1` or `EATTURA_INSTALL_DIR=/custom/path`.
+
+### Manual Download (macOS, Windows, Linux)
+
+Prebuilt installers (`.dmg`, `.exe`, `.msi`, `.deb`, `.AppImage`) and `SHA256SUMS` are published on [**GitHub Releases**](https://github.com/mindmain/eattura/releases/latest).
+
+> **Note for manual `.dmg` downloads on macOS:** Because builds are ad-hoc signed rather than Apple Developer ID notarized, opening a browser-downloaded `.dmg` for the first time triggers Gatekeeper (*"eattura non è stata aperta"*). Use the installer script above to avoid this completely, or unlock a manual `.dmg` copy once via **System Settings → Privacy & Security → Open Anyway** (or `xattr -cr /Applications/eattura.app`).
+
+---
+
 ## Key Capabilities
 
 - **Guided FatturaPA & Self-Invoice Editor** — 5-step workflow supporting `TD01..TD27` documents, B2B/B2C (`FPR12`) and Public Administration (`FPA12`, *Split Payment*, `CIG`/`CUP`, procurement orders/contracts, `DDT`, and XML attachments), one-click reverse-charge integration drafts (`TD16..TD21`, `TD27`), social security funds (`DatiCassaPrevidenziale`), withholding taxes (`DatiRitenuta`), and automatic *Regime Forfettario* (`RF19`) + virtual stamp duty (`DatiBollo` over `€77.47`) handling.
@@ -16,28 +53,6 @@ It enables freelancers, *Regime Forfettario* (`RF19`) taxpayers, and businesses 
 - **Dual Runtime** — Native cross-platform **Tauri 2 + Angular 21** local-first desktop app (`eattura`) with signed GitHub Release updates, plus an optional stateless **Axum** HTTP service (`server-eattura`) for PEC, SdI, and VIES operations.
 
 Desktop release automation, installer targets, and signing setup are documented in [RELEASING.md](RELEASING.md).
-
----
-
-## Installation
-
-### Quick Install (macOS & Linux)
-
-Install the latest official release with automatic architecture detection (`arm64` Apple Silicon / `x86_64` Intel on macOS, `x86_64` on Linux) and `SHA-256` checksum verification:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/mindmain/eattura/main/scripts/install.sh | sh
-```
-
-- **macOS**: Downloads the verified `.app.tar.gz` bundle directly into `/Applications` (or `~/Applications` for non-admin accounts) without browser quarantine attributes, so **Eattura opens immediately without macOS Gatekeeper warnings**. All subsequent updates are verified via Ed25519 and installed directly inside the app.
-- **Linux (`x86_64`)**: Installs the verified `.AppImage` to `~/.local/bin/eattura`.
-- Pin a specific version or target folder with `EATTURA_VERSION=v0.1.1` or `EATTURA_INSTALL_DIR=/custom/path`.
-
-### Manual Download (macOS, Windows, Linux)
-
-Prebuilt installers (`.dmg`, `.exe`, `.msi`, `.deb`, `.AppImage`) and `SHA256SUMS` are published on [**GitHub Releases**](https://github.com/mindmain/eattura/releases/latest).
-
-> **Note for manual `.dmg` downloads on macOS:** Because builds are ad-hoc signed rather than Apple Developer ID notarized, opening a browser-downloaded `.dmg` for the first time triggers Gatekeeper (*"eattura non è stata aperta"*). Use the `curl` installer above to avoid this completely, or unlock a manual `.dmg` copy once via **System Settings → Privacy & Security → Open Anyway** (or `xattr -cr /Applications/eattura.app`).
 
 ---
 
