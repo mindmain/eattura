@@ -49,6 +49,7 @@ export class InvoiceDetailComponent {
   invoice = signal<InvoiceDetail | null>(null);
   validationResult = signal<{ valid: boolean; errors: { code: string; message: string }[] } | null>(null);
   sending = signal(false);
+  syncingPec = signal(false);
   downloadingPdf = signal(false);
   showAdeView = signal(false);
   rectifying = signal(false);
@@ -232,6 +233,32 @@ export class InvoiceDetailComponent {
       this.notify.error(e instanceof Error ? e.message : "Errore durante l'invio PEC");
     } finally {
       this.sending.set(false);
+    }
+  }
+
+  /** Refresh PEC inbox directly from the open invoice dossier. */
+  async syncPecNow(): Promise<void> {
+    const inv = this.invoice();
+    if (!inv || this.syncingPec()) return;
+    this.syncingPec.set(true);
+    try {
+      const summaries = await this.invoiceStore.syncPec();
+      const updated = await this.invoiceStore.getInvoice(inv.id);
+      this.invoice.set(updated);
+      const forCurrent = summaries.filter(
+        (s) => s.invoiceId === inv.id && s.tipo !== "PEC_ACCETTAZIONE" && s.tipo !== "PEC_CONSEGNA",
+      );
+      if (forCurrent.length > 0) {
+        this.notify.success(`Ricevuta SdI (${forCurrent.map((s) => s.tipo).join(", ")}) acquisita nel fascicolo!`);
+      } else if (updated.stato === "sent") {
+        this.notify.success("PEC sincronizzata: in attesa della ricevuta SdI (RC/NS) per questa fattura.");
+      } else {
+        this.notify.success("Casella PEC sincronizzata.");
+      }
+    } catch (e) {
+      this.notify.error(e instanceof Error ? e.message : "Errore durante la sincronizzazione PEC");
+    } finally {
+      this.syncingPec.set(false);
     }
   }
 

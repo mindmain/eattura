@@ -247,6 +247,16 @@
           <p class="text-muted text-sm">Gestione ciclo di vita, ricevute ufficiali e conformità probatoria AdE</p>
         </div>
         <div class="dossier-actions">
+          @if (pecSyncStatus()?.configured) {
+            <button
+              type="button"
+              class="btn-secondary"
+              [disabled]="syncingPec()"
+              (click)="syncPecNow()"
+            >
+              {{ syncingPec() ? "Sincronizzazione PEC..." : "Sincronizza PEC" }}
+            </button>
+          }
           <label class="btn-secondary btn-file-upload">
             Importa Ricevuta SDI (.xml)
             <input type="file" accept=".xml" (change)="onReceiptFileSelected($event)" style="display: none;" />
@@ -291,7 +301,15 @@
           <div class="step-dot">3</div>
           <div class="step-content">
             <span class="step-title">Inviata allo SdI</span>
-            <span class="step-sub">{{ awaitingSdiOutcome ? 'In attesa di esito SdI' : 'Invio via PEC' }}</span>
+            <span class="step-sub">
+              @if (inv.pecDeliveredToSdiAt) {
+                Consegnata a SdI ({{ inv.pecDeliveredToSdiAt }})
+              } @else if (awaitingSdiOutcome) {
+                In attesa di esito SdI
+              } @else {
+                Invio via PEC
+              }
+            </span>
           </div>
         </div>
 
@@ -325,6 +343,27 @@
           </div>
         </div>
       </div>
+
+      @if (awaitingSdiOutcome) {
+        <div class="pec-sdi-awaiting-box mt-2" role="status">
+          @if (inv.pecDeliveredToSdiAt || inv.pecAcceptedAt) {
+            <div>
+              <strong>✓ Busta PEC consegnata al Sistema di Interscambio</strong>
+              @if (inv.pecSdiRecipient) {
+                <span> (<code>{{ inv.pecSdiRecipient }}</code>)</span>
+              }
+              <span> — {{ inv.pecDeliveredToSdiAt || inv.pecAcceptedAt }}</span>
+            </div>
+          } @else {
+            <div>
+              <strong>⏳ Fattura trasmessa via PEC ({{ sdiXmlFilename() }})</strong>
+            </div>
+          }
+          <p class="text-xs text-muted mt-1">
+            Le ricevute PEC di <em>Accettazione</em> e <em>Avvenuta Consegna</em> confermano che il messaggio è arrivato alla casella dello SdI. Lo stato passerà a <strong>Consegnata</strong> non appena l'Agenzia delle Entrate completerà i controlli e invierà la separata <strong>Ricevuta di Consegna (RC)</strong> di recapito al cliente (da pochi minuti fino a alcune ore; massimo 5 giorni).
+          </p>
+        </div>
+      }
 
       <!-- Scarto Notice (NS) with 5-Day Countdown -->
       @if (scartoInfo(); as s) {

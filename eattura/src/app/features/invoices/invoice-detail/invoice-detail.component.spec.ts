@@ -34,6 +34,8 @@ function buildDetail(overrides: Partial<InvoiceDetail>): InvoiceDetail {
 describe("InvoiceDetailComponent rejection handling", () => {
   async function setup(detail: InvoiceDetail) {
     const rectifyRejectedInvoice = vi.fn();
+    const syncPec = vi.fn().mockResolvedValue([]);
+    const getInvoice = vi.fn().mockResolvedValue(detail);
     const exportXml = vi.fn().mockResolvedValue(
       "<FatturaElettronicaHeader><DatiTrasmissione><IdTrasmittente><IdPaese>IT</IdPaese><IdCodice>01234567897</IdCodice></IdTrasmittente><ProgressivoInvio>A1B2C</ProgressivoInvio></DatiTrasmissione></FatturaElettronicaHeader>",
     );
@@ -47,10 +49,19 @@ describe("InvoiceDetailComponent rejection handling", () => {
         {
           provide: InvoiceStore,
           useValue: {
-            getInvoice: vi.fn().mockResolvedValue(detail),
+            getInvoice,
+            syncPec,
             lastPecSuccessAt: signal(null),
             mcpDraft: signal(null),
-            pecSyncStatus: signal(null),
+            pecSyncStatus: signal({
+              configured: true,
+              lastAttemptAt: null,
+              lastSuccessAt: null,
+              nextSyncAt: 0,
+              lastError: null,
+              sdiAddress: "sdi48@pec.fatturapa.it",
+              sdiAddressVerified: true,
+            }),
             rectifyRejectedInvoice,
             exportXml,
             renderPdf,
@@ -91,6 +102,8 @@ describe("InvoiceDetailComponent rejection handling", () => {
       fixture,
       component: fixture.componentInstance,
       rectifyRejectedInvoice,
+      syncPec,
+      getInvoice,
       exportXml,
       renderPdf,
       downloadTextFile,
@@ -217,5 +230,54 @@ describe("InvoiceDetailComponent rejection handling", () => {
       "IT01234567897_A1B2C.pdf",
       "application/pdf",
     );
+  });
+
+  it("distinguishes PEC delivery to SdI from SdI RC delivery to customer and refreshes via syncPecNow", async () => {
+    const sent = buildDetail({
+      stato: "sent",
+      activePecFilename: "ITSPNNCI93R07C351G_74660.xml",
+      sdiFilename: "ITSPNNCI93R07C351G_74660.xml",
+      pecDeliveredToSdiAt: "27/11/2026 11:21:25",
+      pecSdiRecipient: "sdi48@pec.fatturapa.it",
+    });
+
+    const { fixture, component, syncPec, getInvoice } = await setup(sent);
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain("Busta PEC consegnata al Sistema di Interscambio");
+    expect(text).toContain("sdi48@pec.fatturapa.it");
+    expect(text).toContain("27/11/2026 11:21:25");
+    expect(text).toContain("Ricevuta di Consegna (RC)");
+
+    const delivered = buildDetail({
+      ...sent,
+      stato: "delivered",
+      notifications: [
+        {
+          id: "rc-74660",
+          tipo: "RC",
+          identificativoSdi: "18999999",
+          nomeFile: "ITSPNNCI93R07C351G_74660.XML",
+          dataOraRicezione: "2026-11-27T13:05:00Z",
+          errori: [],
+          rawXml: "<RicevutaConsegna/>",
+        },
+      ],
+    });
+    syncPec.mockResolvedValueOnce([
+      {
+        tipo: "RC",
+        identificativoSdi: "18999999",
+        nomeFile: "ITSPNNCI93R07C351G_74660.XML",
+        invoiceId: sent.id,
+        newStatus: "delivered",
+      },
+    ]);
+    getInvoice.mockResolvedValueOnce(delivered);
+
+    await component.syncPecNow();
+    fixture.detectChanges();
+
+    expect(component.invoice()?.stato).toBe("delivered");
+    expect(fixture.nativeElement.textContent).toContain("Consegnata al destinatario");
   });
 });

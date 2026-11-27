@@ -335,7 +335,11 @@ async fn reserve_pec_attempt(
         "invoices",
         id,
         serde_json::json!({
-            "pending_pec_filename": filename, "pending_pec_xml": xml
+            "pending_pec_filename": filename,
+            "pending_pec_xml": xml,
+            "pec_accepted_at": null,
+            "pec_delivered_to_sdi_at": null,
+            "pec_sdi_recipient": null
         }),
     )
     .await?;
@@ -472,10 +476,44 @@ pub async fn sync_pec(
     run_sync(&state.store, &log).await
 }
 
+/// Adapter port abstracting PEC inbox retrieval so synchronization flows can be
+/// tested end-to-end across multiple cycles without opening network sockets.
+pub trait PecInboxAdapter: Send + Sync {
+    fn fetch_inbox<'a>(
+        &'a self,
+        config: &'a PecConfig,
+        cursors: std::collections::BTreeMap<String, (u32, u32)>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<pec::PecInbox, String>> + Send + 'a>,
+    >;
+}
+
+struct LivePecInboxAdapter;
+
+impl PecInboxAdapter for LivePecInboxAdapter {
+    fn fetch_inbox<'a>(
+        &'a self,
+        config: &'a PecConfig,
+        cursors: std::collections::BTreeMap<String, (u32, u32)>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<pec::PecInbox, String>> + Send + 'a>,
+    > {
+        Box::pin(pec::check_inbox(config, cursors))
+    }
+}
+
 /// Core PEC sync routine, usable both from the command and the background cron.
 pub(crate) async fn run_sync(
     store: &crate::storage::FileStore,
     log: &AppLog,
+) -> Result<Vec<NotificationSummary>, String> {
+    run_sync_with_adapter(store, log, &LivePecInboxAdapter).await
+}
+
+pub(crate) async fn run_sync_with_adapter(
+    store: &crate::storage::FileStore,
+    log: &AppLog,
+    adapter: &dyn PecInboxAdapter,
 ) -> Result<Vec<NotificationSummary>, String> {
     let _guard = SYNC_LOCK
         .get_or_init(|| tokio::sync::Mutex::new(()))
@@ -483,7 +521,10 @@ pub(crate) async fn run_sync(
         .await;
     let _backup_batch = store.begin_backup_batch();
     log.record(LogLevel::Info, "pec", "PEC synchronization started");
-    let result = run_sync_inner(store, log).await;
+    let result = match build_config(store).await {
+        Ok(config) => run_sync_inner(store, &config, log, adapter).await,
+        Err(err) => Err(err),
+    };
     match &result {
         Ok(items) => log.record(
             LogLevel::Info,
@@ -511,7 +552,7 @@ pub(crate) async fn run_sync(
     result
 }
 
-const SDI_SCAN_VERSION: u32 = 2;
+const SDI_SCAN_VERSION: u32 = 3;
 
 async fn record_sync_failure(store: &crate::storage::FileStore, error: &str) -> Result<(), String> {
     let Some(email) = store
@@ -571,6 +612,144 @@ pub(crate) async fn process_inbox_messages(
     process_inbox_messages_with_log(store, messages, &AppLog::memory()).await
 }
 
+fn extract_sdi_filename_from_subject(subject: &str) -> Option<String> {
+    for raw_token in subject.split(|c: char| c.is_whitespace() || matches!(c, ':' | ';' | ',' | '"' | '\'' | '(' | ')' | '[' | ']')) {
+        let token = raw_token.trim();
+        let lower = token.to_ascii_lowercase();
+        if (lower.ends_with(".xml") || lower.ends_with(".xml.p7m") || lower.ends_with(".p7m"))
+            && token.contains('_')
+        {
+            return Some(token.to_string());
+        }
+    }
+    None
+}
+
+fn extract_xml_entries_from_zip(data: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
+    use std::io::Read as _;
+    const MAX_ZIP_ENTRY_BYTES: u64 = 5 * 1024 * 1024;
+    const MAX_ZIP_ENTRIES: usize = 8;
+
+    let cursor = std::io::Cursor::new(data);
+    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| format!("Invalid ZIP archive: {e}"))?;
+    let mut entries = Vec::new();
+    let count = archive.len().min(MAX_ZIP_ENTRIES);
+    for idx in 0..count {
+        let file = archive
+            .by_index(idx)
+            .map_err(|e| format!("Invalid ZIP entry #{idx}: {e}"))?;
+        if file.is_dir() || file.size() > MAX_ZIP_ENTRY_BYTES {
+            continue;
+        }
+        let name = file
+            .enclosed_name()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_default();
+        let lower = name.to_ascii_lowercase();
+        if !lower.ends_with(".xml") && !lower.ends_with(".xml.p7m") && !lower.ends_with(".p7m") {
+            continue;
+        }
+        let mut buf = Vec::with_capacity(file.size() as usize);
+        file.take(MAX_ZIP_ENTRY_BYTES + 1)
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("Failed reading ZIP entry {name}: {e}"))?;
+        if (buf.len() as u64) <= MAX_ZIP_ENTRY_BYTES {
+            entries.push((name, buf));
+        }
+    }
+    Ok(entries)
+}
+
+async fn apply_pec_transport_receipt(
+    store: &crate::storage::FileStore,
+    tr: &pec::PecTransportReceipt,
+    attachments: &[pec::PecAttachment],
+    sdi_candidates: &mut Vec<String>,
+) -> Result<Vec<NotificationSummary>, String> {
+    let mut candidate_filename = tr.subject.as_deref().and_then(extract_sdi_filename_from_subject);
+    if candidate_filename.is_none() {
+        for att in attachments {
+            let lower = att.filename.trim().to_ascii_lowercase();
+            if lower != "daticert.xml"
+                && (lower.ends_with(".xml") || lower.ends_with(".xml.p7m") || lower.ends_with(".p7m"))
+                && att.filename.contains('_')
+            {
+                candidate_filename = Some(att.filename.trim().to_string());
+                break;
+            }
+        }
+    }
+
+    let sdi_recipient = tr
+        .recipient
+        .as_deref()
+        .and_then(extract_sdi_pec_address);
+    if let Some(ref sdi_addr) = sdi_recipient {
+        sdi_candidates.push(sdi_addr.clone());
+    }
+
+    let Some(filename) = candidate_filename else {
+        return Ok(Vec::new());
+    };
+
+    let matched_ids = find_invoice_ids_by_sdi_reference(store, &filename).await?;
+    let mut summaries = Vec::new();
+    for inv_id in matched_ids {
+        let mut tx = store.begin().await?;
+        let Some(row) = tx
+            .snapshot()
+            .read("invoices", "id", vec![serde_json::json!(&inv_id)], "")
+            .await
+            .fetch_optional()
+            .await?
+        else {
+            continue;
+        };
+
+        let mut reconciled_to_sent = false;
+        if let Some(pending) = row.get::<Option<String>>("pending_pec_filename")
+            && same_sdi_filename(&pending, &filename)
+        {
+            complete_pec_attempt(&mut tx, &row, &inv_id, &pending, InvoiceStatus::Sent).await?;
+            reconciled_to_sent = true;
+        }
+
+        let mut meta = serde_json::Map::new();
+        if tr.kind == "accettazione" {
+            if let Some(ref ts) = tr.timestamp {
+                meta.insert("pec_accepted_at".into(), serde_json::json!(ts));
+            }
+        } else if tr.kind == "avvenuta-consegna" {
+            if let Some(ref ts) = tr.timestamp {
+                meta.insert("pec_delivered_to_sdi_at".into(), serde_json::json!(ts));
+            }
+            if let Some(ref rcpt) = sdi_recipient.clone().or_else(|| tr.recipient.clone()) {
+                meta.insert("pec_sdi_recipient".into(), serde_json::json!(rcpt));
+            }
+        }
+        if !meta.is_empty() {
+            tx.update("invoices", &inv_id, serde_json::Value::Object(meta))
+                .await?;
+        }
+        tx.commit().await?;
+
+        if reconciled_to_sent {
+            summaries.push(NotificationSummary {
+                tipo: if tr.kind == "avvenuta-consegna" {
+                    "PEC_CONSEGNA".into()
+                } else {
+                    "PEC_ACCETTAZIONE".into()
+                },
+                identificativo_sdi: None,
+                nome_file: Some(filename.clone()),
+                invoice_id: Some(inv_id),
+                new_status: Some("sent".into()),
+            });
+        }
+    }
+    Ok(summaries)
+}
+
 pub(crate) async fn process_inbox_messages_with_log(
     store: &crate::storage::FileStore,
     messages: &[pec::PecMessage],
@@ -580,33 +759,69 @@ pub(crate) async fn process_inbox_messages_with_log(
     let mut sdi_candidates = Vec::new();
 
     for message in messages {
+        if let Some(tr) = &message.transport_receipt {
+            let reconciled = apply_pec_transport_receipt(
+                store,
+                tr,
+                &message.attachments,
+                &mut sdi_candidates,
+            )
+            .await?;
+            summaries.extend(reconciled);
+            continue;
+        }
+
         if let Some(sender) = &message.sdi_sender {
             sdi_candidates.push(sender.clone());
         }
         let mut has_sdi_payload = false;
 
+        let mut candidate_attachments: Vec<(String, Vec<u8>)> = Vec::new();
         for att in &message.attachments {
-            let name = att.filename.to_ascii_lowercase();
-            if name == "daticert.xml" || (!name.ends_with(".xml") && !name.ends_with(".xml.p7m")) {
+            let trimmed = att.filename.trim();
+            let lower = trimmed.to_ascii_lowercase();
+            if lower == "daticert.xml" {
                 continue;
             }
-            let (payload, signer) = if name.ends_with(".p7m") {
-                match common::p7m::inspect_p7m(&att.data) {
+            if lower.ends_with(".zip") {
+                match extract_xml_entries_from_zip(&att.data) {
+                    Ok(entries) => candidate_attachments.extend(entries),
+                    Err(e) => log.record(
+                        LogLevel::Warn,
+                        "pec",
+                        &format!(
+                            "Skipping unreadable PEC ZIP attachment {} (UID {}): {e}",
+                            att.filename, message.uid
+                        ),
+                    ),
+                }
+            } else if lower.ends_with(".xml")
+                || lower.ends_with(".xml.p7m")
+                || lower.ends_with(".p7m")
+            {
+                candidate_attachments.push((trimmed.to_string(), att.data.clone()));
+            }
+        }
+
+        for (att_filename, att_data) in candidate_attachments {
+            let lower = att_filename.to_ascii_lowercase();
+            let (payload, signer) = if lower.ends_with(".p7m") {
+                match common::p7m::inspect_p7m(&att_data) {
                     Ok((payload, signer)) => (payload, Some(signer)),
                     Err(e) => {
                         log.record(
                             LogLevel::Warn,
                             "pec",
                             &format!(
-                                "Skipping unreadable PEC attachment {} (UID {}): {e}",
-                                att.filename, message.uid
+                                "Skipping unreadable PEC attachment {att_filename} (UID {}): {e}",
+                                message.uid
                             ),
                         );
                         continue;
                     }
                 }
             } else {
-                (att.data.clone(), None)
+                (att_data, None)
             };
             let xml = match String::from_utf8(payload) {
                 Ok(xml) => xml,
@@ -615,8 +830,8 @@ pub(crate) async fn process_inbox_messages_with_log(
                         LogLevel::Warn,
                         "pec",
                         &format!(
-                            "Skipping non-UTF-8 XML attachment {} (UID {}): {e}",
-                            att.filename, message.uid
+                            "Skipping non-UTF-8 XML attachment {att_filename} (UID {}): {e}",
+                            message.uid
                         ),
                     );
                     continue;
@@ -631,7 +846,7 @@ pub(crate) async fn process_inbox_messages_with_log(
                         summaries.push(NotificationSummary {
                             tipo: "FATTURA".into(),
                             identificativo_sdi: None,
-                            nome_file: Some(att.filename.clone()),
+                            nome_file: Some(att_filename),
                             invoice_id: Some(detail.id),
                             new_status: None,
                         });
@@ -641,19 +856,28 @@ pub(crate) async fn process_inbox_messages_with_log(
                             LogLevel::Warn,
                             "pec",
                             &format!(
-                                "Skipping PEC invoice attachment {} (UID {}): {e}",
-                                att.filename, message.uid
+                                "Skipping PEC invoice attachment {att_filename} (UID {}): {e}",
+                                message.uid
                             ),
                         );
                     }
                 }
-            } else if let Ok(notification) = parse_notification(&xml)
+            } else if let Ok(mut notification) = parse_notification(&xml)
                 && !matches!(
                     notification.message_type,
                     common::pec::SdiMessageType::Unknown(_)
                 )
             {
                 has_sdi_payload = true;
+                if notification
+                    .nome_file
+                    .as_deref()
+                    .map(str::trim)
+                    .is_none_or(str::is_empty)
+                {
+                    notification.nome_file =
+                        common::pec::sdi_invoice_filename_from_receipt(&att_filename);
+                }
                 match attach_sdi_notification_to_matches(store, &notification, &xml).await {
                     Ok(matches) => {
                         for (linked_id, new_status) in matches {
@@ -671,8 +895,8 @@ pub(crate) async fn process_inbox_messages_with_log(
                             LogLevel::Warn,
                             "pec",
                             &format!(
-                                "Skipping PEC receipt attachment {} (UID {}): {e}",
-                                att.filename, message.uid
+                                "Skipping PEC receipt attachment {att_filename} (UID {}): {e}",
+                                message.uid
                             ),
                         );
                     }
@@ -691,11 +915,12 @@ pub(crate) async fn process_inbox_messages_with_log(
     Ok((summaries, select_preferred_sdi_address(sdi_candidates)))
 }
 
-async fn run_sync_inner(
+pub(crate) async fn run_sync_inner(
     store: &crate::storage::FileStore,
+    config: &PecConfig,
     log: &AppLog,
+    adapter: &dyn PecInboxAdapter,
 ) -> Result<Vec<NotificationSummary>, String> {
-    let config = build_config(store).await?;
     let previous = sync_record(store).await?;
     let previous_same_mailbox = previous.as_ref().filter(|row| {
         row.get::<String>("email")
@@ -705,30 +930,38 @@ async fn run_sync_inner(
         .and_then(|row| row.get::<Option<String>>("detected_sdi_address"))
         .and_then(|addr| extract_sdi_pec_address(&addr));
 
-    let cursor = previous_same_mailbox.and_then(|row| {
-        let scan_complete = row
-            .get::<Option<bool>>("sdi_scan_complete")
-            .unwrap_or(false);
-        let scan_version = row.get::<Option<u32>>("sdi_scan_version").unwrap_or(0);
-        if !scan_complete || scan_version < SDI_SCAN_VERSION {
-            return None;
-        }
-        Some((
-            row.get::<Option<u32>>("uid_validity")?,
-            row.get::<u32>("last_uid"),
-        ))
-    });
+    let cursors: std::collections::BTreeMap<String, (u32, u32)> = previous_same_mailbox
+        .and_then(|row| {
+            let scan_complete = row
+                .get::<Option<bool>>("sdi_scan_complete")
+                .unwrap_or(false);
+            let scan_version = row.get::<Option<u32>>("sdi_scan_version").unwrap_or(0);
+            if !scan_complete || scan_version < SDI_SCAN_VERSION {
+                return None;
+            }
+            let mut map: std::collections::BTreeMap<String, (u32, u32)> = row
+                .get::<Option<std::collections::BTreeMap<String, (u32, u32)>>>("folder_cursors")
+                .unwrap_or_default();
+            if !map.contains_key("INBOX")
+                && let Some(validity) = row.get::<Option<u32>>("uid_validity")
+            {
+                map.insert("INBOX".to_string(), (validity, row.get::<u32>("last_uid")));
+            }
+            (!map.is_empty()).then_some(map)
+        })
+        .unwrap_or_default();
+    let is_incremental = !cursors.is_empty();
 
     log.record(
         LogLevel::Info,
         "pec",
-        if cursor.is_some() {
+        if is_incremental {
             "Reading new PEC messages"
         } else {
             "Reading PEC mailbox history"
         },
     );
-    let inbox = pec::check_inbox(&config, cursor).await?;
+    let inbox = adapter.fetch_inbox(config, cursors).await?;
     log.record(
         LogLevel::Info,
         "pec",
@@ -750,7 +983,7 @@ async fn run_sync_inner(
         persist_detected_sdi_address(store, detected).await?;
     }
 
-    if cursor.is_none() || previous.is_none() || !summaries.is_empty() {
+    if !is_incremental || previous.is_none() || !summaries.is_empty() {
         log.record(
             LogLevel::Info,
             "pec",
@@ -773,6 +1006,7 @@ async fn run_sync_inner(
         "email": config.email,
         "uid_validity": inbox.uid_validity,
         "last_uid": inbox.last_uid,
+        "folder_cursors": inbox.folder_cursors,
         "last_attempt_at": now,
         "last_success_at": now,
         "last_error": null,
@@ -803,6 +1037,11 @@ pub async fn import_sdi_receipt_store(
     xml_content: &str,
 ) -> Result<NotificationSummary, String> {
     let notification = common::pec::parse_notification(xml_content).map_err(|e| e.to_string())?;
+    if let common::pec::SdiMessageType::Unknown(tag) = &notification.message_type {
+        return Err(format!(
+            "Il file XML (<{tag}>) non è una ricevuta SdI valida (attesi RC, NS, MC, NE, DT, AT, MT)."
+        ));
+    }
     let (invoice_id, new_status) =
         attach_sdi_notification_to_matches(store, &notification, xml_content)
             .await?
@@ -985,11 +1224,7 @@ pub async fn attach_sdi_notification(
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("SDI_RECEIPT");
-        let clean_base = base
-            .strip_suffix(".xml.p7m")
-            .or_else(|| base.strip_suffix(".p7m"))
-            .or_else(|| base.strip_suffix(".xml"))
-            .unwrap_or(base);
+        let clean_base = sdi_filename_stem(base);
         let filename = format!(
             "{clean_base}_{}_{}.xml",
             notification.message_type.code(),
@@ -1045,7 +1280,12 @@ pub(crate) async fn reconcile_unlinked_notifications(
         if !processed.insert(xml.clone()) {
             continue;
         }
-        if let Ok(notification) = parse_notification(&xml) {
+        if let Ok(notification) = parse_notification(&xml)
+            && !matches!(
+                notification.message_type,
+                common::pec::SdiMessageType::Unknown(_)
+            )
+        {
             for (linked_id, new_status) in
                 attach_sdi_notification_to_matches(store, &notification, &xml).await?
             {
@@ -1166,11 +1406,8 @@ async fn find_invoice_ids_by_sdi_reference(
     store: &crate::storage::FileStore,
     reference: &str,
 ) -> Result<Vec<String>, String> {
-    let clean_ref = reference
-        .strip_suffix(".xml.p7m")
-        .or_else(|| reference.strip_suffix(".p7m"))
-        .or_else(|| reference.strip_suffix(".xml"))
-        .unwrap_or(reference);
+    let trimmed_ref = reference.trim();
+    let clean_ref = sdi_filename_stem(trimmed_ref);
 
     let rows = store
         .read("invoices", "invoice_views", vec![], "")
@@ -1296,14 +1533,23 @@ async fn matches_sdi_id_for_attempt(
     }))
 }
 
+pub(crate) fn sdi_filename_stem(name: &str) -> &str {
+    let trimmed = name.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    let strip_len = if lower.ends_with(".xml.p7m") {
+        8
+    } else if lower.ends_with(".p7m") || lower.ends_with(".xml") || lower.ends_with(".zip") {
+        4
+    } else {
+        0
+    };
+    trimmed[..trimmed.len() - strip_len].trim()
+}
+
 pub(crate) fn same_sdi_filename(left: &str, right: &str) -> bool {
-    fn stem(name: &str) -> &str {
-        name.strip_suffix(".xml.p7m")
-            .or_else(|| name.strip_suffix(".p7m"))
-            .or_else(|| name.strip_suffix(".xml"))
-            .unwrap_or(name)
-    }
-    stem(left).eq_ignore_ascii_case(stem(right))
+    let l = sdi_filename_stem(left);
+    let r = sdi_filename_stem(right);
+    !l.is_empty() && l.eq_ignore_ascii_case(r)
 }
 
 #[cfg(test)]
@@ -1647,6 +1893,7 @@ mod tests {
             from: "posta-certificata@pec.aruba.it".into(),
             sdi_sender: Some("sdi12@pec.fatturapa.it".into()),
             sdi_fallback: Some("sdi12@pec.fatturapa.it".into()),
+            transport_receipt: None,
             attachments: vec![PecAttachment {
                 filename: "IT01234567890_00001_RC_001.xml".into(),
                 data: rc_xml.as_bytes().to_vec(),
@@ -1814,6 +2061,7 @@ mod tests {
             from: "posta-certificata@pec.aruba.it".into(),
             sdi_sender: Some("sdi11@pec.fatturapa.it".into()),
             sdi_fallback: None,
+            transport_receipt: None,
             attachments: vec![PecAttachment {
                 filename: format!(
                     "{}_MC_001.xml",
@@ -1956,6 +2204,7 @@ mod tests {
                 from: "archive@pec.example.it".into(),
                 sdi_sender: None,
                 sdi_fallback: None,
+                transport_receipt: None,
                 attachments: vec![PecAttachment {
                     filename: "IT01234567897_BROKEN.xml.p7m".into(),
                     data: b"corrupted-der-bytes".to_vec(),
@@ -1967,6 +2216,7 @@ mod tests {
                 from: "archive@pec.example.it".into(),
                 sdi_sender: None,
                 sdi_fallback: None,
+                transport_receipt: None,
                 attachments: vec![PecAttachment {
                     filename: "IT01234567897_LATIN1.xml".into(),
                     data: b"<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><Fattura>Caff\xe8</Fattura>"
@@ -1979,6 +2229,7 @@ mod tests {
                 from: "posta-certificata@pec.aruba.it".into(),
                 sdi_sender: Some("sdi09@pec.fatturapa.it".into()),
                 sdi_fallback: None,
+                transport_receipt: None,
                 attachments: vec![PecAttachment {
                     filename: format!("{}_RC_001.xml", filename.trim_end_matches(".xml")),
                     data: valid_rc.into_bytes(),
@@ -2019,5 +2270,452 @@ mod tests {
                 .unwrap()
                 .contains("IT01234567897_LATIN1.xml")
         );
+    }
+
+    type FakeFolder = (
+        crate::pec::MailboxFolderEntry,
+        Option<u32>,
+        std::collections::BTreeMap<u32, Vec<u8>>,
+    );
+
+    /// Stateful in-memory PEC adapter backed by `MailboxSession` + raw RFC822 MIME parsing,
+    /// allowing multi-cycle end-to-end PEC sync tests without touching real IMAP/SMTP/keyring.
+    struct FakePecInboxAdapter {
+        folders: std::sync::Mutex<Vec<FakeFolder>>,
+    }
+
+    impl FakePecInboxAdapter {
+        fn new() -> Self {
+            Self {
+                folders: std::sync::Mutex::new(vec![
+                    (
+                        crate::pec::MailboxFolderEntry {
+                            name: "INBOX".into(),
+                            has_excluded_attr: false,
+                        },
+                        Some(1570704211),
+                        std::collections::BTreeMap::new(),
+                    ),
+                    (
+                        crate::pec::MailboxFolderEntry {
+                            name: "INBOX.Ricevute".into(),
+                            has_excluded_attr: false,
+                        },
+                        Some(1570704212),
+                        std::collections::BTreeMap::new(),
+                    ),
+                ]),
+            }
+        }
+
+        fn push_raw_mime(&self, folder: &str, uid: u32, raw_rfc822: Vec<u8>) {
+            let mut guard = self.folders.lock().unwrap();
+            if let Some((_, _, msgs)) = guard.iter_mut().find(|(f, _, _)| f.name == folder) {
+                msgs.insert(uid, raw_rfc822);
+            }
+        }
+    }
+
+    struct InMemoryMailboxSession {
+        folders: Vec<FakeFolder>,
+        selected: Option<usize>,
+    }
+
+    impl crate::pec::MailboxSession for InMemoryMailboxSession {
+        fn list_folders(&mut self) -> Result<Vec<crate::pec::MailboxFolderEntry>, String> {
+            Ok(self.folders.iter().map(|(f, _, _)| f.clone()).collect())
+        }
+
+        fn select_folder(&mut self, folder: &str) -> Result<Option<u32>, String> {
+            let idx = self
+                .folders
+                .iter()
+                .position(|(f, _, _)| f.name.eq_ignore_ascii_case(folder))
+                .ok_or_else(|| format!("Unknown folder: {folder}"))?;
+            self.selected = Some(idx);
+            Ok(self.folders[idx].1)
+        }
+
+        fn uid_search_all(&mut self) -> Result<Vec<u32>, String> {
+            let idx = self.selected.ok_or("No selected folder")?;
+            Ok(self.folders[idx].2.keys().copied().collect())
+        }
+
+        fn uid_fetch_peek(&mut self, uid: u32) -> Result<Vec<Vec<u8>>, String> {
+            let idx = self.selected.ok_or("No selected folder")?;
+            Ok(self.folders[idx]
+                .2
+                .get(&uid)
+                .cloned()
+                .into_iter()
+                .collect())
+        }
+
+        fn logout(&mut self) {}
+    }
+
+    impl PecInboxAdapter for FakePecInboxAdapter {
+        fn fetch_inbox<'a>(
+            &'a self,
+            _config: &'a PecConfig,
+            cursors: std::collections::BTreeMap<String, (u32, u32)>,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<crate::pec::PecInbox, String>> + Send + 'a>,
+        > {
+            let snapshot = self.folders.lock().unwrap().clone();
+            Box::pin(async move {
+                let mut session = InMemoryMailboxSession {
+                    folders: snapshot,
+                    selected: None,
+                };
+                crate::pec::fetch_inbox_with_session(&mut session, &cursors)
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn adapter_full_lifecycle_consegna_pec_then_delayed_sdi_rc_and_uppercase_xml() {
+        use crate::commands::invoices::{
+            create_invoice_store, export_invoice_xml_store, fetch_invoice_detail,
+            set_invoice_status_store,
+        };
+        use serde_json::json;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileStore::open(dir.path().join("index.json")).unwrap();
+        let log = AppLog::memory();
+        let config = PecConfig {
+            email: "spinanico@pec.it".into(),
+            sdi_address: "sdi01@pec.fatturapa.it".into(),
+            password: "mock-password".into(),
+            imap_host: "imaps.pec.aruba.it".into(),
+            imap_port: 993,
+            smtp_host: "smtps.pec.aruba.it".into(),
+            smtp_port: 465,
+        };
+        update_settings_store(
+            &store,
+            AppSettings {
+                company: None,
+                pec: Some(PecSettings {
+                    email: config.email.clone(),
+                    imap_host: config.imap_host.clone(),
+                    imap_port: config.imap_port,
+                    smtp_host: config.smtp_host.clone(),
+                    smtp_port: config.smtp_port,
+                    sdi_address: None,
+                }),
+            },
+        )
+        .await
+        .unwrap();
+
+        store
+            .insert(
+                "clients",
+                json!({
+                    "id": "seller",
+                    "id_paese": "IT",
+                    "id_codice": "01234567897",
+                    "codice_fiscale": "RSSMRA80A01H501U",
+                    "nome": "Mario",
+                    "cognome": "Rossi",
+                    "indirizzo": "Via Roma 1",
+                    "cap": "95010",
+                    "comune": "Catania",
+                    "provincia": "CT",
+                    "nazione": "IT",
+                    "regime_fiscale": "RF19"
+                }),
+            )
+            .await
+            .unwrap();
+        store
+            .insert(
+                "clients",
+                json!({
+                    "id": "buyer",
+                    "id_paese": "IT",
+                    "id_codice": "98765432103",
+                    "codice_fiscale": "98765432103",
+                    "denominazione": "Cliente SRL",
+                    "codice_destinatario": "KRRH6B9",
+                    "indirizzo": "Corso Italia 10",
+                    "cap": "20100",
+                    "comune": "Milano",
+                    "provincia": "MI",
+                    "nazione": "IT",
+                    "regime_fiscale": "RF01"
+                }),
+            )
+            .await
+            .unwrap();
+
+        let req = serde_json::from_value(json!({
+            "numero": "6",
+            "data": "2026-11-27",
+            "tipoDocumento": "TD01",
+            "divisa": "EUR",
+            "cedenteId": "seller",
+            "cessionarioId": "buyer",
+            "datiBollo": { "bolloVirtuale": "SI", "importoBollo": 2.0 },
+            "pagamenti": [{ "condizioniPagamento": "TP02", "modalitaPagamento": "MP05", "importoPagamento": 2002.0 }],
+            "linee": [{ "descrizione": "Sviluppo software", "quantita": 1.0, "prezzoUnitario": 2000.0, "aliquotaIva": 0.0, "natura": "N2.2" }]
+        }))
+        .unwrap();
+        let created = create_invoice_store(&store, req).await.unwrap();
+        set_invoice_status_store(&store, &created.id, "validated")
+            .await
+            .unwrap();
+        let _ = export_invoice_xml_store(&store, &created.id).await.unwrap();
+
+        // Reserve PEC attempt (simulating SMTP send where response was interrupted before local commit,
+        // or normal send: let's test the stricter pending_pec_filename auto-reconciliation!).
+        let (_, sent_filename) = reserve_pec_attempt(&store, &created.id, &config)
+            .await
+            .unwrap();
+        let outgoing_xml: String = store
+            .read("invoices", "id", vec![json!(&created.id)], "")
+            .await
+            .fetch_one()
+            .await
+            .unwrap()
+            .get::<Option<String>>("pending_pec_xml")
+            .unwrap();
+
+        let adapter = FakePecInboxAdapter::new();
+
+        // Cycle 1 (11:21): Aruba PEC delivers ACCETTAZIONE (UID 241) and CONSEGNA to sdi48@pec.fatturapa.it (UID 242)
+        // with full echoed outgoing XML inside postacert.eml.
+        let accettazione_mime = format!(
+            concat!(
+                "From: posta-certificata@pec.aruba.it\r\n",
+                "Subject: ACCETTAZIONE: INVIO FATTURA {fname}\r\n",
+                "MIME-Version: 1.0\r\n",
+                "Content-Type: multipart/mixed; boundary=acc\r\n\r\n",
+                "--acc\r\nContent-Type: application/xml\r\n",
+                "Content-Disposition: attachment; filename=\"daticert.xml\"\r\n\r\n",
+                "<postacert tipo=\"accettazione\" errore=\"nessuno\"><intestazione><mittente>spinanico@pec.it</mittente><destinatari tipo=\"certificato\">sdi48@pec.fatturapa.it</destinatari><oggetto>INVIO FATTURA {fname}</oggetto></intestazione><dati><data zona=\"+0100\"><giorno>27/11/2026</giorno><ora>11:21:24</ora></data></dati></postacert>\r\n",
+                "--acc--\r\n"
+            ),
+            fname = sent_filename
+        );
+        let consegna_mime = format!(
+            concat!(
+                "From: posta-certificata@pec.fatturapa.it\r\n",
+                "Subject: CONSEGNA: INVIO FATTURA {fname}\r\n",
+                "MIME-Version: 1.0\r\n",
+                "Content-Type: multipart/mixed; boundary=con\r\n\r\n",
+                "--con\r\nContent-Type: application/xml\r\n",
+                "Content-Disposition: attachment; filename=\"daticert.xml\"\r\n\r\n",
+                "<postacert tipo=\"avvenuta-consegna\" errore=\"nessuno\"><intestazione><mittente>spinanico@pec.it</mittente><destinatari tipo=\"certificato\">sdi48@pec.fatturapa.it</destinatari><oggetto>INVIO FATTURA {fname}</oggetto></intestazione><dati><consegna>sdi48@pec.fatturapa.it</consegna><data zona=\"+0100\"><giorno>27/11/2026</giorno><ora>11:21:25</ora></data></dati></postacert>\r\n",
+                "--con\r\nContent-Type: message/rfc822\r\n",
+                "Content-Disposition: attachment; filename=\"postacert.eml\"\r\n\r\n",
+                "From: spinanico@pec.it\r\n",
+                "Subject: INVIO FATTURA {fname}\r\n",
+                "MIME-Version: 1.0\r\n",
+                "Content-Type: multipart/mixed; boundary=inner\r\n\r\n",
+                "--inner\r\nContent-Type: application/xml\r\n",
+                "Content-Disposition: attachment; filename=\"{fname}\"\r\n\r\n",
+                "{xml}\r\n--inner--\r\n",
+                "--con--\r\n"
+            ),
+            fname = sent_filename,
+            xml = outgoing_xml
+        );
+        adapter.push_raw_mime("INBOX", 241, accettazione_mime.into_bytes());
+        adapter.push_raw_mime("INBOX", 242, consegna_mime.into_bytes());
+
+        let cycle1 = run_sync_inner(&store, &config, &log, &adapter).await.unwrap();
+        // Auto-reconciled pending attempt -> Sent, and did NOT emit a bogus FATTURA import!
+        assert!(!cycle1.iter().any(|s| s.tipo == "FATTURA"));
+        assert_eq!(
+            crate::commands::invoices::list_invoices_store(&store)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let after_consegna = fetch_invoice_detail(&store, &created.id).await.unwrap();
+        assert_eq!(after_consegna.stato, "sent");
+        assert_eq!(after_consegna.pending_pec_filename, None);
+        assert_eq!(
+            after_consegna.pec_accepted_at.as_deref(),
+            Some("27/11/2026 11:21:24")
+        );
+        assert_eq!(
+            after_consegna.pec_delivered_to_sdi_at.as_deref(),
+            Some("27/11/2026 11:21:25")
+        );
+        assert_eq!(
+            after_consegna.pec_sdi_recipient.as_deref(),
+            Some("sdi48@pec.fatturapa.it")
+        );
+        assert_eq!(
+            get_settings_store(&store)
+                .await
+                .unwrap()
+                .pec
+                .and_then(|p| p.sdi_address)
+                .as_deref(),
+            Some("sdi48@pec.fatturapa.it")
+        );
+
+        // Cycle 2 (11:29): No new messages yet -> 0 items processed, invoice remains `sent`
+        let cycle2 = run_sync_inner(&store, &config, &log, &adapter).await.unwrap();
+        assert!(cycle2.is_empty());
+        assert_eq!(
+            fetch_invoice_detail(&store, &created.id).await.unwrap().stato,
+            "sent"
+        );
+
+        // Cycle 3 (later): SdI delivers RicevutaConsegna into INBOX.Ricevute AND uses uppercase `.XML` in <NomeFile>!
+        let upper_filename = sent_filename.to_ascii_uppercase();
+        let rc_stem = sdi_filename_stem(&sent_filename);
+        let rc_mime = format!(
+            concat!(
+                "From: posta-certificata@pec.aruba.it\r\n",
+                "Subject: POSTA CERTIFICATA: Invio File 1899974660\r\n",
+                "MIME-Version: 1.0\r\n",
+                "Content-Type: multipart/mixed; boundary=outer\r\n\r\n",
+                "--outer\r\nContent-Type: application/xml\r\n",
+                "Content-Disposition: attachment; filename=\"daticert.xml\"\r\n\r\n",
+                "<postacert tipo=\"posta-certificata\" errore=\"nessuno\"><intestazione><mittente>sdi48@pec.fatturapa.it</mittente><destinatari tipo=\"certificato\">spinanico@pec.it</destinatari><oggetto>Invio File 1899974660</oggetto></intestazione></postacert>\r\n",
+                "--outer\r\nContent-Type: message/rfc822\r\n",
+                "Content-Disposition: attachment; filename=\"postacert.eml\"\r\n\r\n",
+                "From: sdi48@pec.fatturapa.it\r\n",
+                "Subject: Invio File 1899974660\r\n",
+                "MIME-Version: 1.0\r\n",
+                "Content-Type: multipart/mixed; boundary=sdi\r\n\r\n",
+                "--sdi\r\nContent-Type: application/xml\r\n",
+                "Content-Disposition: attachment; filename=\"{stem}_RC_001.XML\"\r\n\r\n",
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ns3:RicevutaConsegna xmlns:ns3=\"http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fattura/messaggi/v1.0\" versione=\"1.0\"><IdentificativoSdI>1899974660</IdentificativoSdI><NomeFile>{upper}</NomeFile><DataOraRicezione>2026-11-27T11:21:25.000+01:00</DataOraRicezione><DataOraConsegna>2026-11-27T12:55:00.000+01:00</DataOraConsegna><Destinatario><Codice>KRRH6B9</Codice><Descrizione>Canale attivo</Descrizione></Destinatario></ns3:RicevutaConsegna>\r\n",
+                "--sdi--\r\n",
+                "--outer--\r\n"
+            ),
+            stem = rc_stem,
+            upper = upper_filename
+        );
+        adapter.push_raw_mime("INBOX.Ricevute", 1, rc_mime.into_bytes());
+
+        let cycle3 = run_sync_inner(&store, &config, &log, &adapter).await.unwrap();
+        assert_eq!(cycle3.len(), 1);
+        assert_eq!(cycle3[0].tipo, "RC");
+        assert_eq!(cycle3[0].invoice_id.as_deref(), Some(created.id.as_str()));
+        assert_eq!(cycle3[0].new_status.as_deref(), Some("delivered"));
+
+        let after_rc = fetch_invoice_detail(&store, &created.id).await.unwrap();
+        assert_eq!(after_rc.stato, "delivered");
+        assert_eq!(after_rc.notifications.len(), 1);
+        assert_eq!(after_rc.notifications[0].tipo, "RC");
+        assert_eq!(after_rc.notifications[0].destinatario.as_deref(), Some("KRRH6B9"));
+    }
+
+    #[tokio::test]
+    async fn adapter_handles_zip_at_missing_nomefile_and_rejects_postacert_junk() {
+        use crate::commands::invoices::{create_invoice_store, set_invoice_status_store};
+        use serde_json::json;
+        use std::io::Write as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileStore::open(dir.path().join("index.json")).unwrap();
+        for (id, vat) in [("seller", "01234567897"), ("buyer", "98765432103")] {
+            store
+                .insert(
+                    "clients",
+                    json!({
+                        "id": id,
+                        "id_paese": "IT",
+                        "id_codice": vat,
+                        "codice_fiscale": vat,
+                        "denominazione": id,
+                        "codice_destinatario": "ABC1234",
+                        "indirizzo": "Via Roma 1",
+                        "cap": "00100",
+                        "comune": "Roma",
+                        "nazione": "IT",
+                        "regime_fiscale": "RF01"
+                    }),
+                )
+                .await
+                .unwrap();
+        }
+        let req = serde_json::from_value(json!({
+            "numero": "9",
+            "data": "2026-11-27",
+            "tipoDocumento": "TD01",
+            "divisa": "EUR",
+            "cedenteId": "seller",
+            "cessionarioId": "buyer",
+            "pagamenti": [],
+            "linee": [{ "descrizione": "Test AT ZIP", "quantita": 1.0, "prezzoUnitario": 100.0, "aliquotaIva": 22.0 }]
+        }))
+        .unwrap();
+        let invoice = create_invoice_store(&store, req).await.unwrap();
+        set_invoice_status_store(&store, &invoice.id, "validated")
+            .await
+            .unwrap();
+        let config = PecConfig {
+            email: "studio@pec.it".into(),
+            sdi_address: "sdi48@pec.fatturapa.it".into(),
+            password: String::new(),
+            imap_host: "localhost".into(),
+            imap_port: 993,
+            smtp_host: "localhost".into(),
+            smtp_port: 465,
+        };
+        let (_, filename) = reserve_pec_attempt(&store, &invoice.id, &config)
+            .await
+            .unwrap();
+        resolve_pec_attempt_store(&store, &invoice.id, &filename, true)
+            .await
+            .unwrap();
+        let stem = sdi_filename_stem(&filename).to_string();
+
+        // 1. Reject raw <postacert> daticert.xml in manual receipt import
+        let err = import_sdi_receipt_store(
+            &store,
+            r#"<postacert tipo="posta-certificata"><intestazione/></postacert>"#,
+        )
+        .await
+        .expect_err("postacert envelope XML must not be stored as an SdI receipt");
+        assert!(err.contains("postacert"));
+
+        // 2. Build a ZIP carrying an AT (AttestazioneTrasmissioneFattura) XML without <NomeFile>,
+        //    relying on ZIP entry filename `<Stem>_AT_001.xml` fallback!
+        let mut zip_bytes = Vec::new();
+        {
+            let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut zip_bytes));
+            writer
+                .start_file(
+                    format!("{stem}_AT_001.xml"),
+                    zip::write::SimpleFileOptions::default(),
+                )
+                .unwrap();
+            writer
+                .write_all(
+                    b"<AttestazioneTrasmissioneFattura><IdentificativoSdI>777888</IdentificativoSdI></AttestazioneTrasmissioneFattura>",
+                )
+                .unwrap();
+            writer.finish().unwrap();
+        }
+
+        let messages = vec![PecMessage {
+            uid: 50,
+            subject: "POSTA CERTIFICATA: Invio File 777888".into(),
+            from: "sdi48@pec.fatturapa.it".into(),
+            sdi_sender: Some("sdi48@pec.fatturapa.it".into()),
+            sdi_fallback: None,
+            transport_receipt: None,
+            attachments: vec![PecAttachment {
+                filename: format!("{stem}_AT_001.zip"),
+                data: zip_bytes,
+            }],
+        }];
+        let (summaries, _) = process_inbox_messages(&store, &messages).await.unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].tipo, "AT");
+        assert_eq!(summaries[0].invoice_id.as_deref(), Some(invoice.id.as_str()));
     }
 }

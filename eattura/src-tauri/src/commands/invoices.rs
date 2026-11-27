@@ -215,6 +215,12 @@ pub struct InvoiceDetail {
     #[serde(default)]
     pub recoverable_pec_filename: Option<String>,
     #[serde(default)]
+    pub pec_accepted_at: Option<String>,
+    #[serde(default)]
+    pub pec_delivered_to_sdi_at: Option<String>,
+    #[serde(default)]
+    pub pec_sdi_recipient: Option<String>,
+    #[serde(default)]
     pub has_mc_notice: bool,
     #[serde(default)]
     pub dati_ordine_acquisto: Vec<DatiDocumentoTracciabilitaDetail>,
@@ -2530,6 +2536,9 @@ pub(crate) async fn fetch_invoice_detail(
         pending_pec_filename,
         active_pec_filename,
         recoverable_pec_filename,
+        pec_accepted_at: invoice_row.get("pec_accepted_at"),
+        pec_delivered_to_sdi_at: invoice_row.get("pec_delivered_to_sdi_at"),
+        pec_sdi_recipient: invoice_row.get("pec_sdi_recipient"),
         has_mc_notice,
         dati_ordine_acquisto,
         dati_contratto,
@@ -3505,7 +3514,13 @@ pub async fn rectify_rejected_invoice_store(
     tx.update(
         "invoices",
         id,
-        serde_json::json!({"stato": "draft", "imported_from_xml": false}),
+        serde_json::json!({
+            "stato": "draft",
+            "imported_from_xml": false,
+            "pec_accepted_at": null,
+            "pec_delivered_to_sdi_at": null,
+            "pec_sdi_recipient": null
+        }),
     )
     .await?;
     tx.commit().await?;
@@ -4494,6 +4509,7 @@ mod tests {
             from: "sdi01@pec.fatturapa.it".into(),
             sdi_sender: Some("sdi01@pec.fatturapa.it".into()),
             sdi_fallback: None,
+            transport_receipt: None,
             attachments: vec![crate::pec::PecAttachment {
                 filename: "IT01234567890_00003_NS_001.xml".into(),
                 data: scarto_xml.as_bytes().to_vec(),

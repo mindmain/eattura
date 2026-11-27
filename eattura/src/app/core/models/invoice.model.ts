@@ -141,6 +141,9 @@ export interface InvoiceDetail extends InvoiceSummary {
   pendingPecFilename?: string | null;
   activePecFilename?: string | null;
   recoverablePecFilename?: string | null;
+  pecAcceptedAt?: string | null;
+  pecDeliveredToSdiAt?: string | null;
+  pecSdiRecipient?: string | null;
   datiOrdineAcquisto?: DatiDocumentoTracciabilitaDetail[];
   datiContratto?: DatiDocumentoTracciabilitaDetail[];
   datiConvenzione?: DatiDocumentoTracciabilitaDetail[];
