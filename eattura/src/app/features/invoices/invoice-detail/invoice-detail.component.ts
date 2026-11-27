@@ -142,6 +142,21 @@ export class InvoiceDetailComponent {
   hasAllegati = computed(() => (this.invoice()?.allegati?.length ?? 0) > 0);
   readonly pecSyncStatus = this.invoiceStore.pecSyncStatus;
 
+  /** Canonical SdI filename stem (`<IdPaese><IdCodice>_<ProgressivoInvio>`) without extension. */
+  readonly sdiBaseFilename = computed(() => {
+    const inv = this.invoice();
+    if (!inv) return "Fattura";
+    return (
+      this.stripSdiExtension(inv.activePecFilename) ??
+      this.stripSdiExtension(inv.pendingPecFilename) ??
+      this.stripSdiExtension(inv.sdiFilename) ??
+      `Fattura_${inv.numero.replace(/\//g, "_")}`
+    );
+  });
+
+  readonly sdiXmlFilename = computed(() => `${this.sdiBaseFilename()}.xml`);
+  readonly sdiPdfFilename = computed(() => `${this.sdiBaseFilename()}.pdf`);
+
   constructor() {
     effect((onCleanup) => {
       const invoiceId = this.id();
@@ -186,8 +201,8 @@ export class InvoiceDetailComponent {
       } else {
         this.notify.error(`Validazione fallita: ${result.errors.length} errori`);
       }
-    } catch {
-      this.notify.error("Errore durante la validazione");
+    } catch (e) {
+      this.notify.error(e instanceof Error ? e.message : "Errore durante la validazione");
     }
   }
 
@@ -261,10 +276,16 @@ export class InvoiceDetailComponent {
     if (!inv) return;
     try {
       const xml = await this.invoiceStore.exportXml(inv.id);
-      this.fileDownload.downloadTextFile(xml, `${inv.numero}.xml`, "application/xml");
+      const stem =
+        this.stripSdiExtension(inv.activePecFilename) ??
+        this.stripSdiExtension(inv.pendingPecFilename) ??
+        this.extractSdiStemFromXml(xml) ??
+        this.stripSdiExtension(inv.sdiFilename) ??
+        `Fattura_${inv.numero.replace(/\//g, "_")}`;
+      this.fileDownload.downloadTextFile(xml, `${stem}.xml`, "application/xml");
       this.notify.success("XML esportato");
-    } catch {
-      this.notify.error("Errore durante l'esportazione XML");
+    } catch (e) {
+      this.notify.error(e instanceof Error ? e.message : "Errore durante l'esportazione XML");
     }
   }
 
@@ -274,17 +295,31 @@ export class InvoiceDetailComponent {
     this.downloadingPdf.set(true);
     try {
       const pdfBytes = await this.invoiceStore.renderPdf(inv.id);
-      this.fileDownload.downloadBinaryFile(
-        pdfBytes,
-        `Fattura_${inv.numero.replace(/\//g, "-")}.pdf`,
-        "application/pdf"
-      );
+      this.fileDownload.downloadBinaryFile(pdfBytes, this.sdiPdfFilename(), "application/pdf");
       this.notify.success("PDF di cortesia scaricato con successo");
-    } catch {
-      this.notify.error("Errore durante la generazione del PDF");
+    } catch (e) {
+      this.notify.error(e instanceof Error ? e.message : "Errore durante la generazione del PDF");
     } finally {
       this.downloadingPdf.set(false);
     }
+  }
+
+  private stripSdiExtension(filename?: string | null): string | null {
+    const trimmed = filename?.trim();
+    if (!trimmed) return null;
+    const stem = trimmed.replace(/(?:\.xml)?\.p7m$|\.(?:xml|pdf)$/i, "").trim();
+    return stem || null;
+  }
+
+  private extractSdiStemFromXml(xml: string): string | null {
+    const transmitterBlock = xml.match(/<IdTrasmittente>([\s\S]*?)<\/IdTrasmittente>/i)?.[1];
+    const idPaese = transmitterBlock?.match(/<IdPaese>\s*([^<\s]+)\s*<\/IdPaese>/i)?.[1];
+    const idCodice = transmitterBlock?.match(/<IdCodice>\s*([^<\s]+)\s*<\/IdCodice>/i)?.[1];
+    const progressivo = xml.match(/<ProgressivoInvio>\s*([^<\s]+)\s*<\/ProgressivoInvio>/i)?.[1];
+    if (idPaese && idCodice && progressivo) {
+      return `${idPaese}${idCodice}_${progressivo}`;
+    }
+    return null;
   }
 
   formatBytes(bytes: number): string {

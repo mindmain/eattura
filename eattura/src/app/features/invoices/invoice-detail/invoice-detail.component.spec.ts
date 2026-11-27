@@ -34,6 +34,12 @@ function buildDetail(overrides: Partial<InvoiceDetail>): InvoiceDetail {
 describe("InvoiceDetailComponent rejection handling", () => {
   async function setup(detail: InvoiceDetail) {
     const rectifyRejectedInvoice = vi.fn();
+    const exportXml = vi.fn().mockResolvedValue(
+      "<FatturaElettronicaHeader><DatiTrasmissione><IdTrasmittente><IdPaese>IT</IdPaese><IdCodice>01234567897</IdCodice></IdTrasmittente><ProgressivoInvio>A1B2C</ProgressivoInvio></DatiTrasmissione></FatturaElettronicaHeader>",
+    );
+    const renderPdf = vi.fn().mockResolvedValue(new Uint8Array([37, 80, 68, 70]));
+    const downloadTextFile = vi.fn();
+    const downloadBinaryFile = vi.fn();
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({
       providers: [
@@ -46,13 +52,15 @@ describe("InvoiceDetailComponent rejection handling", () => {
             mcpDraft: signal(null),
             pecSyncStatus: signal(null),
             rectifyRejectedInvoice,
+            exportXml,
+            renderPdf,
           },
         },
         {
           provide: FileDownloadService,
           useValue: {
-            downloadTextFile: vi.fn(),
-            downloadBinaryFile: vi.fn(),
+            downloadTextFile,
+            downloadBinaryFile,
           },
         },
         {
@@ -79,7 +87,15 @@ describe("InvoiceDetailComponent rejection handling", () => {
     const fixture = TestBed.createComponent(InvoiceDetailComponent);
     fixture.componentInstance.invoice.set(detail);
     fixture.detectChanges();
-    return { fixture, component: fixture.componentInstance, rectifyRejectedInvoice };
+    return {
+      fixture,
+      component: fixture.componentInstance,
+      rectifyRejectedInvoice,
+      exportXml,
+      renderPdf,
+      downloadTextFile,
+      downloadBinaryFile,
+    };
   }
 
   it("distinguishes PA refusal (RC -> NE EC02) from SDI discard (NS) and hides draft rectification", async () => {
@@ -154,5 +170,52 @@ describe("InvoiceDetailComponent rejection handling", () => {
     expect(text).toContain("NOTIFICA DI SCARTO SDI (NS)");
     expect(text).toContain("4 giorni rimanenti");
     expect(fixture.nativeElement.querySelectorAll(".btn-rectify").length).toBe(2);
+  });
+
+  it("downloads XML and PDF using the transmitted SdI filename stem (including .xml.p7m imports)", async () => {
+    const signedImport = buildDetail({
+      stato: "delivered",
+      activePecFilename: "IT01234567897_9X2K1.xml.p7m",
+      sdiFilename: "IT01234567897_9X2K1.xml",
+    });
+
+    const { component, downloadTextFile, downloadBinaryFile } = await setup(signedImport);
+    await component.exportXml();
+    await component.downloadPdf();
+
+    expect(downloadTextFile).toHaveBeenCalledWith(
+      expect.any(String),
+      "IT01234567897_9X2K1.xml",
+      "application/xml",
+    );
+    expect(downloadBinaryFile).toHaveBeenCalledWith(
+      expect.any(Uint8Array),
+      "IT01234567897_9X2K1.pdf",
+      "application/pdf",
+    );
+  });
+
+  it("downloads draft XML and PDF using the generated SdI filename (<IdPaese><IdCodice>_<Progressivo>)", async () => {
+    const draft = buildDetail({
+      stato: "draft",
+      numero: "2026/42",
+      activePecFilename: null,
+      sdiFilename: "IT01234567897_A1B2C.xml",
+    });
+
+    const { component, downloadTextFile, downloadBinaryFile } = await setup(draft);
+    await component.exportXml();
+    await component.downloadPdf();
+
+    expect(downloadTextFile).toHaveBeenCalledWith(
+      expect.any(String),
+      "IT01234567897_A1B2C.xml",
+      "application/xml",
+    );
+    expect(downloadBinaryFile).toHaveBeenCalledWith(
+      expect.any(Uint8Array),
+      "IT01234567897_A1B2C.pdf",
+      "application/pdf",
+    );
   });
 });

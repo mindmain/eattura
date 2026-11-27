@@ -207,6 +207,8 @@ pub struct InvoiceDetail {
     #[serde(default)]
     pub pec_destinatario: Option<String>,
     #[serde(default)]
+    pub sdi_filename: Option<String>,
+    #[serde(default)]
     pub pending_pec_filename: Option<String>,
     #[serde(default)]
     pub active_pec_filename: Option<String>,
@@ -2468,6 +2470,17 @@ pub(crate) async fn fetch_invoice_detail(
 
     let stato: String = invoice_row.get("stato");
     let active_pec_filename = crate::commands::pec::active_pec_filename(&invoice_row);
+    let pending_pec_filename: Option<String> = invoice_row.get("pending_pec_filename");
+    let sdi_filename = Some(
+        resolve_invoice_sdi_filename(
+            store,
+            &invoice_row,
+            id,
+            active_pec_filename.as_deref(),
+            pending_pec_filename.as_deref(),
+        )
+        .await,
+    );
     let recoverable_pec_filename =
         crate::commands::pec::recoverable_pec_filename(store, &invoice_row, id).await?;
     let has_mc_notice = !matches!(stato.as_str(), "draft" | "validated")
@@ -2513,7 +2526,8 @@ pub(crate) async fn fetch_invoice_detail(
         formato_trasmissione,
         codice_destinatario,
         pec_destinatario,
-        pending_pec_filename: invoice_row.get("pending_pec_filename"),
+        sdi_filename,
+        pending_pec_filename,
         active_pec_filename,
         recoverable_pec_filename,
         has_mc_notice,
@@ -2532,6 +2546,60 @@ fn invoice_revision(row: &crate::storage::Record) -> Option<String> {
             .to_str()
             .map(str::to_owned)
     })
+}
+
+/// Normalize an SdI invoice filename (including `.xml.p7m` / `.p7m`) to `<Stem>.xml`.
+pub(crate) fn normalize_sdi_xml_filename(filename: &str) -> Option<String> {
+    let trimmed = filename.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let stem_end = if lower.ends_with(".xml.p7m") {
+        trimmed.len() - 8
+    } else if lower.ends_with(".p7m") || lower.ends_with(".xml") || lower.ends_with(".pdf") {
+        trimmed.len() - 4
+    } else {
+        trimmed.len()
+    };
+    let stem = trimmed[..stem_end].trim();
+    if stem.is_empty() {
+        None
+    } else {
+        Some(format!("{stem}.xml"))
+    }
+}
+
+async fn resolve_invoice_sdi_filename(
+    store: &crate::storage::FileStore,
+    row: &crate::storage::Record,
+    id: &str,
+    active_pec_filename: Option<&str>,
+    pending_pec_filename: Option<&str>,
+) -> String {
+    if let Some(name) = active_pec_filename.and_then(normalize_sdi_xml_filename) {
+        return name;
+    }
+    if let Some(name) = pending_pec_filename.and_then(normalize_sdi_xml_filename) {
+        return name;
+    }
+    if let Some(name) = row
+        .get::<Option<Vec<String>>>("sdi_filenames")
+        .and_then(|aliases| {
+            aliases
+                .last()
+                .and_then(|alias| normalize_sdi_xml_filename(alias))
+        })
+    {
+        return name;
+    }
+    if let Ok(fattura) = build_fattura_from_store(store, id).await {
+        return common::pec::sdi_filename(&fattura);
+    }
+    format!(
+        "IT00000000000_{}.xml",
+        common::pec::progressivo_from_id(id)
+    )
 }
 
 fn stored_transmission_document(
@@ -4993,6 +5061,17 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(next_num, "6");
+
+        let detail = fetch_invoice_detail(&store, &created.id).await.unwrap();
+        let expected_progressivo = common::pec::progressivo_from_id(&created.id);
+        assert_eq!(
+            detail.sdi_filename.as_deref(),
+            Some(format!("IT11111111115_{expected_progressivo}.xml").as_str())
+        );
+        assert_eq!(
+            normalize_sdi_xml_filename("IT01234567897_9X2K1.xml.p7m").as_deref(),
+            Some("IT01234567897_9X2K1.xml")
+        );
 
         let _ = std::fs::remove_dir_all(dir);
     }

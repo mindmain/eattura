@@ -261,7 +261,10 @@ pub fn generate_prima_nota_csv(
             .unwrap_or(("", ""));
 
         let clean_num = inv.numero.replace('/', "_");
-        let xml_name = format!("{}_{}.xml", inv.tipo_documento, clean_num);
+        let xml_name = inv
+            .sdi_filename
+            .clone()
+            .unwrap_or_else(|| format!("{}_{}.xml", inv.tipo_documento, clean_num));
         let tot = inv.importo_totale.map(format_it_num).unwrap_or_default();
         let netto = inv
             .netto_a_pagare

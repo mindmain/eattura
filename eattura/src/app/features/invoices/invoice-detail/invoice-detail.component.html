@@ -55,7 +55,12 @@
             {{ generatingAutofattura() ? "Generazione..." : "⚡ Genera Integrazione SDI (Autofattura)" }}
           </button>
         }
-        <button class="btn-primary" (click)="downloadPdf()" [disabled]="downloadingPdf()">
+        <button
+          class="btn-primary"
+          [title]="'Scarica ' + sdiPdfFilename()"
+          (click)="downloadPdf()"
+          [disabled]="downloadingPdf()"
+        >
           {{ downloadingPdf() ? "Generazione..." : "Scarica PDF" }}
         </button>
         @if (inv.stato === "draft" && !inv.recoverablePecFilename) {
@@ -77,7 +82,9 @@
           </button>
         }
         @if (!inv.recoverablePecFilename) {
-          <button class="btn-primary" (click)="exportXml()">Esporta XML</button>
+          <button class="btn-primary" [title]="'Scarica ' + sdiXmlFilename()" (click)="exportXml()">
+            Esporta XML
+          </button>
         }
       </div>
     </div>
@@ -134,6 +141,7 @@
         <div class="ade-section">
           <div class="ade-section-title">1. DATI TRASMISSIONE</div>
           <div class="ade-section-body">
+            <p><strong>Nome File SdI:</strong> <code>{{ sdiXmlFilename() }}</code></p>
             <p><strong>Formato Trasmissione:</strong> {{ inv.formatoTrasmissione || '—' }}</p>
             <p><strong>Codice Destinatario:</strong> {{ inv.codiceDestinatario || '—' }}</p>
             @if (inv.pecDestinatario; as pec) {

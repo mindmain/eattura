@@ -107,11 +107,29 @@ pub fn sdi_filename(fattura: &FatturaElettronica) -> String {
 
     let (id_paese, id_codice) = dt
         .and_then(|d| d.id_trasmittente.as_ref())
-        .map(|id| (id.id_paese.as_str(), id.id_codice.as_str()))
+        .filter(|id| !id.id_paese.trim().is_empty() && !id.id_codice.trim().is_empty())
+        .map(|id| (id.id_paese.trim(), id.id_codice.trim()))
+        .or_else(|| {
+            let h = fattura.header.as_ref()?;
+            let (iva, cf) = if h.soggetto_emittente == Some(10) {
+                let da = h.cessionario_committente.as_ref()?.dati_anagrafici.as_ref()?;
+                (da.id_fiscale_iva.as_ref(), da.codice_fiscale.as_deref())
+            } else {
+                let da = h.cedente_prestatore.as_ref()?.dati_anagrafici.as_ref()?;
+                (da.id_fiscale_iva.as_ref(), da.codice_fiscale.as_deref())
+            };
+            iva.filter(|id| !id.id_paese.trim().is_empty() && !id.id_codice.trim().is_empty())
+                .map(|id| (id.id_paese.trim(), id.id_codice.trim()))
+                .or_else(|| {
+                    cf.map(str::trim)
+                        .filter(|code| !code.is_empty())
+                        .map(|code| ("IT", code))
+                })
+        })
         .unwrap_or(("IT", "00000000000"));
 
     let progressivo = dt
-        .map(|d| d.progressivo_invio.as_str())
+        .map(|d| d.progressivo_invio.trim())
         .filter(|p| !p.is_empty())
         .unwrap_or("00001");
 
@@ -672,5 +690,35 @@ mod tests {
             Some("sdi01@pec.fatturapa.it")
         );
         assert_eq!(extract_sdi_pec_address("From: info@pec.example.it"), None);
+    }
+
+    #[test]
+    fn test_sdi_filename_falls_back_to_cedente_vat_when_transmitter_code_empty() {
+        use crate::sdi::v1::*;
+        let fattura = FatturaElettronica {
+            header: Some(FatturaElettronicaHeader {
+                dati_trasmissione: Some(DatiTrasmissione {
+                    id_trasmittente: Some(IdFiscale {
+                        id_paese: "IT".to_string(),
+                        id_codice: String::new(),
+                    }),
+                    progressivo_invio: "A1B2C".to_string(),
+                    ..Default::default()
+                }),
+                cedente_prestatore: Some(CedentePrestatore {
+                    dati_anagrafici: Some(DatiAnagraficiCedente {
+                        id_fiscale_iva: Some(IdFiscale {
+                            id_paese: "IT".to_string(),
+                            id_codice: "01234567890".to_string(),
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(sdi_filename(&fattura), "IT01234567890_A1B2C.xml");
     }
 }

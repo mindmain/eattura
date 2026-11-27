@@ -137,6 +137,7 @@ export interface InvoiceDetail extends InvoiceSummary {
   formatoTrasmissione?: string | null;
   codiceDestinatario?: string | null;
   pecDestinatario?: string | null;
+  sdiFilename?: string | null;
   pendingPecFilename?: string | null;
   activePecFilename?: string | null;
   recoverablePecFilename?: string | null;
