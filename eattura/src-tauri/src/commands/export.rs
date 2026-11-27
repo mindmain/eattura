@@ -1059,6 +1059,7 @@ mod tests {
                 natura: None,
             }],
             pagamenti: vec![crate::commands::invoices::CreatePaymentRequest {
+                condizioni_pagamento: None,
                 modalita_pagamento: "MP05".to_string(),
                 importo_pagamento: 1220.0,
                 data_scadenza_pagamento: Some("2026-03-31".to_string()),

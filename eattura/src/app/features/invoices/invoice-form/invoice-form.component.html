@@ -20,11 +20,12 @@
           <div class="form-row">
             <div class="form-group">
               <label for="tipoDocumento">Tipo Documento *</label>
-              <select id="tipoDocumento" formControlName="tipoDocumento">
-                @for (td of tipiDocumento; track td[0]) {
-                  <option [value]="td[0]">{{ td[0] | tipoDocumento }}</option>
-                }
-              </select>
+              <app-doc-select
+                inputId="tipoDocumento"
+                formControlName="tipoDocumento"
+                [options]="tipoDocumentoOptions"
+                placeholder="Seleziona il tipo documento"
+              />
             </div>
             <div class="form-group">
               <label for="numero">Numero *</label>
@@ -33,8 +34,12 @@
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label for="data">Data *</label>
-              <input id="data" type="date" formControlName="data" />
+              <label for="data">Data Documento *</label>
+              <app-date-picker
+                inputId="data"
+                formControlName="data"
+                [clearable]="false"
+              />
             </div>
             <div class="form-group">
               <label for="divisa">Divisa</label>
@@ -50,11 +55,16 @@
                   <option [value]="c.id">{{ c | clientName }}</option>
                 }
               </select>
+              @if (cedenteIsRf19()) {
+                <span class="field-hint text-success">
+                  ✓ Anagrafica in Regime Forfettario (RF19) rilevata: IVA 0% (N2.2) e bollo verranno preimpostati automaticamente.
+                </span>
+              }
             </div>
             <div class="form-group">
               <label for="cessionarioId">
                 Cessionario (Cliente) *
-                <a routerLink="/clients/new" target="_blank" class="text-xs" style="margin-left: 0.5rem; text-decoration: none; color: #0284c7; font-weight: 600;" title="Aggiungi nuovo cliente con verifica Partita IVA su registro VIES">+ Nuovo con VIES</a>
+                <a routerLink="/clients/new" target="_blank" class="text-xs link-accent" title="Aggiungi nuovo cliente con verifica Partita IVA su registro VIES">+ Nuovo con VIES</a>
               </label>
               <select id="cessionarioId" formControlName="cessionarioId" (change)="onCessionarioChange()">
                 <option value="">-- Seleziona --</option>
@@ -65,8 +75,8 @@
             </div>
           </div>
           <div class="form-group">
-            <label for="causale">Causale</label>
-            <textarea id="causale" formControlName="causale" rows="3" placeholder="Opzionale"></textarea>
+            <label for="causale">Causale (opzionale)</label>
+            <textarea id="causale" formControlName="causale" rows="3" placeholder="Descrizione sintetica dell'operazione (verrà suddivisa automaticamente in blocchi da max 200 caratteri per il tracciato SdI)"></textarea>
           </div>
 
           @if (isAutofattura()) {
@@ -86,7 +96,10 @@
                 </div>
                 <div class="form-group">
                   <label for="collegataData">Data Fattura Fornitore</label>
-                  <input id="collegataData" type="date" formControlName="collegataData" />
+                  <app-date-picker
+                    inputId="collegataData"
+                    formControlName="collegataData"
+                  />
                 </div>
               </div>
             </div>
@@ -123,7 +136,7 @@
 
             @if (form.value.isPa || form.value.isSplitPayment) {
               <div class="tracciabilita-pa-box mt-2 pt-2">
-                <h5 style="margin: 0 0 0.5rem 0; font-size: 0.9rem;">Tracciabilita Flussi Finanziari (L. 136/2010 - Appalti Pubblici)</h5>
+                <h5 style="margin: 0 0 0.5rem 0; font-size: 0.9rem;">Tracciabilità Flussi Finanziari (L. 136/2010 - Appalti Pubblici)</h5>
                 <div class="form-row">
                   <div class="form-group">
                     <label for="tipoDocumentoTracciabilita">Tipo Documento</label>
@@ -177,7 +190,11 @@
                 </div>
                 <div class="form-group" style="flex: 2;">
                   <label>Data DDT *</label>
-                  <input type="date" [value]="ddt.dataDdt" (input)="updateDdtDate($index, $any($event.target).value)" />
+                  <app-date-picker
+                    [value]="ddt.dataDdt"
+                    [clearable]="false"
+                    (valueChange)="updateDdtDate($index, $event)"
+                  />
                 </div>
                 <div class="form-group" style="flex: 2;">
                   <label>Linee Collegate (es. 1, 2)</label>
@@ -223,77 +240,223 @@
         </div>
       }
 
-      <!-- Step 2: Line items -->
+      <!-- Step 2: Line items (summary table on top + dedicated editor form below) -->
       @case (2) {
         <div class="form-section">
-          <h3>Linee Dettaglio</h3>
-          <div class="lines-table">
-            <table class="table">
-              <thead>
-                <tr>
-                  <th>Descrizione</th>
-                  <th>Qta</th>
-                  <th>U.M.</th>
-                  <th>Inizio periodo</th>
-                  <th>Fine periodo</th>
-                  <th>Prezzo Unit.</th>
-                  <th>IVA %</th>
-                  <th>Natura</th>
-                  <th class="text-right">Totale</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody formArrayName="linee">
-                @for (line of linee.controls; track $index; let i = $index) {
-                  <tr [formGroupName]="i">
-                    <td>
-                      @let description = line.get("descrizione");
-                      @let showError = description?.invalid && (description?.dirty || description?.touched);
-                      <input type="text" formControlName="descrizione" placeholder="Descrizione"
-                        [attr.aria-label]="'Descrizione riga ' + (i + 1)"
-                        [attr.aria-invalid]="showError ? 'true' : null"
-                        [attr.aria-describedby]="showError ? 'description-error-' + i : null" />
-                      @if (showError) {
-                        <span class="form-error" [id]="'description-error-' + i">
-                          @if (description?.hasError("required")) {
-                            Inserisci una descrizione.
-                          } @else {
-                            Usa da 1 a 1.000 caratteri compatibili con SdI. Usa apostrofi ('), virgolette (") e trattini (-) semplici. Gli accenti italiani sono ammessi.
-                          }
-                        </span>
-                      }
-                    </td>
-                    <td class="col-sm"><input type="number" formControlName="quantita" min="0" step="0.01" /></td>
-                    <td class="col-sm"><input type="text" formControlName="unitaMisura" /></td>
-                    <td><input type="date" formControlName="dataInizioPeriodo" [attr.aria-label]="'Inizio periodo riga ' + (i + 1)" /></td>
-                    <td><input type="date" formControlName="dataFinePeriodo" [attr.aria-label]="'Fine periodo riga ' + (i + 1)" /></td>
-                    <td class="col-md"><input type="number" formControlName="prezzoUnitario" min="0" step="0.01" /></td>
-                    <td class="col-sm"><input type="number" formControlName="aliquotaIva" min="0" max="100" step="0.01" /></td>
-                    <td class="col-md">
-                      <select formControlName="natura">
-                        <option value="">-</option>
-                        @for (n of naturaCodes; track n[0]) {
-                          <option [value]="n[0]">{{ n[0] }}</option>
-                        }
-                      </select>
-                    </td>
-                    <td class="text-right">{{ lineTotal(i) | appCurrency }}</td>
-                    <td>
-                      @if (linee.length > 1) {
-                        <button type="button" class="btn-danger btn-sm" (click)="removeLine(i)">X</button>
-                      }
-                    </td>
-                  </tr>
-                }
-              </tbody>
-            </table>
-          </div>
-          <div class="d-flex justify-between align-center mt-2">
-            <button type="button" class="btn-secondary" (click)="addLine()">+ Aggiungi Riga</button>
+          <div class="d-flex justify-between align-center mb-2">
+            <div>
+              <h3 style="margin-bottom: 0.15rem;">Linee Dettaglio ({{ linee.length }})</h3>
+              <p class="text-xs text-muted">Aggiungi prodotti o prestazioni tramite il modulo sottostante. Serve almeno una riga per proseguire.</p>
+            </div>
             <div class="total-display">
-              <strong>Totale: {{ runningTotal() | appCurrency }}</strong>
+              <span>Imponibile: </span>
+              <strong>{{ runningTotal() | appCurrency }}</strong>
             </div>
           </div>
+
+          <!-- Added lines summary -->
+          @if (linee.length > 0) {
+            <div class="lines-table card p-0 mb-2">
+              <table class="table mb-0">
+                <thead>
+                  <tr>
+                    <th style="width: 38px;">#</th>
+                    <th>Descrizione</th>
+                    <th class="text-right">Q.tà</th>
+                    <th class="text-right">Prezzo Unit.</th>
+                    <th>IVA / Natura</th>
+                    <th class="text-right">Totale</th>
+                    <th class="text-right">Azioni</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (line of linee.controls; track $index; let i = $index) {
+                    @let descCtrl = line.get("descrizione");
+                    @let invalidDesc = descCtrl?.invalid;
+                    <tr [class.editing-row]="editingLineIndex() === i" [class.invalid-row]="invalidDesc">
+                      <td class="text-muted">{{ i + 1 }}</td>
+                      <td>
+                        <div class="line-desc-text">{{ line.value.descrizione }}</div>
+                        @if (line.value.dataInizioPeriodo || line.value.dataFinePeriodo) {
+                          <div class="line-meta-sub">
+                            Periodo: {{ line.value.dataInizioPeriodo || "…" }} → {{ line.value.dataFinePeriodo || "…" }}
+                          </div>
+                        }
+                        @if (line.value.fields?.scontoMaggiorazione?.length) {
+                          @let adj = line.value.fields.scontoMaggiorazione[0];
+                          <div class="line-meta-sub">
+                            {{ adj.tipo === 'SC' ? 'Sconto' : 'Maggiorazione' }}:
+                            {{ adj.importo != null ? (adj.importo | appCurrency) : (adj.percentuale + '%') }}
+                          </div>
+                        }
+                        @if (invalidDesc) {
+                          <span class="form-error">
+                            Descrizione non compatibile con SdI: clicca «Modifica» per correggerla.
+                          </span>
+                        }
+                      </td>
+                      <td class="text-right">
+                        {{ line.value.quantita ?? 1 }}
+                        @if (line.value.unitaMisura) {
+                          <span class="text-xs text-muted">{{ line.value.unitaMisura }}</span>
+                        }
+                      </td>
+                      <td class="text-right">{{ line.value.prezzoUnitario | appCurrency }}</td>
+                      <td>
+                        <span class="code-pill">{{ line.value.aliquotaIva }}%</span>
+                        @if (line.value.natura) {
+                          <span class="natura-pill ml-1" [title]="naturaLabel(line.value.natura)">{{ line.value.natura }}</span>
+                        }
+                      </td>
+                      <td class="text-right"><strong>{{ lineTotal(i) | appCurrency }}</strong></td>
+                      <td class="text-right line-row-actions">
+                        <button type="button" class="btn-secondary btn-sm" (click)="editLine(i)">Modifica</button>
+                        <button type="button" class="btn-danger btn-sm" (click)="removeLine(i)" title="Rimuovi riga">✕</button>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          } @else {
+            <div class="empty-lines-banner mb-2">
+              <strong>Nessuna riga inserita nella fattura.</strong>
+              <span>Compila il modulo qui sotto e premi <strong>«Aggiungi riga»</strong> per sbloccare il passaggio successivo.</span>
+            </div>
+          }
+
+          <!-- Dedicated Line Composer / Editor Card -->
+          <div class="card line-composer-card" [formGroup]="lineDraftForm">
+            <div class="d-flex justify-between align-center mb-1">
+              <h4 style="margin: 0; font-size: 1rem;">
+                {{ editingLineIndex() !== null ? 'Modifica Riga #' + (editingLineIndex()! + 1) : 'Nuova Riga di Dettaglio' }}
+              </h4>
+              <span class="computed-badge">
+                Totale riga: <strong>{{ draftLinePreviewTotal() | appCurrency }}</strong>
+              </span>
+            </div>
+
+            <div class="form-group mt-1">
+              <div class="d-flex justify-between align-center">
+                <label for="draft-descrizione">Descrizione Bene o Servizio *</label>
+                <span class="text-xs text-muted">{{ (lineDraftForm.get('descrizione')?.value || '').length }} / 1000</span>
+              </div>
+              <textarea
+                id="draft-descrizione"
+                formControlName="descrizione"
+                rows="3"
+                placeholder="Descrivi in modo dettagliato la prestazione o il prodotto (es. Consulenza informatica mese di Novembre 2026)"
+              ></textarea>
+              @let draftDesc = lineDraftForm.get('descrizione');
+              @if (draftDesc?.invalid && (draftDesc?.dirty || draftDesc?.touched)) {
+                <span class="form-error">
+                  @if (draftDesc?.hasError('required')) {
+                    Inserisci la descrizione del bene o servizio.
+                  } @else {
+                    Usa da 1 a 1.000 caratteri compatibili con SdI: sostituisci virgolette o apostrofi curvi con caratteri semplici (', ", -). Gli accenti italiani sono ammessi.
+                  }
+                </span>
+              }
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="draft-quantita">Quantità</label>
+                <input id="draft-quantita" type="number" formControlName="quantita" min="0" step="0.01" />
+              </div>
+              <div class="form-group">
+                <label for="draft-um">Unità di Misura</label>
+                <input id="draft-um" type="text" formControlName="unitaMisura" placeholder="es. pz, ore, mesi" />
+              </div>
+              <div class="form-group">
+                <label for="draft-prezzo">Prezzo Unitario (€) *</label>
+                <input id="draft-prezzo" type="number" formControlName="prezzoUnitario" min="0" step="0.01" />
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="draft-iva">Aliquota IVA *</label>
+                <app-doc-select
+                  inputId="draft-iva"
+                  formControlName="aliquotaIva"
+                  [options]="aliquotaIvaOptions()"
+                  [searchable]="false"
+                  placeholder="Seleziona aliquota IVA"
+                />
+              </div>
+              <div class="form-group">
+                <label for="draft-natura">
+                  Natura Operazione IVA {{ draftLineRequiresNatura() ? '*' : '(solo con IVA 0%)' }}
+                </label>
+                <app-doc-select
+                  inputId="draft-natura"
+                  formControlName="natura"
+                  [options]="naturaOptions"
+                  [disabled]="!draftLineRequiresNatura()"
+                  [clearable]="!draftLineRequiresNatura()"
+                  [placeholder]="draftLineRequiresNatura() ? 'Seleziona codice Natura SdI…' : 'Non prevista con IVA > 0%'"
+                />
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="draft-inizio">Inizio Periodo Competenza (opzionale)</label>
+                <app-date-picker
+                  inputId="draft-inizio"
+                  formControlName="dataInizioPeriodo"
+                />
+              </div>
+              <div class="form-group">
+                <label for="draft-fine">Fine Periodo Competenza (opzionale)</label>
+                <app-date-picker
+                  inputId="draft-fine"
+                  formControlName="dataFinePeriodo"
+                  [minDate]="lineDraftForm.get('dataInizioPeriodo')?.value || ''"
+                />
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="draft-sconto-tipo">Sconto / Maggiorazione (opzionale)</label>
+                <select id="draft-sconto-tipo" formControlName="scontoTipo">
+                  <option value="">Nessuno</option>
+                  <option value="SC">Sconto (SC)</option>
+                  <option value="MG">Maggiorazione (MG)</option>
+                </select>
+              </div>
+              @if (lineDraftForm.get('scontoTipo')?.value) {
+                <div class="form-group">
+                  <label for="draft-sconto-modo">Modalità Calcolo</label>
+                  <select id="draft-sconto-modo" formControlName="scontoModo">
+                    <option value="percentuale">Percentuale (%)</option>
+                    <option value="importo">Importo fisso unitario (€)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="draft-sconto-valore">Valore</label>
+                  <input id="draft-sconto-valore" type="number" formControlName="scontoValore" min="0" step="0.01" />
+                </div>
+              }
+            </div>
+
+            <div class="line-composer-actions mt-1">
+              <button type="button" class="btn-primary" (click)="saveLineDraft()">
+                {{ editingLineIndex() !== null ? '✓ Aggiorna riga' : '+ Aggiungi riga alla fattura' }}
+              </button>
+              @if (editingLineIndex() !== null) {
+                <button type="button" class="btn-secondary" (click)="cancelEditLine()">Annulla modifica</button>
+              }
+            </div>
+          </div>
+
+          @if (hasUnsavedLineDraft() && linee.length > 0 && editingLineIndex() === null) {
+            <p class="unsaved-line-hint mt-1">
+              Nota: hai compilato dei dati nel modulo riga qui sopra. Premi <strong>«+ Aggiungi riga alla fattura»</strong> se vuoi includerli prima di andare avanti.
+            </p>
+          }
         </div>
       }
 
@@ -302,16 +465,23 @@
         <div class="form-section">
           <h3>Previdenza, Ritenute e Bollo</h3>
 
-          <!-- Regime Forfettario Toggle & Automation -->
+          <!-- Regime Forfettario Card -->
           <div class="card mb-2 card-forfettario">
             <div class="d-flex justify-between align-center">
               <div>
-                <strong>Regime Forfettario (RF19 - L. 190/2014)</strong>
+                <div class="d-flex align-center gap-1 flex-wrap">
+                  <strong>Regime Forfettario (RF19 - L. 190/2014)</strong>
+                  @if (cedenteIsRf19()) {
+                    <span class="badge badge-success">Rilevato dal Cedente (RF19)</span>
+                  }
+                </div>
                 <p class="text-xs text-muted mt-05">
-                  Applica automaticamente franchigia IVA (0% - Natura N2.2), inibisce la ritenuta d'acconto, attiva il bollo virtuale per importi &gt; &euro;77,47 e inserisce le diciture di legge.
+                  Per i contribuenti in regime forfettario i compensi sono fuori campo IVA (<strong>0% · Natura N2.2</strong>),
+                  esclusi da ritenuta d'acconto (art. 1 c. 67 L. 190/2014) e soggetti a bollo virtuale (€2,00) oltre €77,47.
+                  Viene attivato in automatico quando il Cedente ha regime <code>RF19</code> in anagrafica.
                 </p>
               </div>
-              <label class="toggle-switch">
+              <label class="toggle-switch" title="Attiva o disattiva le regole del Regime Forfettario per questa fattura">
                 <input
                   type="checkbox"
                   formControlName="isForfettario"
@@ -322,14 +492,51 @@
             </div>
             @if (form.value.isForfettario) {
               <div class="banner-forfettario-active mt-1">
-                <span class="badge badge-success">Regime Forfettario Attivo</span>
-                <span class="text-xs ml-1">IVA: 0% N2.2 | Ritenuta: Inibita | Clausole legali aggiunte</span>
+                <span class="badge badge-success">Regole RF19 Attive</span>
+                <span class="text-xs ml-1">Righe: IVA 0% (N2.2) · Ritenuta d'acconto: Disabilitata</span>
               </div>
               <div class="form-group mt-1">
                 <label class="checkbox-label text-sm">
-                  <input type="checkbox" formControlName="riaddebitaBollo" />
-                  Riaddebita marca da bollo (&euro;2,00) in fattura come ricavo esente N2.2 (Risposta AdE 428/2022)
+                  <input type="checkbox" formControlName="includiCausaleForfettario" />
+                  Aggiungi automaticamente nel file XML la dicitura di legge L. 190/2014 (senza sporcare il campo Causale dello Step 1)
                 </label>
+                @if (form.value.includiCausaleForfettario) {
+                  <span class="text-xs text-muted" style="display: block; margin-top: 0.25rem;">
+                    Dicitura inclusa nell’XML: <em>“{{ statutoryForfettarioPreview }}”</em>
+                  </span>
+                }
+              </div>
+              <div class="form-group mt-1">
+                <label class="checkbox-label text-sm">
+                  <input type="checkbox" formControlName="riaddebitaBollo" (change)="onRiaddebitaBolloChange()" />
+                  Riaddebita marca da bollo (€2,00) al cliente come riga compenso N2.2 (Risposta AdE 428/2022)
+                </label>
+              </div>
+            }
+          </div>
+
+          <!-- Imposta di Bollo Virtuale -->
+          <div class="card mb-2">
+            <div class="d-flex justify-between align-center mb-1">
+              <div>
+                <strong>Imposta di Bollo Virtuale (€2,00)</strong>
+                <p class="text-xs text-muted">
+                  Obbligatoria ai sensi del D.M. 17 giugno 2014 su fatture in regime forfettario o con operazioni esenti/non soggette (N1, N2.1, N2.2, N3.5, N3.6, N4) superiori a €77,47.
+                </p>
+              </div>
+              <label class="checkbox-label">
+                <input type="checkbox" formControlName="applicaBollo" (change)="onBolloCheckboxChange()" />
+                Bollo Assolto Virtualmente
+              </label>
+            </div>
+            @if (financialSummary().isExemptOver77 && form.value.applicaBollo) {
+              <div class="banner-forfettario-active text-xs mt-1">
+                ✓ Bollo virtuale (€2,00) attivato automaticamente perché l’importo supera €77,47.
+              </div>
+            }
+            @if (financialSummary().bolloMissingWarning) {
+              <div class="banner-bollo-required text-xs mt-1" role="alert">
+                &#9888; Hai disattivato il bollo virtuale, ma l’importo non soggetto/esente supera €77,47: l’assolvimento del bollo (€2,00) è obbligatorio per legge (D.M. 17 giugno 2014).
               </div>
             }
           </div>
@@ -342,7 +549,7 @@
                 <p class="text-xs text-muted">Contributo integrativo cassa professionale o rivalsa Gestione Separata.</p>
               </div>
               <label class="checkbox-label">
-                <input type="checkbox" formControlName="applicaCassa" />
+                <input type="checkbox" formControlName="applicaCassa" (change)="syncAutoBollo()" />
                 Attiva Cassa
               </label>
             </div>
@@ -351,11 +558,11 @@
               <div class="form-row mt-1">
                 <div class="form-group col-2">
                   <label for="tipoCassa">Cassa / Fondo (SDI)</label>
-                  <select id="tipoCassa" formControlName="tipoCassa">
-                    @for (tc of tipiCassa; track tc[0]) {
-                      <option [value]="tc[0]">{{ tc[1] }}</option>
-                    }
-                  </select>
+                  <app-doc-select
+                    inputId="tipoCassa"
+                    formControlName="tipoCassa"
+                    [options]="tipoCassaOptions"
+                  />
                 </div>
                 <div class="form-group">
                   <label for="alCassa">Aliquota %</label>
@@ -369,11 +576,11 @@
                     <input type="checkbox" formControlName="cassaSoggettaIva" />
                     Soggetta ad IVA ordinaria (22%)
                   </label>
+                  <label class="checkbox-label text-sm">
+                    <input type="checkbox" formControlName="cassaSoggettaRitenuta" />
+                    Soggetta a ritenuta d'acconto (es. Rivalsa INPS 4%)
+                  </label>
                 }
-                <label class="checkbox-label text-sm">
-                  <input type="checkbox" formControlName="cassaSoggettaRitenuta" />
-                  Soggetta a ritenuta d'acconto (es. Rivalsa INPS 4%)
-                </label>
               </div>
 
               <div class="computed-badge mt-1">
@@ -382,72 +589,51 @@
             }
           </div>
 
-          <!-- Ritenuta d'Acconto -->
-          <div class="card mb-2">
-            <div class="d-flex justify-between align-center mb-1">
-              <div>
-                <strong>Ritenuta d'Acconto (DatiRitenuta)</strong>
-                <p class="text-xs text-muted">Trattenuta alla fonte operata dal sostituto d'imposta (non applicabile in regime forfettario).</p>
-              </div>
-              @if (!form.value.isForfettario) {
+          <!-- Ritenuta d'Acconto (hidden when Forfettario is active to reduce noise) -->
+          @if (!form.value.isForfettario) {
+            <div class="card mb-2">
+              <div class="d-flex justify-between align-center mb-1">
+                <div>
+                  <strong>Ritenuta d'Acconto (DatiRitenuta)</strong>
+                  <p class="text-xs text-muted">Trattenuta alla fonte operata dal sostituto d'imposta.</p>
+                </div>
                 <label class="checkbox-label">
                   <input type="checkbox" formControlName="applicaRitenuta" />
                   Attiva Ritenuta
                 </label>
-              } @else {
-                <span class="badge badge-secondary">Non applicabile in RF19</span>
+              </div>
+
+              @if (form.value.applicaRitenuta) {
+                <div class="form-row mt-1">
+                  <div class="form-group">
+                    <label for="tipoRitenuta">Tipo Ritenuta</label>
+                    <app-doc-select
+                      inputId="tipoRitenuta"
+                      formControlName="tipoRitenuta"
+                      [options]="tipoRitenutaOptions"
+                      [searchable]="false"
+                    />
+                  </div>
+                  <div class="form-group">
+                    <label for="aliquotaRitenuta">Aliquota %</label>
+                    <input id="aliquotaRitenuta" type="number" formControlName="aliquotaRitenuta" min="0" max="100" step="0.01" />
+                  </div>
+                  <div class="form-group">
+                    <label for="causalePagamentoRitenuta">Causale Pagamento</label>
+                    <app-doc-select
+                      inputId="causalePagamentoRitenuta"
+                      formControlName="causalePagamentoRitenuta"
+                      [options]="causaleRitenutaOptions"
+                      [searchable]="false"
+                    />
+                  </div>
+                </div>
+                <div class="computed-badge mt-1">
+                  Importo Ritenuta calcolato: <strong>-{{ financialSummary().importoRitenuta | appCurrency }}</strong>
+                </div>
               }
             </div>
-
-            @if (form.value.applicaRitenuta && !form.value.isForfettario) {
-              <div class="form-row mt-1">
-                <div class="form-group">
-                  <label for="tipoRitenuta">Tipo Ritenuta</label>
-                  <select id="tipoRitenuta" formControlName="tipoRitenuta">
-                    @for (tr of tipiRitenuta; track tr[0]) {
-                      <option [value]="tr[0]">{{ tr[1] }}</option>
-                    }
-                  </select>
-                </div>
-                <div class="form-group">
-                  <label for="aliquotaRitenuta">Aliquota %</label>
-                  <input id="aliquotaRitenuta" type="number" formControlName="aliquotaRitenuta" min="0" max="100" step="0.01" />
-                </div>
-                <div class="form-group">
-                  <label for="causalePagamentoRitenuta">Causale Pagamento</label>
-                  <select id="causalePagamentoRitenuta" formControlName="causalePagamentoRitenuta">
-                    @for (cp of causaliPagamentoRitenuta; track cp[0]) {
-                      <option [value]="cp[0]">{{ cp[1] }}</option>
-                    }
-                  </select>
-                </div>
-              </div>
-              <div class="computed-badge mt-1">
-                Importo Ritenuta calcolato: <strong>-{{ financialSummary().importoRitenuta | appCurrency }}</strong>
-              </div>
-            }
-          </div>
-
-          <!-- Imposta di Bollo Virtuale -->
-          <div class="card mb-2">
-            <div class="d-flex justify-between align-center mb-1">
-              <div>
-                <strong>Imposta di Bollo Virtuale (&euro;2,00)</strong>
-                <p class="text-xs text-muted">
-                  Obbligatoria ai sensi del D.M. 17 giugno 2014 su operazioni esenti o non soggette superiori a &euro;77,47.
-                </p>
-              </div>
-              <label class="checkbox-label">
-                <input type="checkbox" formControlName="applicaBollo" />
-                Bollo Assolto Virtualmente
-              </label>
-            </div>
-            @if (financialSummary().isExemptOver77) {
-              <div class="banner-bollo-required text-xs mt-1">
-                &#9888; Rilevate operazioni esenti/non soggette superiori a &euro;77,47: applicazione del bollo virtuale obbligatoria per legge.
-              </div>
-            }
-          </div>
+          }
 
           <!-- Live Financial Breakdown -->
           <div class="financial-card mt-2">
@@ -469,7 +655,7 @@
                   <strong>+{{ financialSummary().totIva | appCurrency }}</strong>
                 </div>
               }
-              @if (financialSummary().bolloAmt > 0 && (form.value.riaddebitaBollo || form.value.applicaBollo)) {
+              @if (financialSummary().bolloAmt > 0) {
                 <div class="fin-row">
                   <span>+ Imposta di Bollo:</span>
                   <strong>+{{ financialSummary().bolloAmt | appCurrency }}</strong>
@@ -506,33 +692,37 @@
           <h3>Dati Pagamento</h3>
           <div class="form-row">
             <div class="form-group">
-              <label for="condizioniPagamento">Condizioni Pagamento</label>
-              <select id="condizioniPagamento" formControlName="condizioniPagamento">
-                @for (cp of condizioniPagamento; track cp[0]) {
-                  <option [value]="cp[0]">{{ cp[0] | condizioniPagamento }}</option>
-                }
-              </select>
+              <label for="condizioniPagamento">Condizioni Pagamento (XML CondizioniPagamento)</label>
+              <app-doc-select
+                inputId="condizioniPagamento"
+                formControlName="condizioniPagamento"
+                [options]="condizioniPagamentoOptions"
+                [searchable]="false"
+              />
             </div>
             <div class="form-group">
-              <label for="modalitaPagamento">Modalita Pagamento *</label>
-              <select id="modalitaPagamento" formControlName="modalitaPagamento">
-                @for (mp of modalitaPagamento; track mp[0]) {
-                  <option [value]="mp[0]">{{ mp[0] | modalitaPagamento }}</option>
-                }
-              </select>
+              <label for="modalitaPagamento">Modalità Pagamento (XML ModalitaPagamento) *</label>
+              <app-doc-select
+                inputId="modalitaPagamento"
+                formControlName="modalitaPagamento"
+                [options]="modalitaPagamentoOptions"
+              />
             </div>
           </div>
           <div class="form-row">
             <div class="form-group">
               <label for="importoPagamento">Importo Pagamento *</label>
-              <input id="importoPagamento" type="number" formControlName="importoPagamento" step="0.01" />
+              <input id="importoPagamento" type="number" formControlName="importoPagamento" step="0.01" (input)="onPaymentAmountInput()" />
               <button type="button" class="btn-link mt-1" (click)="syncPaymentAmount()">
-                Copia da Netto a Pagare ({{ financialSummary().nettoAPagare | appCurrency }})
+                Allinea a Netto a Pagare ({{ financialSummary().nettoAPagare | appCurrency }})
               </button>
             </div>
             <div class="form-group">
               <label for="dataScadenzaPagamento">Data Scadenza</label>
-              <input id="dataScadenzaPagamento" type="date" formControlName="dataScadenzaPagamento" />
+              <app-date-picker
+                inputId="dataScadenzaPagamento"
+                formControlName="dataScadenzaPagamento"
+              />
             </div>
           </div>
           <div class="form-group">
@@ -554,7 +744,7 @@
               }
               @if (form.value.codiceCig || form.value.codiceCup) {
                 <div class="mt-1" style="font-size: 0.85rem;">
-                  <strong>Tracciabilita Appalti Pubblici:</strong>
+                  <strong>Tracciabilità Appalti Pubblici:</strong>
                   @if (form.value.codiceCig) { <span class="mr-1">CIG: <code>{{ form.value.codiceCig }}</code></span> }
                   @if (form.value.codiceCup) { <span>CUP: <code>{{ form.value.codiceCup }}</code></span> }
                 </div>
@@ -609,9 +799,9 @@
             <thead>
               <tr>
                 <th>Descrizione</th>
-                <th class="text-right">Qta</th>
+                <th class="text-right">Q.tà</th>
                 <th class="text-right">Prezzo Unit.</th>
-                <th class="text-right">IVA %</th>
+                <th class="text-right">IVA / Natura</th>
                 <th class="text-right">Totale</th>
               </tr>
             </thead>
@@ -621,7 +811,10 @@
                   <td>{{ line.value.descrizione }}</td>
                   <td class="text-right">{{ line.value.quantita }}</td>
                   <td class="text-right">{{ line.value.prezzoUnitario | appCurrency }}</td>
-                  <td class="text-right">{{ line.value.aliquotaIva }}%</td>
+                  <td class="text-right">
+                    {{ line.value.aliquotaIva }}%
+                    @if (line.value.natura) { ({{ line.value.natura }}) }
+                  </td>
                   <td class="text-right">{{ lineTotal(i) | appCurrency }}</td>
                 </tr>
               }
@@ -678,8 +871,12 @@
           <h4 class="mt-2">Pagamento</h4>
           <div class="summary-grid mt-1">
             <div class="summary-item">
-              <span class="summary-label">Modalita</span>
-              <span>{{ form.value.modalitaPagamento | modalitaPagamento }}</span>
+              <span class="summary-label">Condizioni</span>
+              <span>{{ form.value.condizioniPagamento | condizioniPagamento }} ({{ form.value.condizioniPagamento }})</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Modalità</span>
+              <span>{{ form.value.modalitaPagamento | modalitaPagamento }} ({{ form.value.modalitaPagamento }})</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">Importo</span>
@@ -706,7 +903,7 @@
           }
           @if (validationErrors().length > 0) {
             <ul class="error-list mt-1">
-              @for (err of validationErrors(); track err.code) {
+              @for (err of validationErrors(); track $index) {
                 <li><strong>{{ err.code }}</strong>: {{ err.message }}</li>
               }
             </ul>
@@ -721,7 +918,15 @@
         <button type="button" class="btn-secondary" (click)="prevStep()">Precedente</button>
       }
       @if (currentStep() < 5) {
-        <button type="button" class="btn-primary" (click)="nextStep()">Successivo</button>
+        <button
+          type="button"
+          class="btn-primary"
+          [disabled]="currentStep() === 2 && !canProceedFromLines()"
+          [title]="currentStep() === 2 && !canProceedFromLines() ? 'Aggiungi almeno una riga di dettaglio per proseguire' : ''"
+          (click)="nextStep()"
+        >
+          Successivo
+        </button>
       }
       @if (currentStep() === 5) {
         <button type="submit" class="btn-primary">Salva Fattura</button>

@@ -1,0 +1,128 @@
+<div class="date-picker-root" [class.is-open]="isOpen()" [class.is-disabled]="isDisabled()">
+  <div class="date-picker-control">
+    <button
+      type="button"
+      class="date-picker-trigger"
+      aria-haspopup="dialog"
+      [id]="inputId() || null"
+      [disabled]="isDisabled()"
+      [attr.aria-expanded]="isOpen()"
+      [attr.aria-label]="ariaLabel() || placeholder()"
+      (click)="toggleOpen()"
+    >
+      <lucide-icon [img]="icons.Calendar" [size]="16" class="calendar-icon" />
+      @if (formattedValue(); as formatted) {
+        <span class="date-value">{{ formatted }}</span>
+      } @else {
+        <span class="date-placeholder">{{ placeholder() }}</span>
+      }
+    </button>
+
+    @if (clearable() && formattedValue() && !isDisabled()) {
+      <button
+        type="button"
+        class="date-clear-btn"
+        aria-label="Cancella data"
+        title="Cancella data"
+        (click)="clearDate($event)"
+      >
+        <lucide-icon [img]="icons.X" [size]="14" />
+      </button>
+    }
+  </div>
+
+  @if (isOpen()) {
+    <div class="picker-backdrop" aria-hidden="true" (click)="closePopover()"></div>
+
+    <div class="date-picker-popover" role="dialog" aria-label="Seleziona data">
+      <div class="calendar-header">
+        <button
+          type="button"
+          class="calendar-nav-btn"
+          aria-label="Mese precedente"
+          (click)="prevMonth()"
+        >
+          <lucide-icon [img]="icons.ChevronLeft" [size]="16" />
+        </button>
+
+        <div class="calendar-selectors">
+          <select
+            class="calendar-select month-select"
+            aria-label="Seleziona mese"
+            [value]="viewMonth()"
+            (change)="onMonthChange($event)"
+          >
+            @for (monthLabel of months; track monthLabel; let idx = $index) {
+              <option [value]="idx" [selected]="idx === viewMonth()">{{ monthLabel }}</option>
+            }
+          </select>
+
+          <select
+            class="calendar-select year-select"
+            aria-label="Seleziona anno"
+            [value]="viewYear()"
+            (change)="onYearChange($event)"
+          >
+            @for (year of yearOptions(); track year) {
+              <option [value]="year" [selected]="year === viewYear()">{{ year }}</option>
+            }
+          </select>
+        </div>
+
+        <button
+          type="button"
+          class="calendar-nav-btn"
+          aria-label="Mese successivo"
+          (click)="nextMonth()"
+        >
+          <lucide-icon [img]="icons.ChevronRight" [size]="16" />
+        </button>
+      </div>
+
+      <div class="calendar-weekdays" aria-hidden="true">
+        @for (weekday of weekdays; track weekday) {
+          <span class="weekday-cell">{{ weekday }}</span>
+        }
+      </div>
+
+      <div class="calendar-grid">
+        @for (cell of calendarDays(); track cell.iso) {
+          <button
+            type="button"
+            class="day-cell"
+            [class.is-outside]="!cell.inCurrentMonth"
+            [class.is-today]="cell.isToday"
+            [class.is-selected]="cell.isSelected"
+            [disabled]="cell.isDisabled"
+            [attr.data-iso]="cell.iso"
+            [attr.aria-pressed]="cell.isSelected"
+            (click)="selectDate(cell)"
+          >
+            {{ cell.day }}
+          </button>
+        }
+      </div>
+
+      <div class="calendar-footer">
+        <button
+          type="button"
+          class="footer-btn today-btn"
+          [disabled]="isTodayDisabled()"
+          (click)="selectToday()"
+        >
+          Oggi
+        </button>
+
+        @if (clearable()) {
+          <button
+            type="button"
+            class="footer-btn clear-btn"
+            (click)="clearDate($event)"
+          >
+            Cancella
+          </button>
+        }
+      </div>
+    </div>
+  }
+</div>

@@ -175,6 +175,7 @@ export interface InvoiceLine extends InvoiceLineFields {
 }
 
 export interface PaymentDetail {
+  condizioniPagamento?: string | null;
   modalitaPagamento: string;
   importoPagamento: number;
   dataScadenzaPagamento: string | null;
@@ -218,7 +219,6 @@ export interface CreateInvoiceRequest {
   datiRitenuta?: DatiRitenutaDetail[] | null;
   datiBollo?: DatiBolloDetail | null;
   datiCassaPrevidenziale?: DatiCassaDetail[] | null;
-  isAutofattura?: boolean;
   soggettoEmittente?: string | null;
   datiFattureCollegate?: DatiFatturaCollegataDetail[] | null;
   isPa?: boolean;
@@ -243,6 +243,7 @@ export interface CreateLineRequest extends InvoiceLineFields {
 }
 
 export interface CreatePaymentRequest {
+  condizioniPagamento?: string | null;
   modalitaPagamento: string;
   importoPagamento: number;
   dataScadenzaPagamento: string | null;

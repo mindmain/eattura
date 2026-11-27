@@ -158,7 +158,7 @@ export class InvoiceListComponent implements OnInit {
       this.notify.success(`Fattura ${detail.numero} importata`);
     } catch (e) {
       this.notify.error(
-        typeof e === "string" ? e : "Errore durante l'import del file XML"
+        e instanceof Error ? e.message : typeof e === "string" ? e : "Errore durante l'import del file XML"
       );
     }
   }
@@ -186,7 +186,7 @@ export class InvoiceListComponent implements OnInit {
       }
     } catch (e) {
       this.notify.error(
-        typeof e === "string" ? e : "Errore durante l'import della cartella"
+        e instanceof Error ? e.message : typeof e === "string" ? e : "Errore durante l'import della cartella"
       );
     } finally {
       this.importing.set(false);
@@ -205,7 +205,7 @@ export class InvoiceListComponent implements OnInit {
       );
     } catch (e) {
       this.notify.error(
-        typeof e === "string" ? e : "Errore durante la sincronizzazione PEC"
+        e instanceof Error ? e.message : typeof e === "string" ? e : "Errore durante la sincronizzazione PEC"
       );
     } finally {
       this.syncing.set(false);
@@ -222,7 +222,7 @@ export class InvoiceListComponent implements OnInit {
       this.notify.success("Fattura eliminata");
     } catch (e) {
       this.notify.error(
-        typeof e === "string" ? e : "Errore durante l'eliminazione della fattura"
+        e instanceof Error ? e.message : typeof e === "string" ? e : "Errore durante l'eliminazione della fattura"
       );
     }
   }

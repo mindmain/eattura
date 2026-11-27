@@ -1,0 +1,95 @@
+<div class="doc-select-root" [class.is-open]="isOpen()" [class.is-disabled]="isDisabled()">
+  <div class="doc-select-control">
+    <button
+      type="button"
+      class="doc-select-trigger"
+      role="combobox"
+      aria-haspopup="listbox"
+      [id]="inputId() || null"
+      [disabled]="isDisabled()"
+      [attr.aria-expanded]="isOpen()"
+      [attr.aria-label]="ariaLabel() || placeholder()"
+      (click)="toggleOpen()"
+    >
+      @if (selectedOption(); as selected) {
+        <span class="doc-code-badge">{{ selected.code }}</span>
+        <span class="doc-trigger-label">{{ selected.label }}</span>
+      } @else {
+        <span class="doc-trigger-placeholder">{{ emptyLabel() || placeholder() }}</span>
+      }
+      <lucide-icon [img]="icons.ChevronDown" [size]="15" class="doc-chevron" />
+    </button>
+
+    @if (clearable() && hasSelectedValue() && !isDisabled()) {
+      <button
+        type="button"
+        class="doc-clear-btn"
+        aria-label="Cancella selezione"
+        title="Cancella selezione"
+        (click)="clearSelection($event)"
+      >
+        <lucide-icon [img]="icons.X" [size]="14" />
+      </button>
+    }
+  </div>
+
+  @if (isOpen()) {
+    <div class="select-backdrop" aria-hidden="true" (click)="closeDropdown()"></div>
+
+    <div class="doc-select-dropdown">
+      @if (isSearchable()) {
+        <div class="doc-search-box">
+          <lucide-icon [img]="icons.Search" [size]="14" class="doc-search-icon" />
+          <input
+            type="text"
+            class="doc-search-input"
+            placeholder="Cerca codice o descrizione…"
+            aria-label="Filtra opzioni"
+            [value]="searchQuery()"
+            (input)="onSearchInput($event)"
+          />
+        </div>
+      }
+
+      <div class="doc-options-list" role="listbox" [attr.aria-label]="ariaLabel() || placeholder()">
+        @if (showEmptyOption()) {
+          <button
+            type="button"
+            role="option"
+            class="doc-option-row doc-option-empty"
+            [class.is-selected]="!hasSelectedValue()"
+            [attr.aria-selected]="!hasSelectedValue()"
+            (click)="selectEmpty($event)"
+          >
+            <span class="doc-option-body">
+              <span class="doc-option-empty-label">{{ emptyLabel() }}</span>
+            </span>
+          </button>
+        }
+
+        @for (opt of filteredOptions(); track opt.value; let i = $index) {
+          <button
+            type="button"
+            role="option"
+            class="doc-option-row"
+            [class.is-selected]="isOptionSelected(opt)"
+            [class.is-active]="activeIndex() === i"
+            [attr.aria-selected]="isOptionSelected(opt)"
+            (mouseenter)="activeIndex.set(i)"
+            (click)="selectOption(opt)"
+          >
+            <span class="doc-code-badge">{{ opt.code }}</span>
+            <span class="doc-option-body">
+              <span class="doc-option-label">{{ opt.label }}</span>
+              @if (opt.detail) {
+                <span class="doc-option-detail">{{ opt.detail }}</span>
+              }
+            </span>
+          </button>
+        } @empty {
+          <div class="doc-empty-results">Nessuna opzione corrispondente</div>
+        }
+      </div>
+    </div>
+  }
+</div>

@@ -250,6 +250,8 @@ pub struct InvoiceLineDetail {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaymentDetail {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condizioni_pagamento: Option<String>,
     pub modalita_pagamento: String,
     pub importo_pagamento: f64,
     pub data_scadenza_pagamento: Option<String>,
@@ -528,10 +530,12 @@ fn check_draft_lines(lines: &[CreateLineRequest]) -> Result<(), String> {
 }
 
 /// Request to create a single payment entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[derive(schemars::JsonSchema)]
 pub struct CreatePaymentRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condizioni_pagamento: Option<String>,
     pub modalita_pagamento: String,
     pub importo_pagamento: f64,
     pub data_scadenza_pagamento: Option<String>,
@@ -996,7 +1000,7 @@ pub async fn create_invoice_store(
     for payment in &invoice.pagamenti {
         let payment_id = uuid::Uuid::new_v4().to_string();
 
-        tx.insert("invoice_payments", serde_json::json!({"id": &payment_id, "invoice_id": &invoice_id, "modalita_pagamento": &payment.modalita_pagamento, "importo_pagamento": payment.importo_pagamento, "data_scadenza_pagamento": &payment.data_scadenza_pagamento, "iban": &payment.iban})).await
+        tx.insert("invoice_payments", serde_json::json!({"id": &payment_id, "invoice_id": &invoice_id, "condizioni_pagamento": &payment.condizioni_pagamento, "modalita_pagamento": &payment.modalita_pagamento, "importo_pagamento": payment.importo_pagamento, "data_scadenza_pagamento": &payment.data_scadenza_pagamento, "iban": &payment.iban})).await
         .map_err(|e| e.to_string())?;
     }
 
@@ -1319,7 +1323,7 @@ pub async fn update_invoice_store(
     for payment in &invoice.pagamenti {
         let payment_id = uuid::Uuid::new_v4().to_string();
 
-        tx.insert("invoice_payments", serde_json::json!({"id": &payment_id, "invoice_id": &id, "modalita_pagamento": &payment.modalita_pagamento, "importo_pagamento": payment.importo_pagamento, "data_scadenza_pagamento": &payment.data_scadenza_pagamento, "iban": &payment.iban})).await
+        tx.insert("invoice_payments", serde_json::json!({"id": &payment_id, "invoice_id": &id, "condizioni_pagamento": &payment.condizioni_pagamento, "modalita_pagamento": &payment.modalita_pagamento, "importo_pagamento": payment.importo_pagamento, "data_scadenza_pagamento": &payment.data_scadenza_pagamento, "iban": &payment.iban})).await
         .map_err(|e| e.to_string())?;
     }
 
@@ -2311,6 +2315,7 @@ pub(crate) async fn fetch_invoice_detail(
     let pagamenti = payment_rows
         .iter()
         .map(|row| PaymentDetail {
+            condizioni_pagamento: row.get("condizioni_pagamento"),
             modalita_pagamento: row.get("modalita_pagamento"),
             importo_pagamento: row.get("importo_pagamento"),
             data_scadenza_pagamento: row.get("data_scadenza_pagamento"),
@@ -2910,10 +2915,13 @@ pub(crate) async fn build_fattura_from_store(
         });
     }
 
-    // Reconstruct Causale, DatiRitenuta, DatiBollo, DatiCassaPrevidenziale
+    // Reconstruct Causale (chunked into <=200 chars per XSD String200LatinType), DatiRitenuta, DatiBollo, DatiCassaPrevidenziale
     let causale: Vec<String> = inv
         .get::<Option<Vec<String>>>("causale")
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .into_iter()
+        .flat_map(|line| split_sdi_causale(&line))
+        .collect();
     let dati_ritenuta: Vec<DatiRitenuta> = inv
         .get::<Option<Vec<DatiRitenutaDetail>>>("dati_ritenuta")
         .unwrap_or_default()
@@ -3536,6 +3544,7 @@ pub async fn generate_autofattura_draft_store(
     )];
 
     let pagamenti = vec![CreatePaymentRequest {
+        condizioni_pagamento: Some("TP02".to_string()),
         modalita_pagamento: "MP05".to_string(),
         importo_pagamento: totale_lordo,
         data_scadenza_pagamento: None,
@@ -3559,6 +3568,44 @@ pub async fn generate_autofattura_draft_store(
         soggetto_emittente: Some("CC".to_string()),
         ..Default::default()
     })
+}
+
+fn split_sdi_causale(text: &str) -> Vec<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    if trimmed.chars().count() <= 200 {
+        return vec![trimmed.to_owned()];
+    }
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    for word in trimmed.split_whitespace() {
+        let word_len = word.chars().count();
+        let cur_len = current.chars().count();
+        if cur_len > 0 && cur_len + 1 + word_len > 200 {
+            chunks.push(std::mem::take(&mut current));
+        }
+        if word_len > 200 {
+            let mut buf = String::new();
+            for ch in word.chars() {
+                buf.push(ch);
+                if buf.chars().count() == 200 {
+                    chunks.push(std::mem::take(&mut buf));
+                }
+            }
+            current = buf;
+        } else {
+            if !current.is_empty() {
+                current.push(' ');
+            }
+            current.push_str(word);
+        }
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
 }
 
 #[cfg(test)]
@@ -3777,6 +3824,7 @@ mod tests {
                 },
             ],
             pagamenti: vec![CreatePaymentRequest {
+                condizioni_pagamento: None,
                 modalita_pagamento: "MP05".to_string(),
                 importo_pagamento: 170.80,
                 data_scadenza_pagamento: Some("2026-04-01".to_string()),
@@ -3941,6 +3989,7 @@ mod tests {
                 natura: None,
             }],
             pagamenti: vec![CreatePaymentRequest {
+                condizioni_pagamento: None,
                 modalita_pagamento: "MP05".to_string(),
                 importo_pagamento: 1070.80, // Netto a pagare
                 data_scadenza_pagamento: Some("2026-04-01".to_string()),
@@ -4475,6 +4524,7 @@ mod tests {
                 natura: Some("N2.2".to_string()),
             }],
             pagamenti: vec![CreatePaymentRequest {
+                condizioni_pagamento: None,
                 modalita_pagamento: "MP08".to_string(), // Carta di credito
                 importo_pagamento: 100.0,
                 data_scadenza_pagamento: None,
@@ -4623,6 +4673,7 @@ mod tests {
                 natura: None,
             }],
             pagamenti: vec![CreatePaymentRequest {
+                condizioni_pagamento: None,
                 modalita_pagamento: "MP05".to_string(),
                 importo_pagamento: 1000.00, // Netto a pagare = 1000 (taxable base), VAT remitted directly to State
                 data_scadenza_pagamento: Some("2026-04-30".to_string()),
@@ -4762,6 +4813,7 @@ mod tests {
                 natura: None,
             }],
             pagamenti: vec![CreatePaymentRequest {
+                condizioni_pagamento: None,
                 modalita_pagamento: "MP05".to_string(),
                 importo_pagamento: 610.0,
                 data_scadenza_pagamento: Some("2026-04-30".to_string()),

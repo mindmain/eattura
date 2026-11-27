@@ -443,7 +443,11 @@
             <div class="form-row">
               <div class="form-group flex-1">
                 <label for="pay-date">Data Pagamento *</label>
-                <input id="pay-date" type="date" formControlName="dataPagamento" />
+                <app-date-picker
+                  inputId="pay-date"
+                  formControlName="dataPagamento"
+                  [clearable]="false"
+                />
               </div>
               <div class="form-group flex-1">
                 <label for="pay-amount">Importo Pagato (€) *</label>

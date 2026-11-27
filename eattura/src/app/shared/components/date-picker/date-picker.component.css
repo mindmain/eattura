@@ -1,0 +1,290 @@
+:host {
+  display: block;
+  width: 100%;
+}
+
+.date-picker-root {
+  position: relative;
+  width: 100%;
+}
+
+.date-picker-control {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  background: var(--surface-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.date-picker-root.is-open .date-picker-control,
+.date-picker-control:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+:host(.ng-invalid.ng-touched) .date-picker-control {
+  border-color: #d32f2f;
+}
+
+.date-picker-root.is-disabled .date-picker-control {
+  opacity: 0.6;
+  background: var(--surface-soft);
+}
+
+.date-picker-trigger {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.46rem 0.65rem;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+
+.date-picker-trigger:focus-visible {
+  outline: none;
+}
+
+.date-picker-trigger:disabled {
+  cursor: not-allowed;
+}
+
+.calendar-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.date-value {
+  color: var(--text-primary);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.date-placeholder {
+  color: var(--text-muted);
+}
+
+.date-clear-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.65rem;
+  height: 1.65rem;
+  margin-right: 0.3rem;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.date-clear-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: transparent;
+}
+
+.date-picker-popover {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  width: 286px;
+  z-index: 1000;
+  padding: 0.75rem;
+  background: var(--surface-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card);
+}
+
+.calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  margin-bottom: 0.65rem;
+}
+
+.calendar-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.calendar-nav-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.calendar-selectors {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.calendar-select {
+  padding: 0.26rem 0.42rem;
+  font-size: 0.83rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-soft);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.month-select {
+  flex: 1.3;
+  min-width: 0;
+}
+
+.year-select {
+  flex: 0.9;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.15rem;
+  margin-bottom: 0.3rem;
+}
+
+.weekday-cell {
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  padding: 0.2rem 0;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.18rem;
+}
+
+.day-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 2.05rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.83rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.day-cell:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.day-cell.is-outside {
+  color: var(--text-muted);
+  opacity: 0.55;
+}
+
+.day-cell.is-today:not(.is-selected) {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.day-cell.is-selected {
+  background: var(--accent);
+  color: var(--surface-solid);
+  font-weight: 700;
+  opacity: 1;
+}
+
+.day-cell:disabled {
+  opacity: 0.28;
+  cursor: not-allowed;
+}
+
+.calendar-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--border);
+}
+
+.footer-btn {
+  padding: 0.3rem 0.65rem;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.today-btn {
+  border: 1px solid var(--border);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.today-btn:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--surface-solid);
+}
+
+.today-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.clear-btn {
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+}
+
+.clear-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}

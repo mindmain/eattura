@@ -252,8 +252,10 @@ export class ClientFormComponent {
         this.notify.success("Cliente creato");
       }
       this.router.navigate(["/clients"]);
-    } catch {
-      this.notify.error("Errore durante il salvataggio del cliente");
+    } catch (e) {
+      this.notify.error(
+        e instanceof Error ? e.message : "Errore durante il salvataggio del cliente"
+      );
     }
   }
 

@@ -315,3 +315,115 @@ input:checked + .slider:before {
 .tracciabilita-pa-box { border-top: 1px solid var(--border); }
 .ddt-row, .allegato-row { background: var(--surface-solid); border: 1px solid var(--border); border-radius: 8px; }
 .summary-pa-banner { background: var(--accent-soft); border: 1px solid var(--border); border-radius: 8px; }
+
+.link-accent {
+  margin-left: 0.5rem;
+  text-decoration: none;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.field-hint {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 0.78rem;
+}
+
+.text-success {
+  color: #15803d;
+}
+
+:host-context([data-theme="dark"]) .text-success {
+  color: #4ade80;
+}
+
+:host-context([data-theme="dark"]) .banner-forfettario-active {
+  background: rgba(16, 185, 129, 0.14);
+  border-color: rgba(52, 211, 153, 0.35);
+  color: var(--text-primary);
+}
+
+:host-context([data-theme="dark"]) .banner-bollo-required {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(251, 191, 36, 0.38);
+  color: #fcd34d;
+}
+
+.empty-lines-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 1rem 1.15rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+}
+
+.line-composer-card {
+  background: var(--surface-solid);
+  border: 1px solid var(--border-strong);
+  border-left: 4px solid var(--accent);
+}
+
+.line-composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.line-desc-text {
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+.line-meta-sub {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+.code-pill,
+.natura-pill {
+  display: inline-block;
+  padding: 0.12rem 0.42rem;
+  border-radius: 5px;
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+
+.code-pill {
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.natura-pill {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.line-row-actions {
+  white-space: nowrap;
+}
+
+.line-row-actions button + button {
+  margin-left: 0.35rem;
+}
+
+.editing-row {
+  background: var(--accent-soft);
+}
+
+.invalid-row {
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.unsaved-line-hint {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}

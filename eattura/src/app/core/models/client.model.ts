@@ -11,6 +11,7 @@ export interface ClientSummary {
   searchText?: string;
   isPa?: boolean;
   codiceDestinatario?: string | null;
+  regimeFiscale?: string | null;
 }
 
 export interface ClientDetail extends ClientSummary {

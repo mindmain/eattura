@@ -4,6 +4,7 @@ import { ActivatedRoute, convertToParamMap } from "@angular/router";
 import { toSignal } from "@angular/core/rxjs-interop";
 import { of } from "rxjs";
 import { SettingsStore } from "../../core/stores/settings.store";
+import { ClientStore } from "../../core/stores/client.store";
 import { InvoiceStore } from "../../core/stores/invoice.store";
 import { NotificationService } from "../../core/services/notification.service";
 import { signal } from "@angular/core";
@@ -28,6 +29,7 @@ export class SettingsComponent implements OnInit {
   private readonly routeParams = toSignal(this.route?.queryParamMap ?? of(convertToParamMap({})));
   readonly section = computed(() => this.routeParams()?.get("section") === "account" ? "account" : "app");
   readonly settingsStore = inject(SettingsStore);
+  private readonly clientStore = inject(ClientStore, { optional: true });
   readonly invoiceStore = inject(InvoiceStore, { optional: true });
   readonly pecSyncStatus = computed(() => this.invoiceStore?.pecSyncStatus() ?? null);
   private notify = inject(NotificationService);
@@ -162,6 +164,7 @@ export class SettingsComponent implements OnInit {
         email: v.email || null,
         pec: v.pec || null,
       });
+      await this.clientStore?.refresh();
       this.notify.success("Dati del cedente salvati");
     } catch (e) {
       console.error("saveCompany failed:", e);

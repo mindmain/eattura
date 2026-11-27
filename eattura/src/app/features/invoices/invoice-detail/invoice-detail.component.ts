@@ -357,7 +357,7 @@ export class InvoiceDetailComponent {
       this.router.navigate(["/invoices/new"], { state: { autofatturaDraft: draft } });
     } catch (e) {
       this.notify.error(
-        typeof e === "string" ? e : "Errore durante la generazione dell'autofattura"
+        e instanceof Error ? e.message : typeof e === "string" ? e : "Errore durante la generazione dell'autofattura"
       );
     } finally {
       this.generatingAutofattura.set(false);
@@ -382,7 +382,7 @@ export class InvoiceDetailComponent {
       this.router.navigate(["/invoices", inv.id, "edit"]);
     } catch (e) {
       this.notify.error(
-        typeof e === "string" ? e : "Errore durante la rettifica della fattura scartata"
+        e instanceof Error ? e.message : typeof e === "string" ? e : "Errore durante la rettifica della fattura scartata"
       );
     } finally {
       this.rectifying.set(false);
@@ -408,7 +408,7 @@ export class InvoiceDetailComponent {
         this.notify.success("Ricevuta SDI importata con successo nel fascicolo!");
       } catch (err) {
         this.notify.error(
-          typeof err === "string" ? err : "Errore nell'importazione della ricevuta SDI"
+          err instanceof Error ? err.message : typeof err === "string" ? err : "Errore nell'importazione della ricevuta SDI"
         );
       } finally {
         input.value = "";

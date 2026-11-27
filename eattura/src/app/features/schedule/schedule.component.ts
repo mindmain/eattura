@@ -17,11 +17,12 @@ import type {
   RegisterPaymentRequest,
 } from "../../core/models/payment.model";
 import { AppCurrencyPipe } from "../../shared/pipes/app-currency.pipe";
+import { DatePickerComponent } from "../../shared/components/date-picker/date-picker.component";
 
 @Component({
   selector: "app-schedule",
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, AppCurrencyPipe],
+  imports: [CommonModule, ReactiveFormsModule, AppCurrencyPipe, DatePickerComponent],
   templateUrl: "./schedule.component.html",
   styleUrl: "./schedule.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,

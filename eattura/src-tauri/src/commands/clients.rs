@@ -21,6 +21,8 @@ pub struct ClientSummary {
     pub is_pa: bool,
     #[serde(default)]
     pub codice_destinatario: Option<String>,
+    #[serde(default)]
+    pub regime_fiscale: Option<String>,
 }
 
 /// Full client detail.
@@ -440,6 +442,7 @@ pub async fn list_clients_store(
                 comune: row.get("comune"),
                 is_pa,
                 codice_destinatario: cd,
+                regime_fiscale: row.get("regime_fiscale"),
             }
         })
         .collect();
