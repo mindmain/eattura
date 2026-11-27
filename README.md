@@ -19,6 +19,28 @@ Desktop release automation, installer targets, and signing setup are documented 
 
 ---
 
+## Installation
+
+### Quick Install (macOS & Linux)
+
+Install the latest official release with automatic architecture detection (`arm64` Apple Silicon / `x86_64` Intel on macOS, `x86_64` on Linux) and `SHA-256` checksum verification:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mindmain/eattura/main/scripts/install.sh | sh
+```
+
+- **macOS**: Downloads the verified `.app.tar.gz` bundle directly into `/Applications` (or `~/Applications` for non-admin accounts) without browser quarantine attributes, so **Eattura opens immediately without macOS Gatekeeper warnings**. All subsequent updates are verified via Ed25519 and installed directly inside the app.
+- **Linux (`x86_64`)**: Installs the verified `.AppImage` to `~/.local/bin/eattura`.
+- Pin a specific version or target folder with `EATTURA_VERSION=v0.1.1` or `EATTURA_INSTALL_DIR=/custom/path`.
+
+### Manual Download (macOS, Windows, Linux)
+
+Prebuilt installers (`.dmg`, `.exe`, `.msi`, `.deb`, `.AppImage`) and `SHA256SUMS` are published on [**GitHub Releases**](https://github.com/mindmain/eattura/releases/latest).
+
+> **Note for manual `.dmg` downloads on macOS:** Because builds are ad-hoc signed rather than Apple Developer ID notarized, opening a browser-downloaded `.dmg` for the first time triggers Gatekeeper (*"eattura non è stata aperta"*). Use the `curl` installer above to avoid this completely, or unlock a manual `.dmg` copy once via **System Settings → Privacy & Security → Open Anyway** (or `xattr -cr /Applications/eattura.app`).
+
+---
+
 ## Architecture
 
 The repository is a Rust Cargo workspace composed of three crates and a pinned Protobuf submodule:

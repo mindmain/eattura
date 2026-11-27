@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { bundleDirectories, checkVersions, collect, installers, parseTag, protoModule, stage, updaterBundles, validateTag } from './release.mjs';
 
 function fixture(context) {
@@ -178,4 +179,83 @@ test('rejects missing, empty and unexpected artifacts', context => {
   symlinkSync(join(bundle, 'macos/eattura.app.tar.gz'), join(bundle, 'dmg/linked.dmg'));
   assert.throws(() => stage(root, target), /Unexpected symbolic link/);
   assert.throws(() => stage(root, 'unknown'), /Unknown/);
+});
+
+test('install.sh verifies SHA256SUMS, installs macOS .app and Linux AppImage, and rejects tampered bundles', { skip: process.platform === 'win32' }, context => {
+  const root = fixture(context);
+  const installScript = fileURLToPath(new URL('./install.sh', import.meta.url));
+
+  // Build a valid minimal macOS .app.tar.gz archive for aarch64-apple-darwin
+  const appSourceDir = join(root, 'app-src');
+  const macosExecDir = join(appSourceDir, 'eattura.app/Contents/MacOS');
+  mkdirSync(macosExecDir, { recursive: true });
+  writeFileSync(join(macosExecDir, 'eattura'), '#!/bin/sh\necho eattura\n');
+  chmodSync(join(macosExecDir, 'eattura'), 0o755);
+
+  for (const [target, extensions] of Object.entries(installers)) {
+    const bundle = join(root, 'target', target, 'release/bundle');
+    mkdirSync(bundle, { recursive: true });
+    const allExtensions = new Set([
+      ...extensions,
+      ...updaterBundles[target].map(entry => entry.extension),
+    ]);
+    for (const extension of allExtensions) {
+      const directory = join(bundle, bundleDirectories[extension]);
+      mkdirSync(directory, { recursive: true });
+      const filePath = join(directory, `eattura${extension}`);
+      if (extension === '.app.tar.gz') {
+        execFileSync('tar', ['-czf', filePath, '-C', appSourceDir, 'eattura.app']);
+      } else {
+        writeFileSync(filePath, '#!/bin/sh\necho linux-appimage\n');
+      }
+    }
+    for (const { extension } of updaterBundles[target]) {
+      const directory = join(bundle, bundleDirectories[extension]);
+      writeFileSync(join(directory, `eattura${extension}.sig`), `sig-${target}-${extension}`);
+    }
+    stage(root, target);
+  }
+  collect(root, { tag: 'v0.1.1', repository: 'mindmain/eattura', pubDate: '2026-11-27T12:00:00.000Z' });
+
+  const artifactsUrl = `file://${join(root, 'release-artifacts')}`;
+  const macDest = join(root, 'mac-apps');
+  execFileSync('sh', [installScript], {
+    env: {
+      ...process.env,
+      EATTURA_RELEASE_BASE_URL: artifactsUrl,
+      EATTURA_INSTALL_DIR: macDest,
+      EATTURA_TEST_OS: 'Darwin',
+      EATTURA_TEST_ARCH: 'arm64',
+    },
+    stdio: 'pipe',
+  });
+  assert.equal(existsSync(join(macDest, 'eattura.app/Contents/MacOS/eattura')), true);
+
+  const linuxDest = join(root, 'linux-bin');
+  execFileSync('sh', [installScript], {
+    env: {
+      ...process.env,
+      EATTURA_RELEASE_BASE_URL: artifactsUrl,
+      EATTURA_INSTALL_DIR: linuxDest,
+      EATTURA_TEST_OS: 'Linux',
+      EATTURA_TEST_ARCH: 'x86_64',
+    },
+    stdio: 'pipe',
+  });
+  assert.equal(existsSync(join(linuxDest, 'eattura')), true);
+
+  // Tamper with the macOS archive and verify install.sh aborts before installing
+  writeFileSync(join(root, 'release-artifacts/aarch64-apple-darwin-eattura.app.tar.gz'), 'corrupted-bytes');
+  const tamperedDest = join(root, 'tampered-apps');
+  assert.throws(() => execFileSync('sh', [installScript], {
+    env: {
+      ...process.env,
+      EATTURA_RELEASE_BASE_URL: artifactsUrl,
+      EATTURA_INSTALL_DIR: tamperedDest,
+      EATTURA_TEST_OS: 'Darwin',
+      EATTURA_TEST_ARCH: 'arm64',
+    },
+    stdio: 'pipe',
+  }));
+  assert.equal(existsSync(join(tamperedDest, 'eattura.app')), false);
 });
