@@ -99,11 +99,11 @@ export function protoModule(lock) {
   return `buf.build/bufbuild/protovalidate:${commit}`;
 }
 
-function filesIn(directory) {
+function topLevelBundleFiles(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
     const path = join(directory, entry.name);
     if (entry.isSymbolicLink()) throw new Error(`Unexpected symbolic link: ${path}`);
-    return entry.isDirectory() ? filesIn(path) : [path];
+    return entry.isDirectory() ? [] : [path];
   });
 }
 
@@ -120,7 +120,7 @@ export function stage(root, target) {
   const updaterExtensions = new Set((updaterBundles[target] ?? []).map(entry => entry.extension));
   const files = expectedExtensions(target).flatMap(extension => {
     const directory = join(root, 'target', target, 'release', 'bundle', bundleDirectories[extension]);
-    const matches = existsSync(directory) ? filesIn(directory).filter(path => path.endsWith(extension)) : [];
+    const matches = existsSync(directory) ? topLevelBundleFiles(directory).filter(path => path.endsWith(extension)) : [];
     if (matches.length === 0) throw new Error(`Missing ${target} bundle: ${extension}`);
     if (matches.length > 1) throw new Error(`Multiple ${target} bundles matched ${extension}`);
     if (!updaterExtensions.has(extension)) return matches;

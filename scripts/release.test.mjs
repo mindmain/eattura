@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -112,6 +112,11 @@ test('stages installers and updater signatures and writes latest.json plus check
       const directory = join(bundle, bundleDirectories[extension]);
       writeFileSync(join(directory, `eattura${extension}.sig`), `sig-${target}-${extension}`);
     }
+    if (target === 'x86_64-unknown-linux-gnu') {
+      const appDir = join(bundle, 'appimage/eattura.AppDir');
+      mkdirSync(appDir, { recursive: true });
+      symlinkSync('usr/share/icons/hicolor/128x128/apps/eattura.png', join(appDir, '.DirIcon'));
+    }
     writeFileSync(join(bundle, 'ignored.zip'), 'not an installer');
     const staged = stage(root, target);
     assert.ok(staged.length >= extensions.length + updaterBundles[target].length);
@@ -169,5 +174,8 @@ test('rejects missing, empty and unexpected artifacts', context => {
   writeFileSync(join(bundle, 'macos/eattura.app.tar.gz'), 'archive');
   writeFileSync(join(bundle, 'macos/eattura.app.tar.gz.sig'), 'sig');
   assert.throws(() => stage(root, target), /Empty/);
+  rmSync(join(bundle, 'dmg/empty.dmg'));
+  symlinkSync(join(bundle, 'macos/eattura.app.tar.gz'), join(bundle, 'dmg/linked.dmg'));
+  assert.throws(() => stage(root, target), /Unexpected symbolic link/);
   assert.throws(() => stage(root, 'unknown'), /Unknown/);
 });
