@@ -53,6 +53,8 @@ describe("InvoiceDetailComponent rejection handling", () => {
             syncPec,
             lastPecSuccessAt: signal(null),
             mcpDraft: signal(null),
+            pecSyncActive: signal(false),
+            pecSyncLabel: signal(""),
             pecSyncStatus: signal({
               configured: true,
               lastAttemptAt: null,

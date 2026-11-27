@@ -27,6 +27,26 @@
 .top-actions { display: flex; align-items: center; gap: 0.35rem; }
 .top-actions a { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.7rem; border-radius: 9px; color: var(--text-secondary); text-decoration: none; font-size: 0.82rem; font-weight: 600; }
 .top-actions a:hover { background: var(--surface-hover); color: var(--text-primary); }
+.top-actions a.pec-header-pill {
+  padding: 0.32rem 0.65rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+.pec-header-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: pec-header-pulse 1.2s ease-in-out infinite;
+}
+@keyframes pec-header-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.85); }
+}
 
 .workspace { display: flex; flex: 1; min-height: 0; overflow: hidden; }
 .main-content { flex: 1; min-width: 0; overflow-y: auto; background: var(--main-surface); }

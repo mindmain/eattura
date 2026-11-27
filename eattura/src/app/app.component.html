@@ -5,6 +5,12 @@
       <span>Eattura</span>
     </a>
     <nav class="top-actions" aria-label="Impostazioni rapide">
+      @if (invoices.pecSyncActive()) {
+        <a routerLink="/invoices" class="pec-header-pill" role="status" aria-live="polite" (mousedown)="$event.stopPropagation()" title="Sincronizzazione PEC attiva — apri l'elenco fatture">
+          <span class="pec-header-dot" aria-hidden="true"></span>
+          <span>{{ invoices.pecSyncLabel() || "Sincronizzazione PEC…" }}</span>
+        </a>
+      }
       <a routerLink="/settings" [queryParams]="{ section: 'account' }" (mousedown)="$event.stopPropagation()"><lucide-icon [img]="icons.UserRound" [size]="18" />Account</a>
       <a routerLink="/settings" [queryParams]="{ section: 'app' }" (mousedown)="$event.stopPropagation()"><lucide-icon [img]="icons.Settings2" [size]="18" />Impostazioni app</a>
     </nav>

@@ -9,7 +9,11 @@ use common::pec::{
     SDI_PEC_ADDRESS, extract_sdi_pec_address, parse_notification, sdi_filename,
     select_preferred_sdi_address,
 };
-use std::{sync::OnceLock, time::Duration};
+use std::{
+    sync::{Arc, Mutex as StdMutex, OnceLock},
+    time::Duration,
+};
+use tauri::Emitter;
 
 use crate::app_log::{AppLog, LogLevel};
 use crate::commands::invoices::build_fattura_from_store;
@@ -20,13 +24,56 @@ use crate::storage::{FileStore, Transaction, digest};
 
 const SYNC_INTERVAL_MS: i64 = 300_000;
 static SYNC_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+static LIVE_PROGRESS: OnceLock<StdMutex<Option<PecSyncProgress>>> = OnceLock::new();
 static SEND_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 const SEND_TIMEOUT: Duration = Duration::from_secs(60);
+
+pub type PecEventSink = Arc<dyn Fn(&str, serde_json::Value) + Send + Sync>;
+
+pub fn tauri_pec_event_sink(app: tauri::AppHandle) -> PecEventSink {
+    Arc::new(move |event, payload| {
+        let _ = app.emit(event, payload);
+    })
+}
+
+/// Real-time progress snapshot while PEC synchronization is running.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PecSyncProgress {
+    /// `"connecting"` | `"downloading"` | `"processing"` | `"reconciling"`
+    pub phase: String,
+    /// Number of PEC messages fetched from IMAP so far.
+    pub read_messages: usize,
+    /// Total number of new PEC messages queued for this sync run.
+    pub total_messages: usize,
+    /// Number of fetched PEC messages inspected locally so far.
+    pub processed_messages: usize,
+    /// Number of invoices or SDI notifications imported/updated so far.
+    pub processed_items: usize,
+}
+
+fn update_live_progress(progress: Option<PecSyncProgress>, event_sink: Option<&PecEventSink>) {
+    if let Ok(mut slot) = LIVE_PROGRESS.get_or_init(|| StdMutex::new(None)).lock() {
+        *slot = progress.clone();
+    }
+    if let (Some(sink), Some(p)) = (event_sink, progress)
+        && let Ok(val) = serde_json::to_value(p)
+    {
+        sink("pec-sync-progress", val);
+    }
+}
+
+fn current_live_progress() -> Option<PecSyncProgress> {
+    LIVE_PROGRESS
+        .get()
+        .and_then(|m| m.lock().ok().and_then(|guard| guard.clone()))
+}
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PecSyncStatus {
     pub in_progress: bool,
+    pub progress: Option<PecSyncProgress>,
     pub configured: bool,
     pub last_attempt_at: Option<i64>,
     pub last_success_at: Option<i64>,
@@ -105,8 +152,11 @@ pub async fn sync_status_store(store: &crate::storage::FileStore) -> Result<PecS
         .filter(|_| same_mailbox)
         .and_then(|r| r.get("last_attempt_at"));
 
+    let in_progress = SYNC_LOCK.get().is_some_and(|lock| lock.try_lock().is_err());
+
     Ok(PecSyncStatus {
-        in_progress: SYNC_LOCK.get().is_some_and(|lock| lock.try_lock().is_err()),
+        in_progress,
+        progress: in_progress.then(current_live_progress).flatten(),
         configured: mailbox.is_some(),
         last_attempt_at,
         last_success_at: row
@@ -470,10 +520,12 @@ async fn complete_pec_attempt(
 /// Returns the items processed in this run.
 #[tauri::command]
 pub async fn sync_pec(
+    app: tauri::AppHandle,
     state: tauri::State<'_, TauriState>,
     log: tauri::State<'_, AppLog>,
 ) -> Result<Vec<NotificationSummary>, String> {
-    run_sync(&state.store, &log).await
+    let sink = tauri_pec_event_sink(app);
+    run_sync_with_events(&state.store, &log, Some(&sink)).await
 }
 
 /// Adapter port abstracting PEC inbox retrieval so synchronization flows can be
@@ -483,6 +535,7 @@ pub trait PecInboxAdapter: Send + Sync {
         &'a self,
         config: &'a PecConfig,
         cursors: std::collections::BTreeMap<String, (u32, u32)>,
+        on_progress: Arc<dyn Fn(usize, usize) + Send + Sync>,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<pec::PecInbox, String>> + Send + 'a>,
     >;
@@ -495,34 +548,55 @@ impl PecInboxAdapter for LivePecInboxAdapter {
         &'a self,
         config: &'a PecConfig,
         cursors: std::collections::BTreeMap<String, (u32, u32)>,
+        on_progress: Arc<dyn Fn(usize, usize) + Send + Sync>,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<pec::PecInbox, String>> + Send + 'a>,
     > {
-        Box::pin(pec::check_inbox(config, cursors))
+        Box::pin(pec::check_inbox(config, cursors, on_progress))
     }
 }
 
 /// Core PEC sync routine, usable both from the command and the background cron.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) async fn run_sync(
     store: &crate::storage::FileStore,
     log: &AppLog,
 ) -> Result<Vec<NotificationSummary>, String> {
-    run_sync_with_adapter(store, log, &LivePecInboxAdapter).await
+    run_sync_with_events(store, log, None).await
 }
 
-pub(crate) async fn run_sync_with_adapter(
+pub(crate) async fn run_sync_with_events(
+    store: &crate::storage::FileStore,
+    log: &AppLog,
+    event_sink: Option<&PecEventSink>,
+) -> Result<Vec<NotificationSummary>, String> {
+    run_sync_with_adapter_and_events(store, log, &LivePecInboxAdapter, event_sink).await
+}
+
+pub(crate) async fn run_sync_with_adapter_and_events(
     store: &crate::storage::FileStore,
     log: &AppLog,
     adapter: &dyn PecInboxAdapter,
+    event_sink: Option<&PecEventSink>,
 ) -> Result<Vec<NotificationSummary>, String> {
-    let _guard = SYNC_LOCK
+    let guard = SYNC_LOCK
         .get_or_init(|| tokio::sync::Mutex::new(()))
         .lock()
         .await;
     let _backup_batch = store.begin_backup_batch();
+    update_live_progress(
+        Some(PecSyncProgress {
+            phase: "connecting".into(),
+            read_messages: 0,
+            total_messages: 0,
+            processed_messages: 0,
+            processed_items: 0,
+        }),
+        event_sink,
+    );
     log.record(LogLevel::Info, "pec", "PEC synchronization started");
     let result = match build_config(store).await {
-        Ok(config) => run_sync_inner(store, &config, log, adapter).await,
+        Ok(config) => run_sync_inner_with_events(store, &config, log, adapter, event_sink).await,
         Err(err) => Err(err),
     };
     match &result {
@@ -548,6 +622,19 @@ pub(crate) async fn run_sync_with_adapter(
                 );
             }
         }
+    }
+    let items_processed = result.as_ref().map(|items| items.len()).unwrap_or(0);
+    let has_error = result.is_err();
+    update_live_progress(None, None);
+    drop(guard);
+    if let Some(sink) = event_sink {
+        sink(
+            "pec-sync-finished",
+            serde_json::json!({
+                "itemsProcessed": items_processed,
+                "hasError": has_error,
+            }),
+        );
     }
     result
 }
@@ -750,15 +837,39 @@ async fn apply_pec_transport_receipt(
     Ok(summaries)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) async fn process_inbox_messages_with_log(
     store: &crate::storage::FileStore,
     messages: &[pec::PecMessage],
     log: &AppLog,
 ) -> Result<(Vec<NotificationSummary>, Option<String>), String> {
+    process_inbox_messages_with_progress(store, messages, log, None).await
+}
+
+pub(crate) async fn process_inbox_messages_with_progress(
+    store: &crate::storage::FileStore,
+    messages: &[pec::PecMessage],
+    log: &AppLog,
+    event_sink: Option<&PecEventSink>,
+) -> Result<(Vec<NotificationSummary>, Option<String>), String> {
+    let total_messages = messages.len();
     let mut summaries = Vec::new();
     let mut sdi_candidates = Vec::new();
 
-    for message in messages {
+    if total_messages > 0 {
+        update_live_progress(
+            Some(PecSyncProgress {
+                phase: "processing".into(),
+                read_messages: total_messages,
+                total_messages,
+                processed_messages: 0,
+                processed_items: 0,
+            }),
+            event_sink,
+        );
+    }
+
+    for (msg_idx, message) in messages.iter().enumerate() {
         if let Some(tr) = &message.transport_receipt {
             let reconciled = apply_pec_transport_receipt(
                 store,
@@ -768,6 +879,16 @@ pub(crate) async fn process_inbox_messages_with_log(
             )
             .await?;
             summaries.extend(reconciled);
+            update_live_progress(
+                Some(PecSyncProgress {
+                    phase: "processing".into(),
+                    read_messages: total_messages,
+                    total_messages,
+                    processed_messages: msg_idx + 1,
+                    processed_items: summaries.len(),
+                }),
+                event_sink,
+            );
             continue;
         }
 
@@ -910,16 +1031,38 @@ pub(crate) async fn process_inbox_messages_with_log(
         {
             sdi_candidates.push(fallback.clone());
         }
+
+        update_live_progress(
+            Some(PecSyncProgress {
+                phase: "processing".into(),
+                read_messages: total_messages,
+                total_messages,
+                processed_messages: msg_idx + 1,
+                processed_items: summaries.len(),
+            }),
+            event_sink,
+        );
     }
 
     Ok((summaries, select_preferred_sdi_address(sdi_candidates)))
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) async fn run_sync_inner(
     store: &crate::storage::FileStore,
     config: &PecConfig,
     log: &AppLog,
     adapter: &dyn PecInboxAdapter,
+) -> Result<Vec<NotificationSummary>, String> {
+    run_sync_inner_with_events(store, config, log, adapter, None).await
+}
+
+pub(crate) async fn run_sync_inner_with_events(
+    store: &crate::storage::FileStore,
+    config: &PecConfig,
+    log: &AppLog,
+    adapter: &dyn PecInboxAdapter,
+    event_sink: Option<&PecEventSink>,
 ) -> Result<Vec<NotificationSummary>, String> {
     let previous = sync_record(store).await?;
     let previous_same_mailbox = previous.as_ref().filter(|row| {
@@ -930,13 +1073,15 @@ pub(crate) async fn run_sync_inner(
         .and_then(|row| row.get::<Option<String>>("detected_sdi_address"))
         .and_then(|addr| extract_sdi_pec_address(&addr));
 
+    // Preserve saved UID cursors across app updates whenever the initial mailbox scan
+    // already completed. Full re-downloads happen only on first setup, mailbox change,
+    // or IMAP UIDVALIDITY reset (handled per-folder inside `fetch_inbox_with_session`).
     let cursors: std::collections::BTreeMap<String, (u32, u32)> = previous_same_mailbox
         .and_then(|row| {
             let scan_complete = row
                 .get::<Option<bool>>("sdi_scan_complete")
                 .unwrap_or(false);
-            let scan_version = row.get::<Option<u32>>("sdi_scan_version").unwrap_or(0);
-            if !scan_complete || scan_version < SDI_SCAN_VERSION {
+            if !scan_complete {
                 return None;
             }
             let mut map: std::collections::BTreeMap<String, (u32, u32)> = row
@@ -961,17 +1106,31 @@ pub(crate) async fn run_sync_inner(
             "Reading PEC mailbox history"
         },
     );
-    let inbox = adapter.fetch_inbox(config, cursors).await?;
+    let sink_clone = event_sink.cloned();
+    let on_download_progress: Arc<dyn Fn(usize, usize) + Send + Sync> =
+        Arc::new(move |done, total| {
+            update_live_progress(
+                Some(PecSyncProgress {
+                    phase: "downloading".into(),
+                    read_messages: done,
+                    total_messages: total,
+                    processed_messages: 0,
+                    processed_items: 0,
+                }),
+                sink_clone.as_ref(),
+            );
+        });
+    let inbox = adapter
+        .fetch_inbox(config, cursors, on_download_progress)
+        .await?;
+    let total_messages = inbox.messages.len();
     log.record(
         LogLevel::Info,
         "pec",
-        &format!(
-            "PEC download completed: {} message(s) to process",
-            inbox.messages.len()
-        ),
+        &format!("PEC download completed: {total_messages} message(s) to process"),
     );
     let (mut summaries, newly_detected) =
-        process_inbox_messages_with_log(store, &inbox.messages, log).await?;
+        process_inbox_messages_with_progress(store, &inbox.messages, log, event_sink).await?;
 
     let detected_sdi_address = select_preferred_sdi_address(
         newly_detected
@@ -984,6 +1143,16 @@ pub(crate) async fn run_sync_inner(
     }
 
     if !is_incremental || previous.is_none() || !summaries.is_empty() {
+        update_live_progress(
+            Some(PecSyncProgress {
+                phase: "reconciling".into(),
+                read_messages: total_messages,
+                total_messages,
+                processed_messages: total_messages,
+                processed_items: summaries.len(),
+            }),
+            event_sink,
+        );
         log.record(
             LogLevel::Info,
             "pec",
@@ -1265,6 +1434,9 @@ async fn find_invoice_by_sdi_id(
 }
 
 /// Revisit stored receipts to link newly imported invoices and upgrade legacy statuses.
+///
+/// Skips write transactions for receipts that are already linked to invoices in a
+/// matching/terminal state, keeping historical archive reconciliation near-instant.
 pub(crate) async fn reconcile_unlinked_notifications(
     store: &crate::storage::FileStore,
 ) -> Result<Vec<NotificationSummary>, String> {
@@ -1273,6 +1445,46 @@ pub(crate) async fn reconcile_unlinked_notifications(
         .await
         .fetch_all()
         .await?;
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let invoice_rows = store
+        .read("invoices", "invoice_views", vec![], "")
+        .await
+        .fetch_all()
+        .await?;
+    let mut invoice_states: std::collections::HashMap<String, String> =
+        std::collections::HashMap::with_capacity(invoice_rows.len());
+    let mut pending_pec_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for inv in invoice_rows {
+        let id: String = inv.get("id");
+        let stato: String = inv.get("stato");
+        if inv.get::<Option<String>>("pending_pec_filename").is_some() {
+            pending_pec_ids.insert(id.clone());
+        }
+        invoice_states.insert(id, stato);
+    }
+
+    let mut pa_accepted_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut linked_ids_by_xml: std::collections::HashMap<
+        String,
+        std::collections::HashSet<String>,
+    > = std::collections::HashMap::new();
+    for row in &rows {
+        let raw_xml: String = row.get("raw_xml");
+        if let Some(inv_id) = row.get::<Option<String>>("invoice_id") {
+            let tipo: String = row.get("tipo");
+            if tipo == "DT"
+                || (tipo == "NE"
+                    && row.get::<Option<String>>("esito").as_deref() == Some("EC01"))
+            {
+                pa_accepted_ids.insert(inv_id.clone());
+            }
+            linked_ids_by_xml.entry(raw_xml).or_default().insert(inv_id);
+        }
+    }
+
     let mut processed = std::collections::HashSet::new();
     let mut updated = Vec::new();
     for row in rows {
@@ -1280,24 +1492,72 @@ pub(crate) async fn reconcile_unlinked_notifications(
         if !processed.insert(xml.clone()) {
             continue;
         }
-        if let Ok(notification) = parse_notification(&xml)
-            && !matches!(
-                notification.message_type,
-                common::pec::SdiMessageType::Unknown(_)
-            )
+        let Ok(notification) = parse_notification(&xml) else {
+            continue;
+        };
+        if matches!(
+            notification.message_type,
+            common::pec::SdiMessageType::Unknown(_)
+        ) {
+            continue;
+        }
+
+        let mut matched_ids = if let Some(filename) = notification.nome_file.as_deref() {
+            find_invoice_ids_by_sdi_reference(store, filename).await?
+        } else {
+            Vec::new()
+        };
+        if matched_ids.is_empty()
+            && let Some(by_sdi) =
+                find_invoice_by_sdi_id(store, notification.identificativo_sdi.as_deref()).await?
         {
-            for (linked_id, new_status) in
-                attach_sdi_notification_to_matches(store, &notification, &xml).await?
-            {
-                if new_status.is_some() {
-                    updated.push(NotificationSummary {
-                        tipo: notification.message_type.code().to_string(),
-                        identificativo_sdi: notification.identificativo_sdi.clone(),
-                        nome_file: notification.nome_file.clone(),
-                        invoice_id: linked_id,
-                        new_status,
-                    });
+            matched_ids.push(by_sdi);
+        }
+        if matched_ids.is_empty() {
+            // Still no local invoice matching this orphan receipt; skip rewrite.
+            continue;
+        }
+
+        let already_linked = linked_ids_by_xml.get(&xml);
+        let all_settled = matched_ids.iter().all(|inv_id| {
+            if !already_linked.is_some_and(|set| set.contains(inv_id)) {
+                return false;
+            }
+            if pending_pec_ids.contains(inv_id) {
+                return false;
+            }
+            let Some(cur_stato) = invoice_states.get(inv_id) else {
+                return false;
+            };
+            match notification.resulting_status() {
+                None => true,
+                Some(target) if cur_stato == target.as_str() => true,
+                Some(InvoiceStatus::Delivered)
+                    if cur_stato == "accepted" && pa_accepted_ids.contains(inv_id) =>
+                {
+                    true
                 }
+                _ => false,
+            }
+        });
+        if all_settled {
+            continue;
+        }
+
+        for (linked_id, new_status) in
+            attach_sdi_notification_to_matches(store, &notification, &xml).await?
+        {
+            if let (Some(id), Some(st)) = (linked_id.as_ref(), new_status.as_ref()) {
+                invoice_states.insert(id.clone(), st.clone());
+            }
+            if new_status.is_some() {
+                updated.push(NotificationSummary {
+                    tipo: notification.message_type.code().to_string(),
+                    identificativo_sdi: notification.identificativo_sdi.clone(),
+                    nome_file: notification.nome_file.clone(),
+                    invoice_id: linked_id,
+                    new_status,
+                });
             }
         }
     }
@@ -2359,6 +2619,7 @@ mod tests {
             &'a self,
             _config: &'a PecConfig,
             cursors: std::collections::BTreeMap<String, (u32, u32)>,
+            on_progress: Arc<dyn Fn(usize, usize) + Send + Sync>,
         ) -> std::pin::Pin<
             Box<dyn std::future::Future<Output = Result<crate::pec::PecInbox, String>> + Send + 'a>,
         > {
@@ -2368,7 +2629,11 @@ mod tests {
                     folders: snapshot,
                     selected: None,
                 };
-                crate::pec::fetch_inbox_with_session(&mut session, &cursors)
+                crate::pec::fetch_inbox_with_session_and_progress(
+                    &mut session,
+                    &cursors,
+                    &mut |done, total| on_progress(done, total),
+                )
             })
         }
     }
@@ -2717,5 +2982,118 @@ mod tests {
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].tipo, "AT");
         assert_eq!(summaries[0].invoice_id.as_deref(), Some(invoice.id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn adapter_emits_live_read_and_processed_counts_and_preserves_cursors_across_versions() {
+        use serde_json::json;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileStore::open(dir.path().join("index.json")).unwrap();
+        let log = AppLog::memory();
+        let config = PecConfig {
+            email: "spinanico@pec.it".into(),
+            sdi_address: "sdi48@pec.fatturapa.it".into(),
+            password: "mock-password".into(),
+            imap_host: "imaps.pec.aruba.it".into(),
+            imap_port: 993,
+            smtp_host: "smtps.pec.aruba.it".into(),
+            smtp_port: 465,
+        };
+
+        // Seed an older pec_sync cursor (sdi_scan_version = 1, last_uid = 200)
+        // to prove app updates never trigger a full historical mailbox re-download.
+        store
+            .insert(
+                "pec_sync",
+                json!({
+                    "id": "inbox",
+                    "email": "spinanico@pec.it",
+                    "uid_validity": 1570704211_u32,
+                    "last_uid": 200,
+                    "last_attempt_at": 1000,
+                    "last_success_at": 1000,
+                    "last_error": null,
+                    "detected_sdi_address": "sdi48@pec.fatturapa.it",
+                    "sdi_scan_complete": true,
+                    "sdi_scan_version": 1
+                }),
+            )
+            .await
+            .unwrap();
+
+        let adapter = FakePecInboxAdapter::new();
+        // Historical UIDs <= 200 must NOT be fetched again!
+        for old_uid in 1..=200 {
+            adapter.push_raw_mime(
+                "INBOX",
+                old_uid,
+                b"From: archive@pec.it\r\nSubject: Old\r\nContent-Type: text/plain\r\n\r\nOld\r\n"
+                    .to_vec(),
+            );
+        }
+        // Only 2 new messages arrived after UID 200 (UIDs 201 and 202)
+        for new_uid in [201, 202] {
+            adapter.push_raw_mime(
+                "INBOX",
+                new_uid,
+                b"From: info@pec.it\r\nSubject: New\r\nContent-Type: text/plain\r\n\r\nNew\r\n"
+                    .to_vec(),
+            );
+        }
+
+        let captured: Arc<StdMutex<Vec<PecSyncProgress>>> = Arc::new(StdMutex::new(Vec::new()));
+        let captured_ref = captured.clone();
+        let sink: PecEventSink = Arc::new(move |event, payload| {
+            if event == "pec-sync-progress"
+                && let Ok(p) = serde_json::from_value::<PecSyncProgress>(payload)
+            {
+                captured_ref.lock().unwrap().push(p);
+            }
+        });
+
+        let summaries =
+            run_sync_inner_with_events(&store, &config, &log, &adapter, Some(&sink))
+                .await
+                .unwrap();
+        assert!(summaries.is_empty());
+
+        let events = captured.lock().unwrap().clone();
+        // Only the 2 new messages (> 200) were downloaded and processed!
+        assert!(events.contains(&PecSyncProgress {
+            phase: "downloading".into(),
+            read_messages: 0,
+            total_messages: 2,
+            processed_messages: 0,
+            processed_items: 0,
+        }));
+        assert!(events.contains(&PecSyncProgress {
+            phase: "downloading".into(),
+            read_messages: 1,
+            total_messages: 2,
+            processed_messages: 0,
+            processed_items: 0,
+        }));
+        assert!(events.contains(&PecSyncProgress {
+            phase: "downloading".into(),
+            read_messages: 2,
+            total_messages: 2,
+            processed_messages: 0,
+            processed_items: 0,
+        }));
+        assert!(events.contains(&PecSyncProgress {
+            phase: "processing".into(),
+            read_messages: 2,
+            total_messages: 2,
+            processed_messages: 1,
+            processed_items: 0,
+        }));
+        assert!(events.contains(&PecSyncProgress {
+            phase: "processing".into(),
+            read_messages: 2,
+            total_messages: 2,
+            processed_messages: 2,
+            processed_items: 0,
+        }));
     }
 }

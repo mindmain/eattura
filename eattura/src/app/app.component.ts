@@ -22,7 +22,7 @@ import { UpdaterService } from "./core/services/updater.service";
 export class AppComponent implements OnInit, OnDestroy {
   protected notifications = inject(NotificationService);
   protected readonly updater = inject(UpdaterService);
-  private invoices = inject(InvoiceStore);
+  protected readonly invoices = inject(InvoiceStore);
   private readonly mcp = inject(McpService);
   private readonly theme = inject(ThemeService);
   private readonly document = inject(DOCUMENT);

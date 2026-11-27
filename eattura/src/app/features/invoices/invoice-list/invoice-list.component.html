@@ -17,9 +17,28 @@
     <p class="form-error" role="alert">{{ invoiceStore.pecSyncError() }}</p>
   }
   @if (pecSyncStatus()?.configured) {
-    <div class="pec-sync-timer" role="status">
-      @if (syncing() || pecSyncStatus()?.inProgress) {
-        Sincronizzazione PEC in corso…
+    <div class="pec-sync-timer" role="status" aria-live="polite">
+      @if (syncing() || pecSyncStatus()?.inProgress || activePecProgress()) {
+        @let prog = activePecProgress();
+        <span class="pec-sync-live">
+          <span class="pec-live-dot" aria-hidden="true"></span>
+          @if (prog && prog.totalMessages > 0) {
+            <span>
+              Sincronizzazione PEC:
+              <strong>{{ prog.readMessages }} / {{ prog.totalMessages }}</strong> letti ·
+              <strong>{{ prog.processedMessages }} / {{ prog.totalMessages }}</strong> svolti
+              @if (prog.processedItems > 0) {
+                <span>
+                  ({{ prog.processedItems }} {{ prog.processedItems === 1 ? "documento registrato" : "documenti registrati" }})
+                </span>
+              }
+            </span>
+          } @else if (prog?.phase === "reconciling") {
+            <span>Sincronizzazione PEC: verifica e collegamento ricevute SdI in corso…</span>
+          } @else {
+            <span>Sincronizzazione PEC: controllo nuovi messaggi nella casella…</span>
+          }
+        </span>
       } @else if (secondsToPecSync() !== null) {
         Prossima sincronizzazione PEC tra {{ pecCountdown() }}
       }
@@ -32,6 +51,11 @@
         <span class="pec-sync-error" [title]="pecSyncStatus()?.lastError ?? ''">Ultimo tentativo non riuscito</span>
       }
     </div>
+    @if ((syncing() || pecSyncStatus()?.inProgress || activePecProgress()) && pecProgressPercent() !== null) {
+      <div class="pec-progress-track mb-2" role="progressbar" [attr.aria-valuenow]="pecProgressPercent()" aria-valuemin="0" aria-valuemax="100">
+        <div class="pec-progress-fill" [style.width.%]="pecProgressPercent()"></div>
+      </div>
+    }
 
     @if (pecSyncStatus()?.sdiAddressVerified === false) {
       <div class="sdi-pec-warning mb-2" role="alert">
@@ -138,26 +162,42 @@
                 <span class="badge-label">Mancata consegna (MC)</span>
               </span>
             } @else {
-              <span
-                class="badge"
-                [class]="'badge-' + inv.stato"
-                [attr.title]="inv.stato === 'delivered' ? 'Accettata dallo SdI e consegnata al destinatario' : null"
-              >
-                @if (inv.stato === "delivered") {
-                  <svg class="delivered-check" viewBox="0 0 16 16" aria-hidden="true">
-                    <circle cx="8" cy="8" r="8" fill="currentColor" />
-                    <path
-                      d="M4.5 8.2L6.9 10.6L11.5 5.6"
-                      fill="none"
-                      stroke="#ffffff"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                  </svg>
+              <div class="status-cell-stack">
+                <span
+                  class="badge"
+                  [class]="'badge-' + inv.stato"
+                  [attr.title]="
+                    inv.stato === 'delivered'
+                      ? 'Accettata dallo SdI e consegnata al destinatario'
+                      : inv.stato === 'sent' && inv.pecDeliveredToSdiAt
+                        ? 'PEC consegnata allo SdI il ' + inv.pecDeliveredToSdiAt + '. In attesa della Ricevuta di Consegna (RC) dello SdI per il recapito finale al cliente.'
+                        : null
+                  "
+                >
+                  @if (inv.stato === "delivered") {
+                    <svg class="delivered-check" viewBox="0 0 16 16" aria-hidden="true">
+                      <circle cx="8" cy="8" r="8" fill="currentColor" />
+                      <path
+                        d="M4.5 8.2L6.9 10.6L11.5 5.6"
+                        fill="none"
+                        stroke="#ffffff"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  }
+                  <span class="badge-label">{{ inv.stato | invoiceStatus }}</span>
+                </span>
+                @if (inv.stato === "sent" && inv.pecDeliveredToSdiAt) {
+                  <span
+                    class="pec-sdi-substatus"
+                    [title]="'PEC consegnata allo SdI il ' + inv.pecDeliveredToSdiAt + '. In attesa della Ricevuta di Consegna (RC) dello SdI per il recapito finale al cliente.'"
+                  >
+                    Ricevuta da SdI · attesa RC
+                  </span>
                 }
-                <span class="badge-label">{{ inv.stato | invoiceStatus }}</span>
-              </span>
+              </div>
             }
           </td>
           <td class="text-right actions-cell">

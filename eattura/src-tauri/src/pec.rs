@@ -284,16 +284,22 @@ pub(crate) fn is_scannable_pec_folder_name(name: &str, has_excluded_attr: bool) 
 pub async fn check_inbox(
     config: &PecConfig,
     cursors: BTreeMap<String, (u32, u32)>,
+    on_progress: std::sync::Arc<dyn Fn(usize, usize) + Send + Sync>,
 ) -> Result<PecInbox, String> {
     let config = config.clone();
-    tokio::task::spawn_blocking(move || fetch_live_inbox(&config, &cursors))
-        .await
-        .map_err(|e| format!("IMAP task join error: {e}"))?
+    tokio::task::spawn_blocking(move || {
+        fetch_live_inbox(&config, &cursors, &mut |done, total| {
+            on_progress(done, total)
+        })
+    })
+    .await
+    .map_err(|e| format!("IMAP task join error: {e}"))?
 }
 
 fn fetch_live_inbox(
     config: &PecConfig,
     cursors: &BTreeMap<String, (u32, u32)>,
+    on_progress: &mut dyn FnMut(usize, usize),
 ) -> Result<PecInbox, String> {
     let tls = native_tls::TlsConnector::builder()
         .build()
@@ -311,14 +317,30 @@ fn fetch_live_inbox(
         .map_err(|(e, _)| format!("IMAP login failed: {e}"))?;
 
     let mut adapter = LiveImapSession { session };
-    fetch_inbox_with_session(&mut adapter, cursors)
+    fetch_inbox_with_session_and_progress(&mut adapter, cursors, on_progress)
 }
 
 /// Adapter-driven IMAP scan across `INBOX` and any PEC receipt/SdI subfolders without altering `\Seen`.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn fetch_inbox_with_session(
     session: &mut dyn MailboxSession,
     cursors: &BTreeMap<String, (u32, u32)>,
 ) -> Result<PecInbox, String> {
+    fetch_inbox_with_session_and_progress(session, cursors, &mut |_, _| {})
+}
+
+/// Adapter-driven IMAP scan reporting `(downloaded_messages, total_new_messages)` as each UID is fetched.
+pub fn fetch_inbox_with_session_and_progress(
+    session: &mut dyn MailboxSession,
+    cursors: &BTreeMap<String, (u32, u32)>,
+    on_progress: &mut dyn FnMut(usize, usize),
+) -> Result<PecInbox, String> {
+    struct FolderPlan {
+        name: String,
+        is_primary_inbox: bool,
+        new_uids: Vec<u32>,
+    }
+
     let mut folders = vec!["INBOX".to_string()];
     if let Ok(listed) = session.list_folders() {
         for entry in listed {
@@ -331,10 +353,10 @@ pub fn fetch_inbox_with_session(
         }
     }
 
-    let mut messages = Vec::new();
     let mut folder_cursors = cursors.clone();
     let mut inbox_uid_validity = None;
     let mut inbox_last_uid = 0;
+    let mut plans = Vec::with_capacity(folders.len());
 
     for folder in folders {
         let is_primary_inbox = folder.eq_ignore_ascii_case("INBOX");
@@ -360,20 +382,6 @@ pub fn fetch_inbox_with_session(
         };
         uids.sort_unstable();
 
-        for uid in uids.iter().copied().filter(|uid| *uid > start_uid) {
-            let bodies = match session.uid_fetch_peek(uid) {
-                Ok(b) => b,
-                Err(_) if !is_primary_inbox => continue,
-                Err(e) => return Err(e),
-            };
-            for body in bodies {
-                if let Some(mut msg) = parse_mime(&body) {
-                    msg.uid = uid;
-                    messages.push(msg);
-                }
-            }
-        }
-
         let last_uid = uids.last().copied().unwrap_or(start_uid);
         if let Some(validity) = uid_validity {
             let key = if is_primary_inbox {
@@ -386,6 +394,50 @@ pub fn fetch_inbox_with_session(
         if is_primary_inbox {
             inbox_uid_validity = uid_validity;
             inbox_last_uid = last_uid;
+        }
+
+        let new_uids: Vec<u32> = uids.into_iter().filter(|uid| *uid > start_uid).collect();
+        plans.push(FolderPlan {
+            name: folder,
+            is_primary_inbox,
+            new_uids,
+        });
+    }
+
+    let total_to_download: usize = plans.iter().map(|plan| plan.new_uids.len()).sum();
+    on_progress(0, total_to_download);
+
+    let mut messages = Vec::with_capacity(total_to_download);
+    let mut downloaded = 0_usize;
+
+    for plan in plans {
+        if plan.new_uids.is_empty() {
+            continue;
+        }
+        if let Err(e) = session.select_folder(&plan.name) {
+            if !plan.is_primary_inbox {
+                continue;
+            }
+            return Err(e);
+        }
+        for uid in plan.new_uids {
+            let bodies = match session.uid_fetch_peek(uid) {
+                Ok(b) => b,
+                Err(_) if !plan.is_primary_inbox => {
+                    downloaded += 1;
+                    on_progress(downloaded, total_to_download);
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
+            for body in bodies {
+                if let Some(mut msg) = parse_mime(&body) {
+                    msg.uid = uid;
+                    messages.push(msg);
+                }
+            }
+            downloaded += 1;
+            on_progress(downloaded, total_to_download);
         }
     }
 
@@ -890,5 +942,37 @@ mod tests {
         assert_eq!(fourth.messages.len(), 1);
         assert_eq!(fourth.messages[0].uid, 10);
         assert_eq!(fourth.folder_cursors.get("INBOX"), Some(&(101, 10)));
+    }
+
+    #[test]
+    fn mock_imap_adapter_reports_exact_download_progress_counts() {
+        let msg1 =
+            b"From: sdi48@pec.fatturapa.it\r\nSubject: 1\r\nContent-Type: text/plain\r\n\r\nA\r\n"
+                .to_vec();
+        let msg2 =
+            b"From: sdi48@pec.fatturapa.it\r\nSubject: 2\r\nContent-Type: text/plain\r\n\r\nB\r\n"
+                .to_vec();
+
+        let mut mock = MockImapSession::default();
+        mock.add_folder("INBOX", false, Some(100), vec![(1, msg1)]);
+        mock.add_folder("INBOX.Ricevute", false, Some(200), vec![(10, msg2)]);
+
+        let mut events = Vec::new();
+        let first = fetch_inbox_with_session_and_progress(
+            &mut mock,
+            &BTreeMap::new(),
+            &mut |done, total| events.push((done, total)),
+        )
+        .unwrap();
+        assert_eq!(events, vec![(0, 2), (1, 2), (2, 2)]);
+
+        events.clear();
+        let _second = fetch_inbox_with_session_and_progress(
+            &mut mock,
+            &first.folder_cursors,
+            &mut |done, total| events.push((done, total)),
+        )
+        .unwrap();
+        assert_eq!(events, vec![(0, 0)]);
     }
 }

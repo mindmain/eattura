@@ -34,6 +34,8 @@ pub struct InvoiceSummary {
     pub is_split_payment: bool,
     #[serde(default)]
     pub has_mc_notice: bool,
+    #[serde(default)]
+    pub pec_delivered_to_sdi_at: Option<String>,
 }
 
 /// Summary of an attached SDI notification in the invoice fascicolo.
@@ -665,12 +667,25 @@ pub async fn list_invoices_store(
     }
 
     let mut mc_invoice_ids = std::collections::HashSet::new();
+    let mut sdi_delivered_at_by_id: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     for row in &rows {
         let stato: String = row.get("stato");
         if matches!(stato.as_str(), "draft" | "validated") {
             continue;
         }
         let id: String = row.get("id");
+        if stato == "sent"
+            && let Some(full_row) = store
+                .read("invoices", "id", vec![serde_json::json!(&id)], "")
+                .await
+                .fetch_optional()
+                .await?
+            && let Some(ts) = full_row.get::<Option<String>>("pec_delivered_to_sdi_at")
+            && !ts.trim().is_empty()
+        {
+            sdi_delivered_at_by_id.insert(id.clone(), ts);
+        }
         let Some(receipts) = notifications_by_invoice.get(&id) else {
             continue;
         };
@@ -746,6 +761,7 @@ pub async fn list_invoices_store(
                 is_pa,
                 is_split_payment,
                 has_mc_notice,
+                pec_delivered_to_sdi_at: sdi_delivered_at_by_id.get(&id).cloned(),
                 id,
             }
         })

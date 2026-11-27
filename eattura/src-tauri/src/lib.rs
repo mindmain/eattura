@@ -102,7 +102,7 @@ pub fn run() {
 
             // Background PEC cron: periodically poll the inbox for SDI
             // notifications. No-op while PEC is not configured.
-            spawn_pec_cron(store.clone(), log.clone());
+            spawn_pec_cron(store.clone(), log.clone(), app.handle().clone());
 
             // Google Drive backup worker is temporarily disabled until embedded
             // 1-click Desktop OAuth credentials are configured.
@@ -218,13 +218,14 @@ fn spawn_drive_worker(store: storage::FileStore, log: AppLog, app: tauri::AppHan
 /// Each tick calls the same routine as the `sync_pec` command. When PEC is not
 /// configured (no settings or no keyring password) the run returns an error
 /// that is logged and ignored, so the cron is effectively off until set up.
-fn spawn_pec_cron(store: storage::FileStore, log: AppLog) {
+fn spawn_pec_cron(store: storage::FileStore, log: AppLog, app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         log.record(
             LogLevel::Info,
             "pec",
             "PEC scheduler started; checking configuration",
         );
+        let event_sink = commands::pec::tauri_pec_event_sink(app);
         let mut last_failed_at = 0_i64;
         loop {
             let now = chrono::Utc::now().timestamp();
@@ -244,7 +245,9 @@ fn spawn_pec_cron(store: storage::FileStore, log: AppLog) {
             };
             if due
                 && now - last_failed_at >= PEC_CRON_INTERVAL_SECS
-                && commands::pec::run_sync(&store, &log).await.is_err()
+                && commands::pec::run_sync_with_events(&store, &log, Some(&event_sink))
+                    .await
+                    .is_err()
             {
                 last_failed_at = chrono::Utc::now().timestamp();
             }

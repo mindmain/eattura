@@ -251,10 +251,10 @@
             <button
               type="button"
               class="btn-secondary"
-              [disabled]="syncingPec()"
+              [disabled]="syncingPec() || invoiceStore.pecSyncActive()"
               (click)="syncPecNow()"
             >
-              {{ syncingPec() ? "Sincronizzazione PEC..." : "Sincronizza PEC" }}
+              {{ (syncingPec() || invoiceStore.pecSyncActive()) ? (invoiceStore.pecSyncLabel() || "Sincronizzazione PEC...") : "Sincronizza PEC" }}
             </button>
           }
           <label class="btn-secondary btn-file-upload">

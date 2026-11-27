@@ -38,7 +38,7 @@ import type {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class InvoiceDetailComponent {
-  private invoiceStore = inject(InvoiceStore);
+  readonly invoiceStore = inject(InvoiceStore);
   private fileDownload = inject(FileDownloadService);
   private router = inject(Router);
   private notify = inject(NotificationService);

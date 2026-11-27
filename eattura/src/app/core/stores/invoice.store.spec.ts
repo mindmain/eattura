@@ -326,4 +326,40 @@ describe("InvoiceStore", () => {
     expect(store.sdiAddress()).toBe("sdi12@pec.fatturapa.it");
     expect(store.sdiAddressDetected()).toBe("sdi12@pec.fatturapa.it");
   });
+
+  it("formats live PEC sync read and processed counters from backend status", async () => {
+    mockInvoiceService.pecSyncStatus.mockResolvedValueOnce({
+      configured: true,
+      inProgress: true,
+      progress: {
+        phase: "downloading",
+        readMessages: 14,
+        totalMessages: 207,
+        processedMessages: 0,
+        processedItems: 0,
+      },
+      lastAttemptAt: 1000,
+      lastSuccessAt: null,
+      nextSyncAt: 301000,
+      lastError: null,
+    });
+
+    await store.refreshPecSyncStatus();
+    expect(store.pecSyncActive()).toBe(true);
+    expect(store.pecSyncLabel()).toBe("PEC: 14 / 207 letti · 0 / 207 svolti");
+
+    mockInvoiceService.pecSyncStatus.mockResolvedValueOnce({
+      configured: true,
+      inProgress: false,
+      progress: null,
+      lastAttemptAt: 2000,
+      lastSuccessAt: 2000,
+      nextSyncAt: 302000,
+      lastError: null,
+    });
+
+    await store.refreshPecSyncStatus();
+    expect(store.pecSyncActive()).toBe(false);
+    expect(store.pecSyncProgress()).toBeNull();
+  });
 });

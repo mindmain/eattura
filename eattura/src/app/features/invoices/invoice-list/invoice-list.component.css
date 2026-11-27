@@ -15,11 +15,60 @@
 }
 
 .pec-sync-timer {
-  margin: -0.5rem 0 1rem;
+  margin: -0.5rem 0 0.75rem;
   text-align: right;
   color: var(--text-muted);
   font-size: 0.8rem;
   font-variant-numeric: tabular-nums;
+}
+
+.pec-sync-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text-primary);
+}
+
+.pec-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent, #2563eb);
+  animation: pec-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pec-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.85); }
+}
+
+.pec-progress-track {
+  height: 4px;
+  width: 100%;
+  border-radius: 999px;
+  background: var(--border, #e5e7eb);
+  overflow: hidden;
+}
+
+.pec-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent, #2563eb);
+  transition: width 0.2s ease-out;
+}
+
+.status-cell-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+}
+
+.pec-sdi-substatus {
+  font-size: 0.72rem;
+  line-height: 1.2;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .pec-sdi-detected {

@@ -1,6 +1,8 @@
 import { Injectable, computed, inject, signal } from "@angular/core";
+import { isTauri } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { InvoiceService } from "../services/invoice.service";
-import type { PecSyncStatus } from "../services/invoice.service";
+import type { PecSyncProgress, PecSyncStatus } from "../services/invoice.service";
 import { ClientStore } from "./client.store";
 import { AppLogService } from "../services/app-log.service";
 import type {
@@ -39,8 +41,31 @@ export class InvoiceStore {
   readonly invoices = this._invoices.asReadonly();
   readonly loading = this._loading.asReadonly();
   private _pecSyncStatus = signal<PecSyncStatus | null>(null);
+  private _pecSyncProgress = signal<PecSyncProgress | null>(null);
   private _clock = signal(Date.now());
   readonly pecSyncStatus = this._pecSyncStatus.asReadonly();
+  readonly pecSyncProgress = this._pecSyncProgress.asReadonly();
+  readonly pecSyncActive = computed(
+    () => !!(this._pecSyncStatus()?.inProgress || this._pecSyncProgress()),
+  );
+  readonly pecSyncLabel = computed(() => {
+    const p = this._pecSyncProgress() ?? this._pecSyncStatus()?.progress ?? null;
+    if (!p) {
+      return this._pecSyncStatus()?.inProgress
+        ? "Sincronizzazione PEC in corso…"
+        : "";
+    }
+    if (p.totalMessages > 0) {
+      const base = `PEC: ${p.readMessages} / ${p.totalMessages} letti · ${p.processedMessages} / ${p.totalMessages} svolti`;
+      return p.processedItems > 0
+        ? `${base} (${p.processedItems} ${p.processedItems === 1 ? "documento" : "documenti"})`
+        : base;
+    }
+    if (p.phase === "reconciling") {
+      return "PEC: verifica ricevute in corso…";
+    }
+    return "PEC: controllo nuovi messaggi…";
+  });
   readonly pecSyncError = signal<string | null>(null);
   readonly lastPecSuccessAt = computed(() => this._pecSyncStatus()?.lastSuccessAt ?? null);
   readonly sdiAddress = computed(() => this._pecSyncStatus()?.sdiAddress ?? "sdi01@pec.fatturapa.it");
@@ -51,10 +76,15 @@ export class InvoiceStore {
   });
   readonly secondsToPecSync = computed(() => {
     const status = this._pecSyncStatus();
-    return status?.configured && !status.inProgress ? Math.max(0, Math.ceil((status.nextSyncAt - this._clock()) / 1000)) : null;
+    return status?.configured && !status.inProgress && !this._pecSyncProgress()
+      ? Math.max(0, Math.ceil((status.nextSyncAt - this._clock()) / 1000))
+      : null;
   });
   private pecTimer?: ReturnType<typeof setInterval>;
   private pecPoll?: ReturnType<typeof setInterval>;
+  private pecProgressUnlisten?: UnlistenFn;
+  private pecFinishedUnlisten?: UnlistenFn;
+  private pecListenerGeneration = 0;
   private pecStatusPending = false;
 
   startPecMonitor(): void {
@@ -64,6 +94,7 @@ export class InvoiceStore {
     void this.refreshPecSyncStatus();
     this.pecTimer = setInterval(() => this._clock.set(Date.now()), 1000);
     this.pecPoll = setInterval(() => void this.refreshPecSyncStatus(), 15_000);
+    void this.attachPecEventListeners();
   }
 
   stopPecMonitor(): void {
@@ -71,6 +102,48 @@ export class InvoiceStore {
     if (this.pecPoll) clearInterval(this.pecPoll);
     this.pecTimer = undefined;
     this.pecPoll = undefined;
+    this.pecListenerGeneration++;
+    this.pecProgressUnlisten?.();
+    this.pecFinishedUnlisten?.();
+    this.pecProgressUnlisten = undefined;
+    this.pecFinishedUnlisten = undefined;
+  }
+
+  private async attachPecEventListeners(): Promise<void> {
+    if (!isTauri()) return;
+    const generation = ++this.pecListenerGeneration;
+    try {
+      const [unlistenProgress, unlistenFinished] = await Promise.all([
+        listen<PecSyncProgress>("pec-sync-progress", ({ payload }) => {
+          this._pecSyncProgress.set(payload);
+          this._pecSyncStatus.update((prev) =>
+            prev ? { ...prev, inProgress: true, progress: payload } : prev,
+          );
+        }),
+        listen<{ itemsProcessed: number; hasError: boolean }>(
+          "pec-sync-finished",
+          ({ payload }) => {
+            this._pecSyncProgress.set(null);
+            this._pecSyncStatus.update((prev) =>
+              prev ? { ...prev, inProgress: false, progress: null } : prev,
+            );
+            void this.refreshPecSyncStatus();
+            if (payload?.itemsProcessed > 0 && this.hasLoaded) {
+              void this.refresh();
+            }
+          },
+        ),
+      ]);
+      if (this.pecTimer && this.pecListenerGeneration === generation) {
+        this.pecProgressUnlisten = unlistenProgress;
+        this.pecFinishedUnlisten = unlistenFinished;
+      } else {
+        unlistenProgress();
+        unlistenFinished();
+      }
+    } catch (error) {
+      void this.log.record("error", "pec-monitor", error);
+    }
   }
 
   async refreshPecSyncStatus(): Promise<void> {
@@ -90,6 +163,11 @@ export class InvoiceStore {
       this.pecSyncError.set(null);
       const previous = this._pecSyncStatus();
       this._pecSyncStatus.set(status);
+      if (status.inProgress && status.progress) {
+        this._pecSyncProgress.set(status.progress);
+      } else if (!status.inProgress) {
+        this._pecSyncProgress.set(null);
+      }
       if (this.hasLoaded && status.lastSuccessAt && status.lastSuccessAt !== previous?.lastSuccessAt) {
         await this.refresh();
       }

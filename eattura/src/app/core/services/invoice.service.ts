@@ -107,8 +107,17 @@ export class InvoiceService {
   }
 }
 
+export interface PecSyncProgress {
+  phase: "connecting" | "downloading" | "processing" | "reconciling" | string;
+  readMessages: number;
+  totalMessages: number;
+  processedMessages: number;
+  processedItems: number;
+}
+
 export interface PecSyncStatus {
   inProgress?: boolean;
+  progress?: PecSyncProgress | null;
   configured: boolean;
   lastAttemptAt: number | null;
   lastSuccessAt: number | null;

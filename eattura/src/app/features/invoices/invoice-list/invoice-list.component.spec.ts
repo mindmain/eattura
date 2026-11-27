@@ -4,6 +4,7 @@ import { TestBed } from "@angular/core/testing";
 import { provideRouter } from "@angular/router";
 import { describe, expect, it, vi } from "vitest";
 import type { InvoiceSummary } from "../../../core/models/invoice.model";
+import type { PecSyncProgress, PecSyncStatus } from "../../../core/services/invoice.service";
 import { FileDialogService } from "../../../core/services/file-dialog.service";
 import { NotificationService } from "../../../core/services/notification.service";
 import { InvoiceStore } from "../../../core/stores/invoice.store";
@@ -28,8 +29,14 @@ function makeInvoice(
 }
 
 describe("InvoiceListComponent", () => {
-  async function setup(records: InvoiceSummary[]) {
+  async function setup(
+    records: InvoiceSummary[],
+    pecStatus: PecSyncStatus | null = null,
+    pecProgress: PecSyncProgress | null = null,
+  ) {
     const invoices = signal(records);
+    const pecSyncStatus = signal<PecSyncStatus | null>(pecStatus);
+    const pecSyncProgress = signal<PecSyncProgress | null>(pecProgress);
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({
       providers: [
@@ -39,7 +46,8 @@ describe("InvoiceListComponent", () => {
           useValue: {
             invoices,
             loading: signal(false),
-            pecSyncStatus: signal(null),
+            pecSyncStatus,
+            pecSyncProgress,
             pecSyncError: signal(null),
             secondsToPecSync: signal(null),
             loadAll: vi.fn().mockResolvedValue(records),
@@ -129,5 +137,50 @@ describe("InvoiceListComponent", () => {
     component.setStatusFilter("accepted");
     fixture.detectChanges();
     expect(component.filteredInvoices()).toEqual([]);
+  });
+
+  it("shows live PEC read and processed counters and progress bar during sync", async () => {
+    const { fixture } = await setup(
+      [makeInvoice("inv-1", "sent", "6")],
+      {
+        configured: true,
+        inProgress: true,
+        lastAttemptAt: 1000,
+        lastSuccessAt: null,
+        nextSyncAt: 301000,
+        lastError: null,
+        sdiAddressDetected: "sdi48@pec.fatturapa.it",
+        sdiAddressVerified: true,
+      },
+      {
+        phase: "processing",
+        readMessages: 207,
+        totalMessages: 207,
+        processedMessages: 84,
+        processedItems: 3,
+      },
+    );
+
+    const statusBar = fixture.nativeElement.querySelector(".pec-sync-timer");
+    expect(statusBar).not.toBeNull();
+    expect(statusBar.textContent).toContain("207 / 207 letti");
+    expect(statusBar.textContent).toContain("84 / 207 svolti");
+    expect(statusBar.textContent).toContain("3 documenti registrati");
+
+    const progressBar = fixture.nativeElement.querySelector(".pec-progress-track");
+    expect(progressBar).not.toBeNull();
+  });
+
+  it("surfaces Ricevuta da SdI substatus when PEC reached SdI and RC is still pending", async () => {
+    const { fixture } = await setup([
+      {
+        ...makeInvoice("inv-sdi", "sent", "6"),
+        pecDeliveredToSdiAt: "27/11/2026 11:21:24",
+      },
+    ]);
+
+    const substatus = fixture.nativeElement.querySelector(".pec-sdi-substatus");
+    expect(substatus).not.toBeNull();
+    expect(substatus.textContent).toContain("Ricevuta da SdI · attesa RC");
   });
 });

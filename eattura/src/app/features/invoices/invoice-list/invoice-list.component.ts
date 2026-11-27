@@ -43,11 +43,21 @@ export class InvoiceListComponent implements OnInit {
   readonly invoices = this.invoiceStore.invoices;
   readonly loading = this.invoiceStore.loading;
   readonly pecSyncStatus = this.invoiceStore.pecSyncStatus;
+  readonly pecSyncProgress = this.invoiceStore.pecSyncProgress;
   readonly secondsToPecSync = this.invoiceStore.secondsToPecSync;
   readonly pecCountdown = computed(() => {
     const seconds = this.secondsToPecSync();
     if (seconds === null) return "";
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  });
+  readonly activePecProgress = computed(
+    () => this.pecSyncProgress() ?? this.pecSyncStatus()?.progress ?? null,
+  );
+  readonly pecProgressPercent = computed(() => {
+    const p = this.activePecProgress();
+    if (!p || p.totalMessages <= 0) return null;
+    const ratio = (p.readMessages + p.processedMessages) / (p.totalMessages * 2);
+    return Math.min(100, Math.max(4, Math.round(ratio * 100)));
   });
 
   searchTerm = signal("");

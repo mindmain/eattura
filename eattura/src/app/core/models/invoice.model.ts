@@ -112,6 +112,7 @@ export interface InvoiceSummary {
   isPa?: boolean;
   isSplitPayment?: boolean;
   hasMcNotice?: boolean;
+  pecDeliveredToSdiAt?: string | null;
 }
 
 export interface InvoiceDetail extends InvoiceSummary {
