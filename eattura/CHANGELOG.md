@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/mindmain/eattura/compare/v0.1.0...v0.1.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* **pec:** harden receipt sync with inbox adapters and transport status ([9f89f94](https://github.com/mindmain/eattura/commit/9f89f942013ce3bcf84d5ce309853ef3fc6bef15))
+
 ## 0.1.0 (2026-11-27)
 
 
