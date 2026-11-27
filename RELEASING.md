@@ -27,9 +27,11 @@ and export the exact protovalidate dependency from `proto/buf.lock`.
    such as `fix | ...` do not trigger Release Please. Squash-merge PR titles can
    provide the conventional message. The configured package path is `eattura`:
    changes confined to the server or repository tooling do not start app releases.
-2. Google Release Please opens or updates the app release PR, including the
-   changelog. The empty initial manifest and `initial-version: 0.1.0` establish
-   the first release; later releases use normal semantic version increments.
+2. After `.github/workflows/ci.yml` passes (Rust workspace Clippy/tests and
+   Angular typecheck/tests/build), Google Release Please opens or updates the
+   app release PR, including the changelog. The empty initial manifest and
+   `initial-version: 0.1.0` establish the first release; later releases use
+   normal semantic version increments.
 3. Review and merge the release PR into `main`. Release Please creates the stable
    tag and a **draft** GitHub Release, then calls the desktop build workflow.
    This explicit call is intentional: tags created by `GITHUB_TOKEN` do not

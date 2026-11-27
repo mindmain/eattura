@@ -12,7 +12,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: test
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -27,11 +33,13 @@ jobs:
           target-branch: main
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
   desktop:
     needs: release
     if: needs.release.outputs.created == 'true'
     permissions:
       contents: write
+    secrets: inherit
     uses: ./.github/workflows/desktop-release.yml
     with:
       tag: ${{ needs.release.outputs.tag }}
