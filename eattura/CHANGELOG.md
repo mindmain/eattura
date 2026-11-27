@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/mindmain/eattura/compare/v0.1.1...v0.2.0) (2026-11-27)
+
+
+### Features
+
+* **pec:** surface live sync progress and SdI receipt state ([0630ccb](https://github.com/mindmain/eattura/commit/0630ccb45bbb8cb132759fcaf445e178898f91dd))
+
 ## [0.1.1](https://github.com/mindmain/eattura/compare/v0.1.0...v0.1.1) (2026-11-27)
 
 
